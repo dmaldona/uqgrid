@@ -1234,7 +1234,7 @@ if petsc4py:
             return True
         
         def evalJacobianP(self, ts, t, x, A):
-            A[:,:] = 0.0
+            #A[:,:] = 0.0
             A.assemble()
             return True
             
@@ -1417,11 +1417,11 @@ def integrate_system(psys,
             ts.adjointSolve()
             print("v_mu")
             v_mu.view()
-            print("v_lambda")
-            v_lambda.view()
-            print("cost")
+            #print("v_lambda")
+            #v_lambda.view()
+            #print("cost")
             cst = ts.getCostIntegral()
-            cst.view()
+            #cst.view()
             
             if log is not None:
                 log["cost"] = np.array(cst[0])

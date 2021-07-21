@@ -29,23 +29,28 @@ v, Sinj = runpf(psys, verbose=True)
 print("Number of loads (parameters): %d" % (psys.nloads))
 pmax = np.ones(psys.nloads)
 pmin = np.zeros(psys.nloads)
-tend = 2.0
+tend = 10.0
+ton = 0.1
+toff = 0.2
+
+
+eps = 1e-4
+sample = 20
 
 pnom = pmin + 0.5*(pmax - pmin)
-eps = 1e-6
 psys.set_load_parameters(pnom)
 log = {}
-print("Forward simulation with p")
 tvec, history, history_u, history_v, history_m = integrate_system(psys,
-        verbose=False, comp_sens=True, dt=dt, tend=tend, petsc=True, log=log)
+        verbose=False, comp_sens=True, dt=dt, tend=tend, petsc=True, log=log, ton=ton, toff=toff)
 
 psys.set_load_parameters(pnom + eps)
 log2 = {}
-print("Forward simulation with p + eps")
 tvec, history, history_u, history_v, history_m = integrate_system(psys,
-        verbose=False, comp_sens=True, dt=dt, tend=tend, petsc=True, log=log2)
+        verbose=False, comp_sens=True, dt=dt, tend=tend, petsc=True, log=log2, ton=ton, toff=toff)
 
-print("FD Gradient")
-print((log2["cost"] - log["cost"])/eps)
+psys.set_load_parameters(pnom - eps)
+log3 = {}
+tvec, history, history_u, history_v, history_m = integrate_system(psys,
+        verbose=False, comp_sens=True, dt=dt, tend=tend, petsc=True, log=log3, ton=ton, toff=toff)
 
-
+fd_grad = (log2["cost"] - log3["cost"])/(2*(pnom[0] + eps - pnom[0]))

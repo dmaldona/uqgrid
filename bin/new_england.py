@@ -36,7 +36,7 @@ psys.set_load_parameters(pnom)
 # run mode. Note: compute_sens= True will return First and Second-Order local sensitivities.
 # Second-order sensitivity computation is a bit slow at this time.
 tvec, history, history_u, history_v, history_m = integrate_system(psys,
-        verbose=True, comp_sens=True, dt=dt, tend=10.0)
+        verbose=True, comp_sens=False, dt=dt, tend=10.0)
 
 # plot generator speeds
 bus_idx = psys.genspeed_idx_set()
