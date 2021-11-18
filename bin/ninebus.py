@@ -31,15 +31,14 @@ psys.set_load_parameters(pnom)
 
 # run mode. Note: compute_sens= True will return First and Second-Order local sensitivities.
 # Second-order sensitivity computation is a bit slow at this time.
-tvec, history, history_u, history_v, history_m = integrate_system(psys,
-        verbose=True, comp_sens=True, dt=dt, tend=10.0)
+res = integrate_system(psys, verbose=True, comp_sens=True, dt=dt, tend=10.0)
 
 # plot generator speeds
 bus_idx = psys.genspeed_idx_set()
 
 for bus in bus_idx:
     label = "generator at bus %d" % (bus)
-    plt.plot(tvec, history[bus,:], label=label)
+    plt.plot(res["tvec"], res["history"][bus,:], label=label)
 plt.legend()
 plt.show()
 
@@ -49,7 +48,7 @@ bus = bus_idx[0]
 # plot sensitivities \frac{d\omega}{d \alpha_i} for \alpha = 1, 2, 3.
 for i in range(len(pnom)):
     label = "Sensitivity of $\omega$ w.r.t parameter %d." % (i + 1)
-    plt.plot(tvec, history_u[bus,i, :], label=label)
+    plt.plot(res["tvec"], res["history_u"][bus,i, :], label=label)
 plt.legend()
 plt.show()
 

@@ -1267,8 +1267,7 @@ def integrate_system(psys,
                      fsolve=False,
                      ton=0.25,
                      toff=0.4,
-                     petsc=False,
-                     log=None):
+                     petsc=False):
     """integrate power system dynamics
 
     Args:
@@ -1285,8 +1284,9 @@ def integrate_system(psys,
     Returns:
         [type]: [description]
     """
+    results = {}
+    
     # retrieve parameters
-
     volt, Pinj = runpf(psys, verbose=False)
     z0, theta = initialize_system(volt, Pinj, psys)
     system_size = z0.shape[0]
@@ -1434,9 +1434,8 @@ def integrate_system(psys,
             ts.adjointSolve()
             cst = ts.getCostIntegral()
             
-            if log is not None:
-                log["cost"] = np.array(cst[0])
-                log["v_mu"] = np.array(v_mu[0])
+            results["cost"] = np.array(cst[0])
+            results["v_mu"] = np.array(v_mu[0])
 
 
 
@@ -1505,4 +1504,11 @@ def integrate_system(psys,
         if i < step_off:
             psys.fault_events[0].remove()
 
-    return tvec, history, history_u, history_v, history_m
+    # pack results into dict
+    results["tvec"] = tvec
+    results["history"] = history
+    results["history_u"] = history_u
+    results["history_v"] = history_v
+    results["history_m"] = history_m
+
+    return results

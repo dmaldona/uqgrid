@@ -27,8 +27,7 @@ class TestCase(unittest.TestCase):
             GenGENROU(0, 1.575, 1.512, 0.291, 0.39, 0.1733,
             0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15))
     
-        tvec, history, history_u, history_v, history_m = integrate_system(psys, 
-                comp_sens=False, tend=10.0)
+        res = integrate_system(psys, comp_sens=False, tend=10.0)
 
         psse = np.loadtxt('data/2bus_GENROU.csv', delimiter=',')
 
@@ -39,6 +38,8 @@ class TestCase(unittest.TestCase):
         eq_p = np.delete(psse[5, :], [0, 1, 33, 52])
         speed = np.delete(psse[9, :], [0, 1, 33, 52])
         
+        history = res["history"]
+
         #errors
         error_volt1 = np.linalg.norm(np.abs((volt1_p - history[10,:])/history[10,:]))
         error_volt2 = np.linalg.norm(np.abs((volt2_p - history[12,:])/history[12,:]))
@@ -65,10 +66,11 @@ class TestCase(unittest.TestCase):
     
         add_dyr(psys, "data/2bus_IEESGO.dyr")
 
-        tvec, history, history_u, history_v, history_m = integrate_system(psys, 
-                comp_sens=False, tend=10.0)
+        res = integrate_system(psys, comp_sens=False, tend=10.0)
 
         psse = np.loadtxt('data/2bus_IEESGO.csv', delimiter=',')
+        
+        history = res["history"]
 
         # retrieve PSSE values. delete negative time steps and switching events
         time_p = np.delete(psse[0, :], [0, 1, 33, 52])
