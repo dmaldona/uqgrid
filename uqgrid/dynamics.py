@@ -1139,12 +1139,25 @@ if petsc4py:
     class DAE_petsc(object):
         n = 1
         comm = PETSc.COMM_SELF
-        def __init__(self, psys, theta, J):
+        def __init__(self, psys, theta, J, tfon, tfoff):
             self.psys = psys
             self.theta = theta
             self.J = J
+            self.tfon = tfon
+            self.tfoff = tfoff
         
         def evalFunction(self, ts, t, x, xdot, f):
+            # This operation is redundant but necessary for the correct
+            # computation of the adjoint in the backward run. Might
+            # not generalize when we consider multiple faults.
+            # (TODO): consider using TSEvent.
+            if t < self.tfon:
+                self.psys.fault_events[0].remove()
+            elif t > self.tfoff:
+                self.psys.fault_events[0].remove()
+            else:
+                self.psys.fault_events[0].apply()
+
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
             xx = np.array([x[i] for i in range(start, end)])
@@ -1155,6 +1168,12 @@ if petsc4py:
             f.assemble()
         
         def evalJacobian(self, ts, t, x, xdot, a, J, P):
+            if t < self.tfon:
+                self.psys.fault_events[0].remove()
+            elif t > self.tfoff:
+                self.psys.fault_events[0].remove()
+            else:
+                self.psys.fault_events[0].apply()
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
             xx = np.array([x[i] for i in range(start, end)])
@@ -1234,7 +1253,7 @@ if petsc4py:
             return True
         
         def evalJacobianP(self, ts, t, x, A):
-            #A[:,:] = 0.0
+            A[:,:] = 0.0
             A.assemble()
             return True
             
@@ -1271,7 +1290,6 @@ def integrate_system(psys,
     volt, Pinj = runpf(psys, verbose=False)
     z0, theta = initialize_system(volt, Pinj, psys)
     system_size = z0.shape[0]
-
     J = preallocate_jacobian(psys)
     F = np.zeros(system_size)
 
@@ -1287,7 +1305,6 @@ def integrate_system(psys,
     step_off = int(toff/h)
     # Integration of D.A.E
     z = z0
-
     # Sensitivity parameters
     nparam = psys.nloads # For now, we only suport sensitivities of loads
     nmixed = int((nparam**2 - nparam)/2)
@@ -1343,7 +1360,7 @@ def integrate_system(psys,
         fp = z0p.duplicate()
 
         # Create integration object
-        dae = DAE_petsc(psys, theta, J)
+        dae = DAE_petsc(psys, theta, J, ton, toff)
 
         ts = PETSc.TS().create(comm=PETSc.COMM_WORLD)
         ts.setProblemType(ts.ProblemType.NONLINEAR)
@@ -1381,7 +1398,7 @@ def integrate_system(psys,
         ts.setTime(0.0)
         ts.setTimeStep(dt)
         ts.setMaxTime(ton)
-        ts.setExactFinalTime(PETSc.TS.ExactFinalTime.INTERPOLATE)
+        ts.setExactFinalTime(PETSc.TS.ExactFinalTime.MATCHSTEP)
         ts.setFromOptions()
         ts.solve(z0p)
         
@@ -1415,16 +1432,11 @@ def integrate_system(psys,
         # adjoint computation
         if comp_sens:
             ts.adjointSolve()
-            print("v_mu")
-            v_mu.view()
-            #print("v_lambda")
-            #v_lambda.view()
-            #print("cost")
             cst = ts.getCostIntegral()
-            #cst.view()
             
             if log is not None:
                 log["cost"] = np.array(cst[0])
+                log["v_mu"] = np.array(v_mu[0])
 
 
 
