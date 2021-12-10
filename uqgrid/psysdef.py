@@ -3,6 +3,7 @@ from itertools import count
 import cmath
 from numpy.linalg import inv, det
 from scipy import optimize
+from scipy.sparse import csr_matrix
 from abc import ABC, abstractmethod, abstractproperty
 from .tools import csr_add_row, csr_set_row
 import numba
@@ -147,6 +148,27 @@ class Load(object):
 
         F[2*self.bus] += -alpha*Pl*(vm/v0)**2.0 - (1 - alpha)*Pl
         F[2*self.bus + 1] += alpha*Ql*(vm/v0)**2.0 + (1 - alpha)*Ql
+    
+    def residual_cinj(self, F, z, v, theta, idxs):
+
+        vr = v[2*self.bus]
+        vi = v[2*self.bus + 1]
+
+        vm = np.abs(vr + 1j*vi)
+        va = cmath.phase(vr + 1j*vi)
+
+        Pl = self.pload
+        Ql = self.qload
+        v0 = self.v0
+        alpha = self.alpha
+
+        pinj = -alpha*Pl*(vm/v0)**2.0 - (1 - alpha)*Pl
+        qinj = alpha*Ql*(vm/v0)**2.0 + (1 - alpha)*Ql
+
+        icomp = (pinj - 1j*qinj)/(vr - 1j*vi)
+
+        F[2*self.bus] += np.real(icomp)
+        F[2*self.bus + 1] += np.imag(icomp)
 
     def residual_jac(self, J, z, v, theta, dev):
         Pl = self.pload
@@ -416,6 +438,7 @@ class Psystem:
         self.assembled = -1
         self.init_flag = False
         self.geo_flag = False
+        self.power_injection = False
 
     def __str__(self):
         return (
@@ -585,6 +608,10 @@ class Psystem:
                 ybus_mat[i, j + 1] = self.ybus_spa[i, to_bus]
 
         self.ybus_mat = ybus_mat
+
+    def ybus_complex2real(self):
+        from .network import realify_ybus
+        self.rybus = csr_matrix(realify_ybus(self))
 
     # For exciters and governors, these are always associated to a generator.
     # Associated generator must be provided.
@@ -971,6 +998,21 @@ class GenGENROU(DynamicGenerator):
 
         F[2*self.bus] += v_d*i_d + v_q*i_q
         F[2*self.bus + 1] += v_q*i_d - v_d*i_q
+        return None
+    
+    def residual_cinj(self, F, z, v, theta, idxs, alpha=False):
+
+        dp = idxs[0]
+        ap = idxs[1]
+        v_q = z[ap]
+        v_d = z[ap + 1]
+        i_q = z[ap + 2]
+        i_d = z[ap + 3]
+        delta = z[dp + 5]
+
+
+        F[2*self.bus] += np.sin(delta)*i_d + np.cos(delta)*i_q
+        F[2*self.bus + 1] += -np.cos(delta)*i_d + np.sin(delta)*i_q
         return None
 
     def preallocate_jacobian(self, idxs, psys):
