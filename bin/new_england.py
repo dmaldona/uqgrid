@@ -27,6 +27,7 @@ v, Sinj = runpf(psys, verbose=True)
 
 # set up parameters
 print("Number of loads (parameters): %d" % (psys.nloads))
+print(psys.nloads)
 pmax = np.ones(psys.nloads)
 pmin = np.zeros(psys.nloads)
 
