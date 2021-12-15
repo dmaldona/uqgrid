@@ -9,7 +9,7 @@ from scipy import optimize
 import numba
 from numba import jit
 from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import spsolve, factorized
 import scipy as sp
 import math
 
@@ -621,14 +621,17 @@ def first_sensitivity(psys, z, J, uold, theta, h):
     for i in range(NDIFFEQ):
         col[0] = i
         csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
-
-    # right hand side. One for each load
+    
+    rhs = np.zeros(z.size)
+    JJ = J.tocsc(copy=True)
+    solve = factorized(JJ)
+    
     for i in range(psys.nloads):
-        b = gradient_p(psys, z, theta, load_idx=i)
-        b[:NDIFFEQ] = h*b[:NDIFFEQ]
-        b[:NDIFFEQ] += uold[:NDIFFEQ, i]
-        b = -b
-        uold[:,i] = spsolve(J, b)
+        rhs[:] = gradient_p(psys, z, theta, load_idx=i)
+        rhs[:NDIFFEQ] = h*rhs[:NDIFFEQ]
+        rhs[:NDIFFEQ] += uold[:NDIFFEQ, i]
+        rhs = -rhs
+        uold[:,i] = solve(rhs)
 
 def second_sensitivity(psys, x, u, J, HES, vold, theta, h):
     """
@@ -876,8 +879,8 @@ def integrate(zold,
     if vold is not None and SECONDORDER:
         # Integrate 2nd order sensitivity equations
         residual_hessian(Hess, z, theta, psys)
-        second_sensitivity(psys, z, uold, J, Hess, vold, theta, h)
-        mixed_sensitivity(psys, z, uold, J, Hess, mold, theta, h)
+        #second_sensitivity(psys, z, uold, J, Hess, vold, theta, h)
+        #mixed_sensitivity(psys, z, uold, J, Hess, mold, theta, h)
     else:
         v = None
         m = None
