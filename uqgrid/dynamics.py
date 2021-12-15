@@ -591,7 +591,7 @@ def residual_hessian(H, z, theta, psys):
 ###################################
 
 
-def first_sensitivity(psys, z, J, uold, theta, h):
+def first_sensitivity(psys, z, sfact, uold, theta, h):
     """Computes first-order sensitivity using backward Euler
 
     Args:
@@ -605,29 +605,15 @@ def first_sensitivity(psys, z, J, uold, theta, h):
 
     NDIFFEQ = psys.num_dof_dif
 
-    # Compute jacobian
-    csr_to_zeros(J.data, J.indptr, J.indices)
-    residual_jacobian(J, z, theta, psys)
-
-    # integration jacobian (NOTE: refactor or move this)
-    for i in range(NDIFFEQ):
-        csr_mult_row(J.data, J.indptr, J.indices, i, h)
-    col = np.array([0])
-    data = np.array([-1.0])
-    for i in range(NDIFFEQ):
-        col[0] = i
-        csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
-    
     rhs = np.zeros(z.size)
-    JJ = J.tocsc(copy=True)
-    solve = factorized(JJ)
+
     
     for i in range(psys.nloads):
         rhs[:] = gradient_p(psys, z, theta, load_idx=i)
         rhs[:NDIFFEQ] = h*rhs[:NDIFFEQ]
         rhs[:NDIFFEQ] += uold[:NDIFFEQ, i]
         rhs = -rhs
-        uold[:,i] = solve(rhs)
+        uold[:,i] = sfact(rhs)
 
 def second_sensitivity(psys, x, u, J, HES, vold, theta, h):
     """
@@ -869,8 +855,25 @@ def integrate(zold,
             raise NameError('N-R solver did not converge.')
 
     if uold is not None:
+        # We need the Jacobian factorized and in CSC form
+        
+        csr_to_zeros(J.data, J.indptr, J.indices)
+        residual_jacobian(J, z, theta, psys)
+        
+        for i in range(NDIFFEQ):
+            csr_mult_row(J.data, J.indptr, J.indices, i, h)
+        col = np.array([0])
+        data = np.array([-1.0])
+        for i in range(NDIFFEQ):
+            col[0] = i
+            csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
+        
+        JJ = J.tocsc(copy=True)
+        sfact = factorized(JJ)
+
+    if uold is not None:
         # Integrate 1st order sensitivity equations
-        first_sensitivity(psys, z, J, uold, theta, h)
+        first_sensitivity(psys, z, sfact, uold, theta, h)
 
     if vold is not None and SECONDORDER:
         # Integrate 2nd order sensitivity equations
