@@ -9,7 +9,15 @@ from uqgrid.psysdef import Psystem
 from uqgrid.parse import load_psse, add_dyr
 from uqgrid.pflow import runpf
 
-np.__config__.show()
+def compute_pmec(pmec, vmag, vang, yred):
+    print(yred)
+    for i in range(len(pmec)):
+        for j in range(len(pmec)):
+            if i == j:
+                pmec[i] += vmag[i]*vmag[i]*np.real(yred[i, i])
+            else:
+                pmec[i] += vmag[i]*vmag[j]*(np.imag(yred[i, j])*np.sin(vang[i] - vang[j]) +
+                        np.real(yred[i, j])*np.cos(vang[i] - vang[j]))
 
 # load static file
 psys = load_psse(raw_filename="../data/ieee9_v33.raw")
@@ -28,11 +36,12 @@ ngen = psys.ngens
 # Retrieve admittance matrix
 ymat = np.copy(psys.ybus)
 
+
 # We assume loads are constant admittance.
 for load in psys.loads:
     vmag = v[2*load.bus]
     yload = load.pload/vmag**2 - 1j*(load.qload/vmag**2)
-    
+
     ymat[load.bus, load.bus] += yload
 
 # Create augmented voltage vector
@@ -64,7 +73,8 @@ for i, gen in enumerate(psys.gendyn):
     print("Generator internal voltage. Emag: %g. Eang: %g." % (vmag[i], vang[i]))
 
     # add new branches in augmented impedance matrix
-    yint = 1/(1j*xdp)
+    yint = -1/(1j*xdp)
+    print(yint)
     ybus_aug[i, i] += yint
     ybus_aug[i, ngen + gen.bus] -= yint
     ybus_aug[ngen + gen.bus, i] -= yint
@@ -77,16 +87,15 @@ ynr = ybus_aug[:ngen, ngen:]
 yrn = ybus_aug[ngen:, :ngen]
 yrr = ybus_aug[ngen:, ngen:]
 
-print(ynn)
-print(yrr)
+print(ybus_aug)
+yred = (ynn - np.dot(ynr, np.dot(np.linalg.inv(yrr), yrn)))
 
-print(yrr.shape)
-print(yrn.shape)
+## Compute mechanical power vector
+pmec = np.zeros(ngen)
+compute_pmec(pmec, vmag, vang, yred)
 
+caca = np.imag(yred)
 
-yrr_inv = np.linalg.inv(yrr)
-yrryrn = np.dot(yrr_inv, yrn)
+print(caca)
 
-#yred = (ynn - np.dot(ynr, np.dot(np.linalg.inv(yrr), yrn)))
-#print(yred)
-
+print(pmec)
