@@ -20,10 +20,12 @@ def compute_pmec(pmec, vmag, vang, yred):
                         np.real(yred[i, j])*np.cos(vang[i] - vang[j]))
 
 # load static file
-psys = load_psse(raw_filename="../data/ieee9_v33.raw")
+#psys = load_psse(raw_filename="../data/ieee9_v33.raw")
+psys = load_psse(raw_filename="../data/2bus_33.raw")
 
 # add dynamics
-add_dyr(psys, "../data/ieee9bus.dyr")
+#add_dyr(psys, "../data/ieee9bus.dyr")
+add_dyr(psys, "../data/GENROU.dyr")
 
 # Run power flow
 psys.createYbusComplex()
@@ -40,16 +42,16 @@ ymat = np.copy(psys.ybus)
 # We assume loads are constant admittance.
 for load in psys.loads:
     vmag = v[2*load.bus]
-    yload = load.pload/vmag**2 - 1j*(load.qload/vmag**2)
+    yload = -load.pload/vmag**2 + 1j*(load.qload/vmag**2)
 
-    ymat[load.bus, load.bus] += yload
+    ymat[load.bus, load.bus] -= yload
 
 # Create augmented voltage vector
 vmag = np.zeros(ngen)
 vang = np.zeros(ngen)
 
 # Create a new, extended admittance matrix:
-ybus_aug = np.zeros((ngen + ymat.shape[0], ngen + ymat.shape[0]), dtype=np.complex)
+ybus_aug = np.zeros((ngen + ymat.shape[0], ngen + ymat.shape[0]), dtype=complex)
 
 # insert existing admittance matrix
 ybus_aug[ngen:, ngen:] = np.copy(ymat)
@@ -63,21 +65,18 @@ for i, gen in enumerate(psys.gendyn):
     qi = s_inj[2*gen.bus + 1] - s_load[2*gen.bus + 1]
     
     xdp = gen.x_dp
-
-    egen = (vm + qi*xdp/vm) + 1j*(pi/vm)
+    egen = (vm + qi*xdp/vm) + 1j*(pi*xdp/vm)
 
     vmag[i] = np.abs(egen)
     vang[i] = np.angle(egen) + va
 
-    print("Generator bus voltage. Vmag: %g. Vang: %g." % (vm, va))
-    print("Generator internal voltage. Emag: %g. Eang: %g." % (vmag[i], vang[i]))
-
     # add new branches in augmented impedance matrix
-    yint = -1/(1j*xdp)
-    print(yint)
+    yint = 1/(1j*xdp)
     ybus_aug[i, i] += yint
     ybus_aug[i, ngen + gen.bus] -= yint
     ybus_aug[ngen + gen.bus, i] -= yint
+    ybus_aug[ngen + gen.bus, ngen + gen.bus] += yint
+
 
 
 # Compute reduced admittance matrix
@@ -87,7 +86,6 @@ ynr = ybus_aug[:ngen, ngen:]
 yrn = ybus_aug[ngen:, :ngen]
 yrr = ybus_aug[ngen:, ngen:]
 
-print(ybus_aug)
 yred = (ynn - np.dot(ynr, np.dot(np.linalg.inv(yrr), yrn)))
 
 ## Compute mechanical power vector
@@ -95,7 +93,5 @@ pmec = np.zeros(ngen)
 compute_pmec(pmec, vmag, vang, yred)
 
 caca = np.imag(yred)
-
-print(caca)
 
 print(pmec)
