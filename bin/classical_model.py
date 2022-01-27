@@ -1,5 +1,3 @@
-# Implement classical multimachine model as described in Fouad's book.
-
 import sys
 sys.path.append("..")
 
@@ -11,6 +9,7 @@ from uqgrid.parse import load_psse, add_dyr
 from uqgrid.pflow import runpf
 
 def compute_pelec(pelec, vmag, vang, yred):
+    """Compute power injection"""
     nbus = pelec.size
     pelec.fill(0.0)
     for i in range(nbus):
@@ -22,6 +21,7 @@ def compute_pelec(pelec, vmag, vang, yred):
                         np.real(yred[i, j])*np.cos(vang[i] - vang[j]))
 
 def classic_resfun(t, x, v, yred, pmec, H, D):
+    """ Classical model described in Anderson and Fouad"""
     ngen = v.size
     F = np.zeros(2*ngen)
     pelec = np.zeros(ngen)
@@ -33,109 +33,122 @@ def classic_resfun(t, x, v, yred, pmec, H, D):
         F[ngen + i] = w[i] - 1.0
     return F
 
-# load static file
-psys = load_psse(raw_filename="../data/ieee9_v33.raw")
-#psys = load_psse(raw_filename="../data/2bus_33.raw")
+def reduced_system(psys):
+    """ Compute reduced system via Kron reduction. In this system, we only have
+        generator buses and we assume generator-behind-reactance (constant voltage)
+        hypothesis
 
-# add dynamics
-add_dyr(psys, "../data/ieee9bus.dyr")
-#add_dyr(psys, "../data/GENROU.dyr")
+        Returns:
+        + x0 initial steady-state conditions
+        + vmag voltage magnitues
+        + pmec mechanical power (electrical + frictional damping)
+        + gen_inertia generator inertia
+        + gen_damping generator damping
 
-# Run power flow
-psys.createYbusComplex()
-v, s_inj = runpf(psys, verbose=True)
-s_load = psys.get_loadvec()
-
-# Create some data structures.
-ngen = psys.ngens
-gen_inertia = np.zeros(ngen)
-gen_damping = np.zeros(ngen)
-
-# Retrieve admittance matrix
-ymat = np.copy(psys.ybus)
-
-# We assume loads are constant admittance.
-for load in psys.loads:
-    vmag = v[2*load.bus]
-    yload = -load.pload/vmag**2 + 1j*(load.qload/vmag**2)
-
-    ymat[load.bus, load.bus] -= yload
-
-# Create augmented voltage vector
-vmag = np.zeros(ngen)
-vang = np.zeros(ngen)
-
-# Create a new, extended admittance matrix:
-ybus_aug = np.zeros((ngen + ymat.shape[0], ngen + ymat.shape[0]), dtype=complex)
-
-# insert existing admittance matrix
-ybus_aug[ngen:, ngen:] = np.copy(ymat)
-
-# NOTE: This wont work when multiple generators in same bus
-for i, gen in enumerate(psys.gendyn):
-    vm = v[2*gen.bus]
-    va = v[2*gen.bus + 1]
-
-    pi = s_inj[2*gen.bus] - s_load[2*gen.bus]
-    qi = s_inj[2*gen.bus + 1] - s_load[2*gen.bus + 1]
+    """
     
-    xdp = gen.x_dp
-    egen = (vm + qi*xdp/vm) + 1j*(pi*xdp/vm)
+    # Run power flow
+    psys.createYbusComplex()
+    v, s_inj = runpf(psys, verbose=False)
+    s_load = psys.get_loadvec()
 
-    vmag[i] = np.abs(egen)
-    vang[i] = np.angle(egen) + va
+    # Create some data structures.
+    ngen = psys.ngens
+    gen_inertia = np.zeros(ngen)
+    gen_damping = np.zeros(ngen)
 
-    # add new branches in augmented impedance matrix
-    yint = 1/(1j*xdp)
-    ybus_aug[i, i] += yint
-    ybus_aug[i, ngen + gen.bus] -= yint
-    ybus_aug[ngen + gen.bus, i] -= yint
-    ybus_aug[ngen + gen.bus, ngen + gen.bus] += yint
+    # Retrieve admittance matrix
+    ymat = np.copy(psys.ybus)
 
-    # inertia and damping
-    gen_inertia[i] = gen.H
-    gen_damping[i] = gen.D
+    # We assume loads are constant admittance.
+    for load in psys.loads:
+        vmag = v[2*load.bus]
+        yload = -load.pload/vmag**2 + 1j*(load.qload/vmag**2)
 
-gen_damping[:] = 0.01*gen_inertia[:]
+        ymat[load.bus, load.bus] -= yload
 
-# Compute reduced admittance matrix
-# Actually i can refactor this and not compute ybus_aug
-ynn = ybus_aug[:ngen, :ngen]
-ynr = ybus_aug[:ngen, ngen:]
-yrn = ybus_aug[ngen:, :ngen]
-yrr = ybus_aug[ngen:, ngen:]
+    # Create augmented voltage vector
+    vmag = np.zeros(ngen)
+    vang = np.zeros(ngen)
 
-# Kron reduction
-yred = (ynn - np.dot(ynr, np.dot(np.linalg.inv(yrr), yrn)))
+    # Create a new, extended admittance matrix:
+    ybus_aug = np.zeros((ngen + ymat.shape[0], ngen + ymat.shape[0]), dtype=complex)
 
-## Determine initial state
-w = np.ones(ngen) # ws = 1
-delta = vang
+    # insert existing admittance matrix
+    ybus_aug[ngen:, ngen:] = np.copy(ymat)
 
-## Compute mechanical power vector
-## If we have damping, we would do:
-##      pmec = pelec + D*wi
-pmec = np.zeros(ngen)
-compute_pelec(pmec, vmag, vang, yred)
-for i in range(ngen):
-    pmec[i] += gen_damping[i]*w[i]
+    # NOTE: This wont work when multiple generators in same bus
+    for i, gen in enumerate(psys.gendyn):
+        vm = v[2*gen.bus]
+        va = v[2*gen.bus + 1]
 
-x0 = np.hstack((w, delta))
-F = classic_resfun(None, x0, vmag, yred, pmec, gen_inertia, gen_damping)
-print(F)
+        pi = s_inj[2*gen.bus] - s_load[2*gen.bus]
+        qi = s_inj[2*gen.bus + 1] - s_load[2*gen.bus + 1]
+        
+        xdp = gen.x_dp
+        egen = (vm + qi*xdp/vm) + 1j*(pi*xdp/vm)
 
-x0[0] += 0.1
+        vmag[i] = np.abs(egen)
+        vang[i] = np.angle(egen) + va
 
+        # add new branches in augmented impedance matrix
+        yint = 1/(1j*xdp)
+        ybus_aug[i, i] += yint
+        ybus_aug[i, ngen + gen.bus] -= yint
+        ybus_aug[ngen + gen.bus, i] -= yint
+        ybus_aug[ngen + gen.bus, ngen + gen.bus] += yint
 
+        # inertia and damping
+        gen_inertia[i] = gen.H
+        gen_damping[i] = gen.D
 
-## ODE Integrator
-step_size = 1.0/60.0
+    # Compute reduced admittance matrix
+    # Actually i can refactor this and not compute ybus_aug
+    ynn = ybus_aug[:ngen, :ngen]
+    ynr = ybus_aug[:ngen, ngen:]
+    yrn = ybus_aug[ngen:, :ngen]
+    yrr = ybus_aug[ngen:, ngen:]
 
-sol = solve_ivp(classic_resfun, (0.0, 2.0), x0, dense_output=True,
-        args=(vmag, yred, pmec, gen_inertia, gen_damping,),
+    # Kron reduction
+    yred = (ynn - np.dot(ynr, np.dot(np.linalg.inv(yrr), yrn)))
+
+    ## Determine initial state
+    w = np.ones(ngen) # ws = 1
+    delta = vang
+
+    ## Compute mechanical power vector
+    pmec = np.zeros(ngen)
+    compute_pelec(pmec, vmag, vang, yred)
+    for i in range(ngen):
+        pmec[i] += gen_damping[i]*w[i]
+
+    x0 = np.hstack((w, delta))
+
+    return x0, vmag, yred, pmec, gen_inertia, gen_damping
+
+if __name__ == "__main__":
+    psys = load_psse(raw_filename="../data/ieee9_v33.raw")
+    #psys = load_psse(raw_filename="../data/2bus_33.raw")
+
+    add_dyr(psys, "../data/ieee9bus.dyr")
+    #add_dyr(psys, "../data/GENROU.dyr")
+    
+    x0, vmag, yred, pmec, genH, genD = reduced_system(psys)
+
+    # perturb
+    x0[0] += 0.1
+
+    ## ODE Integrator
+    step_size = 1.0/60.0
+
+    sol = solve_ivp(classic_resfun, (0.0, 2.0), x0, dense_output=True,
+            args=(vmag, yred, pmec, genH, genD,),
         max_step=step_size)
 
-for i in range(ngen):
-    plt.plot(sol.t, sol.y[i, :])
+    # Plots
+    ngen = pmec.size
 
-plt.show()
+    for i in range(ngen):
+        plt.plot(sol.t, sol.y[i, :])
+
+    plt.show()
