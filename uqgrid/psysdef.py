@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod, abstractproperty
 from .tools import csr_add_row, csr_set_row
 import numba
 from numba import jit
+import networkx as nx
 
 # IMPORT DEVICE IMPLEMENTATIONS
 from .genrou_imp import resdiff_genrou, jac_genrou, hes_genrou
@@ -520,6 +521,12 @@ class Psystem:
             graph[branch.fr].append(branch.to)
             graph[branch.to].append(branch.fr)
 
+        # create networkx graph
+        edgelist = [(branch.fr, branch.to) for branch in self.branches]
+        G = nx.Graph()
+        G.add_edges_from(edgelist)
+        self.graph = G
+
         # lazy way to get unique elements (due to parallel lines).
         # Might be OK because in general, connectivity in psys is sparse.
         for i in range(len(graph)):
@@ -653,6 +660,17 @@ class Psystem:
         for i in range(self.nloads):
             self.loads[i].set_alpha(par_vec[i])
 
+    def network_distance(self, bus_fr, bus_to, distance="shortest_path"):
+
+        if distance == "shortest_path":
+            # do I really need to do this to import it?
+            from .network import distance_graph
+            return distance_graph(self.graph, bus_fr, bus_to)
+        elif distance == "resistance":
+            from .network import distance_resistance
+            return distance_resistance(self.graph, bus_fr, bus_to)
+        else:
+            raise ("Network distance not implemented.")
     # IO
 
     def busmag_idx_set(self):
@@ -697,6 +715,11 @@ class Psystem:
                         "Index %g pertains to a %s in bus %d. Algebraic state number: %d."
                         % (idx_num, model.model_type, model.bus,
                            idx_num - dev_ptr))
+
+    # network plot
+
+    def plot_network(self):
+        nx.draw(self.graph)
 
 
 #####################################################

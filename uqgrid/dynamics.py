@@ -18,8 +18,7 @@ try:
     import petsc4py
 except:
     petsc4py = None
-    print("Warning: using uqgrid without PETSc4py. \
-            Some functionality will not be available")
+    print("Warning: using uqgrid without PETSc4py. Some functionality will not be available")
 if petsc4py:
     petsc4py.init(sys.argv)
     from petsc4py import PETSc

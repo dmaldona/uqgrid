@@ -2,11 +2,11 @@ import sys
 import numpy as np
 import cmath
 import scipy.io as sio
+import networkx as nx
 from scipy.sparse import csr_matrix
 
 from .psysdef import Psystem
 from .parse import load_matpower
-
 
 def matprint(mat, fmt="g"):
 # code from:
@@ -88,4 +88,8 @@ def createYbusComplex(psys):
 
     return ybus, ybus_sp
 
+def distance_graph(graph, fr, to):
+    return nx.shortest_path_length(graph, source=fr, target=to)
 
+def distance_resistance(graph, fr, to):
+    return nx.resistance_distance(graph, nodeA=fr, nodeB=to)
