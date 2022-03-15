@@ -91,6 +91,18 @@ def classic_jacobian(t, x, v, yred, pmec, H, D):
 
     return J
 
+def compute_vibration_matrices(yred, H, D):
+
+    """
+        Return matrices that compose
+        M\ddot{x} + D\dot{x} + Kx = 0
+    """
+    ngen = H.size
+    M = np.diag(H)
+    D = np.diag(D)
+    K = np.real(yred)
+
+    return M, D, K
 
 def reduced_system(psys):
     """ Compute reduced system via Kron reduction. In this system, we only have
@@ -187,15 +199,15 @@ def reduced_system(psys):
     return x0, vmag, yred, pmec, gen_inertia, gen_damping
 
 if __name__ == "__main__":
-    #psys = load_psse(raw_filename="../data/ieee9_v33.raw")
+    psys = load_psse(raw_filename="../data/ieee9_v33.raw")
     #psys = load_psse(raw_filename="../data/2bus_33.raw")
     #psys = load_psse(raw_filename="../data/IEEE39_v33.raw")
 
-    #add_dyr(psys, "../data/ieee9bus.dyr")
+    add_dyr(psys, "../data/ieee9bus.dyr")
     #add_dyr(psys, "../data/GENROU.dyr")
     #add_dyr(psys, "../data/IEEE39.dyr")
     
-    psys = system_perturb(2)
+    #psys = system_perturb(2)
 
     x0, vmag, yred, pmec, genH, genD = reduced_system(psys)
 
@@ -231,7 +243,7 @@ if __name__ == "__main__":
     # eigenvalue stuff
     l, u = np.linalg.eig(J)
 
-    u0 = np.real(u[0])
+    u0 = np.imag(u[1])
     sol = solve_ivp(classic_resfun, (0.0, tend), x0 + u0, dense_output=True,
             args=(vmag, yred, pmec, genH, genD,),
         max_step=step_size)
