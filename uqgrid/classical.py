@@ -65,7 +65,7 @@ def compute_vibration_matrices(yred, H, D):
     ngen = H.size
     M = np.diag(H)
     D = np.diag(D)
-    K = np.real(yred)
+    K = np.imag(yred)
 
     return M, D, K
 
@@ -137,7 +137,6 @@ def reduced_system(psys):
         # inertia and damping
         gen_inertia[i] = gen.H
         gen_damping[i] = gen.D
-        #gen_damping[i] = 0.1*gen.H
 
     # Compute reduced admittance matrix
     # Actually i can refactor this and not compute ybus_aug
