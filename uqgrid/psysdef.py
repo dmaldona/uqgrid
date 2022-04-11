@@ -721,6 +721,10 @@ class Psystem:
     def plot_network(self):
         nx.draw(self.graph)
 
+    def add_geo(self, substations, bus2sub):
+        self.substations = substations
+        self.bus2sub = bus2sub
+
 
 #####################################################
 # IMPLEMENTATION OF MODEL EQUATIONS                ##

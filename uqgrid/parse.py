@@ -2,6 +2,7 @@ from .psysdef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
 from .parse_psse import read_raw
 import scipy.io as sio
 import numpy as np
+import re
 
 def load_psse(raw_filename):
 
@@ -292,6 +293,34 @@ def add_dyr(psys, dyr_filename, verbose=False):
                         x1, Hin, Damp))
                     break
 
-def load_gis(datafile):
-    with open(filename, 'r') as f:
-        f.readline()
+def load_gic(psys, gis_filename):
+
+    substations = {}
+    bus2subs = np.zeros(psys.nbuses, dtype='int64')
+
+    with open(gis_filename, 'r') as f:
+        line = f.readline()
+        
+        sub_re = re.compile(r'(\d+)\s+[\'](.*)[\']\s+(\d+)\s+([\+\-]?\d+[.]\d+)\s+([\+\-]?\d+[.]\d+)')
+        while(True):
+            line = f.readline()
+            if "0 / End of Substation data, Begin Bus Substation Data" in line: break
+            if not line: break
+            else:
+                sub = sub_re.search(line)
+                if sub is not None:
+                    substations[int(sub.group(1))] = (float(sub.group(4)), float(sub.group(5)))
+        
+        bus_re = re.compile(r'(\d+)\s+(\d+)')
+        while(True):
+            line = f.readline()
+            if "0 / End of Bus Substation Data, Begin Transformer Data" in line: break
+            if not line: break
+            else:
+                bbs = bus_re.search(line)
+                if bbs is not None:
+                    bus = psys.ext2int[int(bbs.group(1))]
+                    subs = int(bbs.group(2))
+                    bus2subs[bus] = subs
+
+    psys.add_geo(substations, bus2subs)
