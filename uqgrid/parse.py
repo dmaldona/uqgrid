@@ -291,3 +291,7 @@ def add_dyr(psys, dyr_filename, verbose=False):
                     psys.add_load_dynamics(load, MotCIM5(load_id, ra, xa, xm, r1,
                         x1, Hin, Damp))
                     break
+
+def load_gis(datafile):
+    with open(filename, 'r') as f:
+        f.readline()
