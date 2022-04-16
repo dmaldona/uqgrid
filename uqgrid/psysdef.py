@@ -411,6 +411,7 @@ class Psystem:
         # flags
         self.assembled = -1
         self.init_flag = False
+        self.geo_flag = False
 
     def __str__(self):
         return (
@@ -719,11 +720,16 @@ class Psystem:
     # network plot
 
     def plot_network(self):
-        nx.draw(self.graph)
+        if self.geo_flag == True:
+            pos = {i:self.substations[self.bus2sub[i]] for i in range(self.nbuses)}
+            nx.draw(self.graph, pos=pos)
+        else:
+            nx.draw(self.graph)
 
     def add_geo(self, substations, bus2sub):
         self.substations = substations
         self.bus2sub = bus2sub
+        self.geo_flag = True
 
 
 #####################################################

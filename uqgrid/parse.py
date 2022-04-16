@@ -2,6 +2,7 @@ from .psysdef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
 from .parse_psse import read_raw
 import scipy.io as sio
 import numpy as np
+import warnings
 import re
 
 def load_psse(raw_filename):
@@ -63,7 +64,8 @@ def load_psse(raw_filename):
             # We don't have this implemented. Ensure it it 0
             MAG1 = tran.MAG1
             MAG2 = tran.MAG2
-            assert np.isclose(np.abs(MAG1) + np.abs(MAG2), 0.0), "Not implemented"
+            warnings.warn("Transformer Magnetizing Impedance not Implemented")       
+            #assert np.isclose(np.abs(MAG1) + np.abs(MAG2), 0.0), "Not implemented"
 
     # add generators
     for gen in case.gens:
@@ -87,7 +89,7 @@ def load_psse(raw_filename):
 
     for shunt in case.shunts:
         if shunt.status == 1:
-            bus = psse_to_int[busn.busn]
+            bus = psse_to_int[shunt.busn]
             psys.add_shunt(bus, shunt.gshunt, shunt.bshunt) 
 
     psys.add_ext2int(psse_to_int)
@@ -309,7 +311,7 @@ def load_gic(psys, gis_filename):
             else:
                 sub = sub_re.search(line)
                 if sub is not None:
-                    substations[int(sub.group(1))] = (float(sub.group(4)), float(sub.group(5)))
+                    substations[int(sub.group(1))] = (float(sub.group(5)), float(sub.group(4)))
         
         bus_re = re.compile(r'(\d+)\s+(\d+)')
         while(True):
