@@ -1,7 +1,7 @@
 # TEST NETWORK: 
 
 from uqgrid.psysdef import Psystem
-from uqgrid.network import createYbusReal
+from uqgrid.network import createYbusComplex
 from uqgrid.parse import load_matpower
 
 import unittest
@@ -47,7 +47,7 @@ class TestCase(unittest.TestCase):
         psys.add_branch(6, 7, 0.0085, 0.0720, sh = 0.149)
         psys.add_branch(7, 8, 0.0119, 0.1008, sh = 0.209)
 
-        ybus, ybus_sp = createYbusComplex(psys)
+        ybus = createYbusComplex(psys)
         matpower_data = sio.loadmat('data/ymat9bus_matpower.mat')
         ybus_mat = matpower_data['ymat']
 
@@ -60,7 +60,7 @@ class TestCase(unittest.TestCase):
 
         psys = load_matpower(mat_file="data/case14.mat")
         
-        ybus, ybus_sp = createYbusComplex(psys)
+        ybus = createYbusComplex(psys)
         matpower_data = sio.loadmat('data/ymat14bus_matpower.mat')
         ybus_mat = matpower_data['ymat']
 
