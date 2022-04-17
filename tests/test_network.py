@@ -1,7 +1,7 @@
 # TEST NETWORK: 
 
 from uqgrid.psysdef import Psystem
-from uqgrid.network import createYbusComplex, createYbusReal
+from uqgrid.network import createYbusReal
 from uqgrid.parse import load_matpower
 
 import unittest

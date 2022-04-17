@@ -3,6 +3,8 @@
 
 import datetime
 import xml.etree.ElementTree as ET
+import re
+import warnings
 
 class BusRaw(object):
 
@@ -152,7 +154,6 @@ class BranchRaw(object):
 class TransformerRaw(object):
 
     def __init__(self, line, line2, line3, line4):
-        # note: fow now we assume there are no three-way transformers
 
         line = line.strip('\n').split(',')
         self.fbus    = int(line[0])
@@ -264,13 +265,25 @@ class PsystemRaw(object):
         
         while(True):
             line = f.readline()
+
             if "0 / END OF TRANSFORMER DATA, BEGIN AREA DATA" in line: break
             if not line: break
             else:
-                line2 = f.readline()
-                line3 = f.readline()
-                line4 = f.readline()
-                self.transformers.append(TransformerRaw(line, line2, line3, line4))
+                line_trans = line.strip('\n').split(',')
+                kbus = int(line_trans[2])
+
+                if kbus == 0:
+                    line2 = f.readline()
+                    line3 = f.readline()
+                    line4 = f.readline()
+                    self.transformers.append(TransformerRaw(line, line2, line3, line4))
+                else:
+                    line2 = f.readline()
+                    line3 = f.readline()
+                    line4 = f.readline()
+                    line5 = f.readline()
+                    warnings.warn("Three-phase transformers not implemented")
+
 
     def nbus(self):
         return len(self.buses)
