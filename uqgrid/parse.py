@@ -21,7 +21,7 @@ def load_psse(raw_filename):
     for i in range(nbus):
         psys.add_bus(i, bus_type=case.buses[i].type)
         psys.buses[i].set_vinit(case.buses[i].vm, (np.pi/180.0)*case.buses[i].va)
-
+        psys.buses[i].baseKV = case.buses[i].baseKV
         psse_to_int[case.buses[i].busn] = i
 
     # add branches
@@ -67,6 +67,101 @@ def load_psse(raw_filename):
             warnings.warn("Transformer Magnetizing Impedance not Implemented")       
             #assert np.isclose(np.abs(MAG1) + np.abs(MAG2), 0.0), "Not implemented"
 
+
+    # we will need to create dummy buses if we find three-winding transformers
+    MAX_BUSN = max(psse_to_int, key=psse_to_int.get) + 1
+    kdummy = 0
+
+    for tran in case.transthree:
+
+        # first, we need to add a dummy bus
+        bus_internal = len(psys.buses)
+        psys.add_bus(bus_internal, bus_type=2)
+        psys.buses[bus_internal].set_vinit(tran.vmstar, tran.anstar)
+        psse_to_int[MAX_BUSN + kdummy] = bus_internal
+        psys.buses[bus_internal].dummy = True
+        kdummy += 1
+
+        ibus = psse_to_int[tran.ibus]
+        jbus = psse_to_int[tran.jbus]
+        kbus = psse_to_int[tran.kbus]
+
+        if tran.CW == 2:
+            baseKV1 = psys.buses[ibus].baseKV
+            baseKV2 = psys.buses[jbus].baseKV
+            baseKV3 = psys.buses[kbus].baseKV
+
+            volt1 = tran.WINDV1/baseKV1
+            volt2 = tran.WINDV2/baseKV2
+            volt3 = tran.WINDV3/baseKV3
+        else:
+            volt1 = tran.WINDV1
+            volt2 = tran.WINDV2
+            volt3 = tran.WINDV3
+
+        #then the impedances are converted to a proper value
+        if tran.CZ == 1:
+            r12 = tran.r12
+            r23 = tran.r23
+            r13 = tran.r13
+
+            x12 = tran.x12
+            x23 = tran.x23
+            x13 = tran.x13
+
+        elif tran.CZ == 2:
+            r12 = tran.r12*(baseMVA/tran.sbase12)
+            r23 = tran.r23*(baseMVA/tran.sbase23)
+            r13 = tran.r13*(baseMVA/tran.sbase13)
+
+            x12 = tran.x12*(baseMVA/tran.sbase12)
+            x23 = tran.x23*(baseMVA/tran.sbase23)
+            x13 = tran.x13*(baseMVA/tran.sbase13)
+
+        else:
+            r12 = (tran.r12 / pow(10,6)) / tran.sbase12
+            r23 = (tran.r23 / pow(10,6)) / tran.sbase23
+            r13 = (tran.r13 / pow(10,6)) / tran.sbase13
+
+            x12 = sqrt(pow(tran.x12, 2) - pow(r12, 2))
+            x23 = sqrt(pow(tran.x23, 2) - pow(r23, 2))
+            x13 = sqrt(pow(tran.x13, 2) - pow(r13, 2))
+
+            r12 = r12*(baseMVA/tran.sbase12)
+            r23 = r23*(baseMVA/tran.sbase23)
+            r13 = r13*(baseMVA/tran.sbase13)
+
+            x12 = x12*(baseMVA/tran.sbase12)
+            x23 = x23*(baseMVA/tran.sbase23)
+            x13 = x13*(baseMVA/tran.sbase13)
+
+        r1 = 0.5 * (r12 + r13 - r23)
+        r2 = 0.5 * (r12 - r13 + r23)
+        r3 = 0.5 * (r13 + r23 - r12)
+
+        x1 = 0.5 * (x12 + x13 - x23)
+        x2 = 0.5 * (x12 - x13 + x23)
+        x3 = 0.5 * (x13 + x23 - x12)
+
+        tap1 = volt1
+        tap2 = volt2
+        tap3 = volt3
+
+        #The initial status (service) of the transformer.
+
+        if tran.status == 0: s1, s2, s3 = 0, 0, 0
+        elif tran.status: s1, s2, s3 = 1, 1, 1
+        elif tran.status == 2: s1, s2, s3 = 1, 0, 1
+        elif tran.status == 3: s1, s2, s3 = 1, 1, 0
+        elif tran.status == 4: s1, s2, s3 = 0, 1, 1
+
+        psys.add_branch(ibus, bus_internal, r1, x1,
+                0.0, tap=tap1, shift=tran.ANG1)
+        psys.add_branch(bus_internal, jbus, r2, x2,
+                0.0, tap=tap2, shift=tran.ANG2)
+        psys.add_branch(bus_internal, kbus, r3, x3,
+                0.0, tap=tap3, shift=tran.ANG3)
+
     # add generators
     for gen in case.gens:
         bus = psse_to_int[int(gen.busn)]
@@ -85,7 +180,6 @@ def load_psse(raw_filename):
     # ID "B" 200 MW
     # We calculate the total power -> 300 MW
     # Then alpha = 100/300 = 100.
-
 
     for shunt in case.shunts:
         if shunt.status == 1:
@@ -321,8 +415,10 @@ def load_gic(psys, gis_filename):
             else:
                 bbs = bus_re.search(line)
                 if bbs is not None:
-                    bus = psys.ext2int[int(bbs.group(1))]
-                    subs = int(bbs.group(2))
-                    bus2subs[bus] = subs
+                    extbus = int(bbs.group(1))
+                    if extbus in psys.ext2int:
+                        bus = psys.ext2int[extbus]
+                        subs = int(bbs.group(2))
+                        bus2subs[bus] = subs
 
     psys.add_geo(substations, bus2subs)

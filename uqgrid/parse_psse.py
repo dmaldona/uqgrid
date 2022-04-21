@@ -198,7 +198,97 @@ class TransformerRaw(object):
         self.WINDV2  = float(line[0])
         self.NOMV2   = float(line[1])
         
+class ThreeTransformerRaw(object):
 
+    def __init__(self, line, line2, line3, line4, line5):
+
+        line = line.strip('\n').split(',')
+        self.ibus    = int(line[0])
+        self.jbus    = int(line[1])
+        self.kbus    = int(line[2])
+        self.ckt     = line[3]
+        self.CW      = int(line[4])
+        self.CZ      = int(line[5])
+        self.CM      = int(line[6])
+        self.MAG1    = float(line[7])
+        self.MAG2    = float(line[8])
+        self.NMETR   = int(line[9])
+        self.tname   = line[10]
+        self.status  = int(line[11])
+        self.o1      = float(line[12])
+
+        line = line2.strip('\n').split(',')
+        self.r12     = float(line[0])
+        self.x12     = float(line[1])
+        self.sbase12 = float(line[2])
+
+        self.r23     = float(line[3])
+        self.x23     = float(line[4])
+        self.sbase23 = float(line[5])
+
+        self.r13     = float(line[6])
+        self.x13     = float(line[7])
+        self.sbase31 = float(line[8])
+
+        self.vmstar = float(line[9])
+        self.anstar = float(line[10])
+
+        line = line3.strip('\n').split(',')
+        self.WINDV1  = float(line[0])
+        self.NOMV1   = float(line[1])
+        self.ANG1    = float(line[2])
+        self.rateA1   = float(line[3])
+        self.rateB1   = float(line[4])
+        self.rateC1   = float(line[5])
+        self.COD1    = int(line[6])
+        self.CONT1   = int(line[7])
+        self.RMA1    = float(line[8])
+        self.RMI1    = float(line[9])
+        self.VMA1    = float(line[10])
+        self.VMI1    = float(line[11])
+        self.NTP1    = int(line[12])
+        self.TAB1    = int(line[13])
+        self.CR1     = float(line[14])
+        self.CX1     = float(line[15])
+        self.CNXA1   = float(line[16])
+
+        line = line4.strip('\n').split(',')
+        self.WINDV2  = float(line[0])
+        self.NOMV2   = float(line[1])
+        self.ANG2    = float(line[2])
+        self.rateA2   = float(line[3])
+        self.rateB2   = float(line[4])
+        self.rateC2   = float(line[5])
+        self.COD2    = int(line[6])
+        self.CONT2   = int(line[7])
+        self.RMA2    = float(line[8])
+        self.RMI2    = float(line[9])
+        self.VMA2    = float(line[10])
+        self.VMI2    = float(line[11])
+        self.NTP2    = int(line[12])
+        self.TAB2    = int(line[13])
+        self.CR2     = float(line[14])
+        self.CX2     = float(line[15])
+        self.CNXA2   = float(line[16])
+
+        line = line5.strip('\n').split(',')
+        self.WINDV3  = float(line[0])
+        self.NOMV3   = float(line[1])
+        self.ANG3    = float(line[2])
+        self.rateA3   = float(line[3])
+        self.rateB3   = float(line[4])
+        self.rateC3   = float(line[5])
+        self.COD3    = int(line[6])
+        self.CONT3   = int(line[7])
+        self.RMA3    = float(line[8])
+        self.RMI3    = float(line[9])
+        self.VMA3    = float(line[10])
+        self.VMI3    = float(line[11])
+        self.NTP3    = int(line[12])
+        self.TAB3    = int(line[13])
+        self.CR3     = float(line[14])
+        self.CX3     = float(line[15])
+        self.CNXA3   = float(line[16])
 
 class PsystemRaw(object):
     """ class: system
@@ -215,6 +305,7 @@ class PsystemRaw(object):
         self.branches     = []
         self.gens         = []
         self.transformers = []
+        self.transthree = []
 
     def add_buses(self, f):
 
@@ -282,7 +373,9 @@ class PsystemRaw(object):
                     line3 = f.readline()
                     line4 = f.readline()
                     line5 = f.readline()
-                    warnings.warn("Three-phase transformers not implemented")
+                    self.transthree.append(ThreeTransformerRaw(line, line2, line3, line4, line5))
+
+                    warnings.warn("Three-phase transformers not well tested")
 
 
     def nbus(self):

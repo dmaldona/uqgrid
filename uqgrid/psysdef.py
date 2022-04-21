@@ -82,6 +82,10 @@ class Bus(object):
         )  # This id is sequentially created, for internal numbering
         self.type = bus_type  # 1: PQ, 2:PV, 3:slack
 
+        # these can be set at a later time
+        self.baseKV = -1
+        self.dummy = False
+
         # registers
         self.loads = []
 

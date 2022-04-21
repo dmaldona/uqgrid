@@ -31,7 +31,6 @@ def createYbusComplex(psys):
         fr = branch.fr
         to = branch.to
         y  = (1.0/(branch.r + 1j*branch.x))
-
         if fr not in ybus_dict:
             ybus_dict[fr] = {}
             ybus_dict[fr][fr] = 0.0
@@ -62,10 +61,7 @@ def createYbusComplex(psys):
 
     for shunt in psys.shunts:
 
-        if fr not in ybus_dict:
-            ybus_dict[fr] = {}
-            ybus_dict[fr][fr] = 0.0
-        if to not in ybus_dict:
+        if shunt.bus not in ybus_dict:
             ybus_dict[to] = {}
             ybus_dict[to][to] = 0.0
 
