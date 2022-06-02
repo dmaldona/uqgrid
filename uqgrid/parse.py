@@ -64,8 +64,8 @@ def load_psse(raw_filename):
             # We don't have this implemented. Ensure it it 0
             MAG1 = tran.MAG1
             MAG2 = tran.MAG2
-            warnings.warn("Transformer Magnetizing Impedance not Implemented")       
-            #assert np.isclose(np.abs(MAG1) + np.abs(MAG2), 0.0), "Not implemented"
+            #warnings.warn("Transformer Magnetizing Impedance not Implemented")       
+            assert np.isclose(np.abs(MAG1) + np.abs(MAG2), 0.0), "Not implemented"
 
 
     # we will need to create dummy buses if we find three-winding transformers

@@ -42,19 +42,12 @@ def createYbusComplex(psys):
         if to not in ybus_dict[fr]:
             ybus_dict[fr][to] = 0.0
 
-        # ybus[fr, fr] += y/(tap*tap)
-        # ybus[to, to] += y
-        # ybus[fr, to] -= y/(np.conj(tpsh))
-        # ybus[to, fr] -= y/(tpsh)
-
         ybus_dict[fr][fr] += y/(tap*tap)
         ybus_dict[to][to] += y
         ybus_dict[fr][to] -= y/(np.conj(tpsh))
         ybus_dict[to][fr] -= y/(tpsh)
 
         # charging susceptance
-        # ybus[to, to] += ((1j*0.5*branch.sh)/(tap*tap))
-        # ybus[fr, fr] += 1j*0.5*branch.sh
 
         ybus_dict[to][to] += ((1j*0.5*branch.sh)/(tap*tap))
         ybus_dict[fr][fr] += 1j*0.5*branch.sh
@@ -65,7 +58,6 @@ def createYbusComplex(psys):
             ybus_dict[to] = {}
             ybus_dict[to][to] = 0.0
 
-        # ybus[shunt.bus, shunt.bus] += shunt.gsh + 1j*shunt.bsh
         ybus_dict[shunt.bus][shunt.bus] += shunt.gsh + 1j*shunt.bsh
 
 
@@ -90,8 +82,6 @@ def createYbusComplex(psys):
             k += 1
 
     ybus_spa = csr_matrix((data, (row, col)), shape=(dim, dim))
-
-    #ybus_sp = csr_matrix(ybus)
 
     return ybus_spa
 

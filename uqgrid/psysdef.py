@@ -571,21 +571,20 @@ class Psystem:
 
     def createYbusComplex(self):
         from .network import createYbusComplex
-        # TODO: get rid of dense YBUS.
         self.ybus_spa = createYbusComplex(self)
 
 
         """ Bizarre wasteful numpy matrix"""
-        # ybus_mat = np.zeros(
-        #     (self.nbuses, self.max_con + 1), dtype=np.complex64)
+        ybus_mat = np.zeros(
+             (self.nbuses, self.max_con + 1), dtype=np.complex128)
 
-        # for i in range(self.nbuses):
-        #     ybus_mat[i, 0] = self.ybus[i, i]
-        #     for j in range(self.graph_mat[i, 0]):
-        #         to_bus = self.graph_mat[i, 1 + j]
-        #         ybus_mat[i, j + 1] = self.ybus[i, to_bus]
+        for i in range(self.nbuses):
+            ybus_mat[i, 0] = self.ybus_spa[i, i]
+            for j in range(self.graph_mat[i, 0]):
+                to_bus = self.graph_mat[i, 1 + j]
+                ybus_mat[i, j + 1] = self.ybus_spa[i, to_bus]
 
-        self.ybus_mat = None
+        self.ybus_mat = ybus_mat
 
     # For exciters and governors, these are always associated to a generator.
     # Associated generator must be provided.
