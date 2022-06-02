@@ -82,6 +82,10 @@ class Bus(object):
         )  # This id is sequentially created, for internal numbering
         self.type = bus_type  # 1: PQ, 2:PV, 3:slack
 
+        # these can be set at a later time
+        self.baseKV = -1
+        self.dummy = False
+
         # registers
         self.loads = []
 
@@ -411,6 +415,7 @@ class Psystem:
         # flags
         self.assembled = -1
         self.init_flag = False
+        self.geo_flag = False
 
     def __str__(self):
         return (
@@ -566,18 +571,18 @@ class Psystem:
 
     def createYbusComplex(self):
         from .network import createYbusComplex
-        # TODO: get rid of dense YBUS.
-        self.ybus, self.ybus_spa = createYbusComplex(self)
-        """ Bizarre wasteful numpy matrix"""
+        self.ybus_spa = createYbusComplex(self)
 
+
+        """ Bizarre wasteful numpy matrix"""
         ybus_mat = np.zeros(
-            (self.nbuses, self.max_con + 1), dtype=np.complex64)
+             (self.nbuses, self.max_con + 1), dtype=np.complex128)
 
         for i in range(self.nbuses):
-            ybus_mat[i, 0] = self.ybus[i, i]
+            ybus_mat[i, 0] = self.ybus_spa[i, i]
             for j in range(self.graph_mat[i, 0]):
                 to_bus = self.graph_mat[i, 1 + j]
-                ybus_mat[i, j + 1] = self.ybus[i, to_bus]
+                ybus_mat[i, j + 1] = self.ybus_spa[i, to_bus]
 
         self.ybus_mat = ybus_mat
 
@@ -719,7 +724,16 @@ class Psystem:
     # network plot
 
     def plot_network(self):
-        nx.draw(self.graph)
+        if self.geo_flag == True:
+            pos = {i:self.substations[self.bus2sub[i]] for i in range(self.nbuses)}
+            nx.draw(self.graph, pos=pos)
+        else:
+            nx.draw(self.graph)
+
+    def add_geo(self, substations, bus2sub):
+        self.substations = substations
+        self.bus2sub = bus2sub
+        self.geo_flag = True
 
 
 #####################################################

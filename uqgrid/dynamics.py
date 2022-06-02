@@ -25,7 +25,7 @@ if petsc4py:
 
 #from psysdef import Psystem
 from .psysdef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
-from .pflow import runpf, compute_pinj, compute_pinj_alt
+from .pflow import runpf, compute_pinj_alt
 from .tools import matprint, csr_mult_row, csr_add_row, csr_set_row, csr_to_zeros
 # supress annoying LAPACK warning on MACOS
 import warnings
@@ -154,9 +154,6 @@ def residual_function(F, z, theta, psys):
     y = z[dif_size:dif_size + alg_size]
     v = z[dif_size + alg_size:]
 
-    # should I write another function?
-    #compute_pinj(v[0::2], v[1::2], F[alg_size + dif_size::2],
-    #        F[alg_size + dif_size + 1::2], psys.ybus)
     compute_pinj_alt(v, F[alg_size + dif_size:], psys.ybus_mat, psys.graph_mat,
                      psys.nbuses)
     F[alg_size + dif_size:] = -1.0*F[alg_size + dif_size:]
@@ -195,8 +192,8 @@ def power_flow_jacobian(ybus_data, ybus_ptr, ybus_idx, J_data, J_ptr, J_idx,
                         dev, v, nbus):
 
     # (NOTE) This should be the maximum of n connected nodes. Which I must store as variable
-    val = np.zeros(10)
-    col = np.zeros(10)
+    val = np.zeros(20)
+    col = np.zeros(20)
 
     for fr in range(nbus):
 
@@ -356,8 +353,8 @@ def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
                        HP_idx, HQ_data, HQ_ptr, HQ_idx, dev, v, nbus):
 
     # TODO: See residual jacobian
-    val = np.zeros(10)
-    col = np.zeros(10)
+    val = np.zeros(20)
+    col = np.zeros(20)
 
     pinj_vf_vf = 0.0
     qinj_vf_vf = 0.0

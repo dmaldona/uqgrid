@@ -11,8 +11,8 @@ from scipy import optimize
 # N-R implementation. If I want to use a SCIPY solver I need to write the problem
 # in a canonical form.
 
-@jit(nopython=True, cache=True)
-def resfun(F, x, vmag, vang, Pinj, Qinj, ybus, bus_type, PQ_idx, PQV_idx, graph_mat):
+#@jit(nopython=True, cache=True)
+def resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat):
 
     # The first step is to susbtitute back the vmag and vang unknown variables
     # from x to 'vmag' and 'vang'. It might seem confusing to mix in the same
@@ -40,14 +40,14 @@ def resfun(F, x, vmag, vang, Pinj, Qinj, ybus, bus_type, PQ_idx, PQV_idx, graph_
             F[PQ_idx[fr]] -= Qinj[fr]
             
             # self contribution
-            bij = ybus[fr, fr].imag
+            bij = ybus_mat[fr, 0].imag
             F[PQ_idx[fr]] -= vmag[fr]*vmag[fr]*bij
 
             for j in range(graph_mat[fr, 0]):
                 to = graph_mat[fr, j + 1]
                 
-                gij = ybus[fr, to].real
-                bij = ybus[fr, to].imag
+                gij = ybus_mat[fr, j + 1].real
+                bij = ybus_mat[fr, j + 1].imag
 
                 angleij = vang[fr] - vang[to]
 
@@ -58,14 +58,14 @@ def resfun(F, x, vmag, vang, Pinj, Qinj, ybus, bus_type, PQ_idx, PQV_idx, graph_
             F[nPQ + PQV_idx[fr]] -= Pinj[fr]
             
             # self contribution
-            gij = ybus[fr, fr].real
+            gij = ybus_mat[fr, 0].real
             F[nPQ + PQV_idx[fr]] += vmag[fr]*vmag[fr]*gij
 
             for j in range(graph_mat[fr, 0]):
                 to = graph_mat[fr, j + 1]
                 
-                gij = ybus[fr, to].real
-                bij = ybus[fr, to].imag
+                gij = ybus_mat[fr, j + 1].real
+                bij = ybus_mat[fr, j + 1].imag
 
                 angleij = vang[fr] - vang[to]
                 
@@ -74,32 +74,10 @@ def resfun(F, x, vmag, vang, Pinj, Qinj, ybus, bus_type, PQ_idx, PQV_idx, graph_
 
     return F
 
-def resfun_wrapper(x, vmag, vang, Pinj, Qinj, ybus, bus_type, PQ_idx, PQV_idx, graph_mat):
+def resfun_wrapper(x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat):
     F = np.zeros(len(x))
-    resfun(F, x, vmag, vang, Pinj, Qinj, ybus, bus_type, PQ_idx, PQV_idx, graph_mat)
+    resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat)
     return F
-
-# power injection 
-def compute_pinj(vmag, vang, Pinj, Qinj, ybus):
-
-    nbus = len(vmag)
-
-    for i in range(nbus):
-
-        Pinj[i] = 0.0
-        Qinj[i] = 0.0
-
-        for j in range(nbus):
-            gij = ybus[i, j].real
-            bij = ybus[i, j].imag
-
-            angleij = vang[i] - vang[j]
-
-            Pinj[i] += vmag[i]*vmag[j]*(gij*np.cos(angleij)
-                + bij*np.sin(angleij))
-
-            Qinj[i] += vmag[i]*vmag[j]*(gij*np.sin(angleij)
-                - bij*np.cos(angleij))
 
 @jit(nopython=True, cache=True)
 def compute_pinj_alt(v, Sinj, ybus_mat, graph_mat, nbus):
@@ -204,9 +182,8 @@ def runpf(psys, verbose=False):
             x0[nPQ + PQV_idx[i]] = psys.buses[i].v0a
 
     # pack data structures
-
     sol, info, ier, msg = optimize.fsolve(resfun_wrapper, x0, args = (vmag, vang, Pinj, Qinj, 
-        psys.ybus, bus_type, PQ_idx, PQV_idx, psys.graph_mat), full_output=True, epsfcn=1e-10)
+        psys.ybus_mat, bus_type, PQ_idx, PQV_idx, psys.graph_mat), full_output=True, epsfcn=1e-10)
 
     if ier == 1:
         if verbose: print("Power flow converged.")
@@ -224,13 +201,10 @@ def runpf(psys, verbose=False):
         if PQV_idx[i] >= 0:
             vang[i] = sol[nPQ + PQV_idx[i]]
 
-    # retrieve power injections
-    compute_pinj(vmag, vang, Pinj, Qinj, psys.ybus)
-
-    # we will return a vetor v and pinj such that
+    # we will return a vector v and pinj such that
     # v = [vmag1, vang1, vmag2, vang2, ...]
     # Sinj = [pinj1, qinj, pinj2, qinj2, ...]
     v = np.array([vmag, vang]).T.flatten()
-    Sinj = np.array([Pinj, Qinj]).T.flatten()
-
+    Sinj = np.zeros(len(v))
+    compute_pinj_alt(v, Sinj, psys.ybus_mat, psys.graph_mat, psys.nbuses)
     return v, Sinj
