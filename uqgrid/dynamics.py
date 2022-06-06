@@ -9,7 +9,8 @@ from scipy import optimize
 import numba
 from numba import jit
 from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.sparsetools import csr_matvec
+from scipy.sparse.linalg import spsolve, factorized
 import scipy as sp
 import math
 
@@ -591,7 +592,7 @@ def residual_hessian(H, z, theta, psys):
 ###################################
 
 
-def first_sensitivity(psys, z, J, uold, theta, h):
+def first_sensitivity(psys, z, sfact, uold, theta, h):
     """Computes first-order sensitivity using backward Euler
 
     Args:
@@ -605,28 +606,26 @@ def first_sensitivity(psys, z, J, uold, theta, h):
 
     NDIFFEQ = psys.num_dof_dif
 
-    # Compute jacobian
-    csr_to_zeros(J.data, J.indptr, J.indices)
-    residual_jacobian(J, z, theta, psys)
+    rhs = np.zeros(z.size)
 
-    # integration jacobian (NOTE: refactor or move this)
-    for i in range(NDIFFEQ):
-        csr_mult_row(J.data, J.indptr, J.indices, i, h)
-    col = np.array([0])
-    data = np.array([-1.0])
-    for i in range(NDIFFEQ):
-        col[0] = i
-        csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
-
-    # right hand side. One for each load
+    
     for i in range(psys.nloads):
-        b = gradient_p(psys, z, theta, load_idx=i)
-        b[:NDIFFEQ] = h*b[:NDIFFEQ]
-        b[:NDIFFEQ] += uold[:NDIFFEQ, i]
-        b = -b
-        uold[:,i] = spsolve(J, b)
+        rhs[:] = gradient_p(psys, z, theta, load_idx=i)
+        rhs[:NDIFFEQ] = h*rhs[:NDIFFEQ]
+        rhs[:NDIFFEQ] += uold[:NDIFFEQ, i]
+        rhs = -rhs
+        uold[:,i] = sfact(rhs)
 
-def second_sensitivity(psys, x, u, J, HES, vold, theta, h):
+@jit("f8(f8[:], f8[:], i8)", nopython=True, cache=True)
+def numba_dot(x, y, n):
+
+    res = 0.0
+    for i in range(n):
+        res += x[i]*y[i]
+    return res
+
+
+def second_sensitivity(psys, x, u, sfact, HES, vold, theta, h):
     """
     Name: second_sensitivity
     Description: computes second order sensitivities (self sensitivities)
@@ -642,18 +641,25 @@ def second_sensitivity(psys, x, u, J, HES, vold, theta, h):
 
     NDIFFEQ = psys.num_dof_dif
     NEQ = sys_size
-
+    
+    aux_vec = np.zeros(NEQ)
+    mu = np.zeros(NEQ)
+    ui = np.zeros(NEQ)
 
     for i in range(psys.nloads):
         GX = gradient_xp(psys, x, theta, load_idx=i)
         g = gradient_pp(psys, x, theta, idx_a=i, idx_b=i)
-        ui = u[:,i]
-
-        mu = np.zeros(NEQ)
+        ui[:] = u[:,i]
+        mu.fill(0.0)
 
         for j in range(NEQ):
             if HES[j] is not None:
-                mu[j] = ui.dot(HES[j].dot(ui))
+                
+                aux_vec.fill(0.0)
+                csr_matvec(NEQ, NEQ, HES[j].indptr, HES[j].indices, 
+                    HES[j].data, ui, aux_vec)
+
+                mu[j] = numba_dot(ui, aux_vec, NEQ)
 
         mu += 2.0*np.dot(GX, ui)
         mu += g
@@ -662,9 +668,9 @@ def second_sensitivity(psys, x, u, J, HES, vold, theta, h):
 
         mu = -mu
 
-        vold[:,i] = spsolve(J, mu)
+        vold[:,i] = sfact(mu)
 
-def mixed_sensitivity(psys, x, u, J, HES, mold, theta, h):
+def mixed_sensitivity(psys, x, u, sfact, HES, mold, theta, h):
     """
     Name: mixed_sensitivity
     Description: second order mixed sensitivities
@@ -680,6 +686,11 @@ def mixed_sensitivity(psys, x, u, J, HES, mold, theta, h):
 
     NDIFFEQ = psys.num_dof_dif
     NEQ = sys_size
+    
+    aux_vec = np.zeros(NEQ)
+    ui = np.zeros(NEQ)
+    uj = np.zeros(NEQ)
+    mu = np.zeros(NEQ)
 
     k = 0
     for i in range(psys.nloads):
@@ -687,14 +698,17 @@ def mixed_sensitivity(psys, x, u, J, HES, mold, theta, h):
             GXi = gradient_xp(psys, x, theta, load_idx=i)
             GXj = gradient_xp(psys, x, theta, load_idx=j)
             g = gradient_pp(psys, x, theta, idx_a=i, idx_b=j)
-            ui = u[:,i]
-            uj = u[:,j]
-
-            mu = np.zeros(NEQ)
+            ui[:] = u[:,i]
+            uj[:] = u[:,j]
+            mu.fill(0.0)
 
             for eq_idx in range(NEQ):
                 if HES[eq_idx] is not None:
-                    mu[eq_idx] = ui.dot(HES[eq_idx].dot(uj))
+                    #mu[eq_idx] = ui.dot(HES[eq_idx].dot(uj))
+                    aux_vec.fill(0.0)
+                    csr_matvec(NEQ, NEQ, HES[eq_idx].indptr, HES[eq_idx].indices, 
+                        HES[eq_idx].data, uj, aux_vec)
+                    mu[eq_idx] = numba_dot(ui, aux_vec, NEQ)
 
             mu += np.dot(GXi, uj)
             mu += np.dot(GXj, ui)
@@ -704,7 +718,7 @@ def mixed_sensitivity(psys, x, u, J, HES, mold, theta, h):
 
             mu = -mu
 
-            mold[:,k] = spsolve(J, mu)
+            mold[:,k] = sfact(mu)
             k += 1
 
 
@@ -866,14 +880,31 @@ def integrate(zold,
             raise NameError('N-R solver did not converge.')
 
     if uold is not None:
+        # We need the Jacobian factorized and in CSC form
+        
+        csr_to_zeros(J.data, J.indptr, J.indices)
+        residual_jacobian(J, z, theta, psys)
+        
+        for i in range(NDIFFEQ):
+            csr_mult_row(J.data, J.indptr, J.indices, i, h)
+        col = np.array([0])
+        data = np.array([-1.0])
+        for i in range(NDIFFEQ):
+            col[0] = i
+            csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
+        
+        JJ = J.tocsc(copy=True)
+        sfact = factorized(JJ)
+
+    if uold is not None:
         # Integrate 1st order sensitivity equations
-        first_sensitivity(psys, z, J, uold, theta, h)
+        first_sensitivity(psys, z, sfact, uold, theta, h)
 
     if vold is not None and SECONDORDER:
         # Integrate 2nd order sensitivity equations
         residual_hessian(Hess, z, theta, psys)
-        second_sensitivity(psys, z, uold, J, Hess, vold, theta, h)
-        mixed_sensitivity(psys, z, uold, J, Hess, mold, theta, h)
+        second_sensitivity(psys, z, uold, sfact, Hess, vold, theta, h)
+        mixed_sensitivity(psys, z, uold, sfact, Hess, mold, theta, h)
     else:
         v = None
         m = None
