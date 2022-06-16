@@ -5,7 +5,7 @@ from numba import jit
 from .tools import csr_add_row, csr_set_row
 
 @jit(nopython=True, cache=True)
-def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var):
+def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
 
     dp = idxs[0]
     ap = idxs[1]
@@ -40,8 +40,14 @@ def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var):
     i_q      = z[ap + 2]
     i_d      = z[ap + 3]
 
-    vm = v[2*bus]
-    va = v[2*bus + 1]
+    if power_injection:
+        vm = v[2*bus]
+        va = v[2*bus + 1]
+    else:
+        vr = v[2*bus]
+        vi = v[2*bus + 1]
+        vm = np.sqrt(vr**2.0 + vi**2.0)
+        va = np.arctan2(vi, vr)
 
     # control
     pm_idx = ctrl_idx[0]

@@ -170,6 +170,13 @@ class Load(object):
         F[2*self.bus] += np.real(icomp)
         F[2*self.bus + 1] += np.imag(icomp)
 
+        yload = (Pl -1j*Ql)/(v0**2)
+        #F[2*self.bus] -= (vr*yload.real - vi*yload.imag)
+        #F[2*self.bus + 1] -= (vr*yload.imag + vi*yload.real)
+
+        
+
+
     def residual_jac(self, J, z, v, theta, dev):
         Pl = self.pload
         Ql = self.qload
@@ -280,6 +287,14 @@ class BusFault(object):
     def residual_pinj(self, F, v):
         vm = v[2*self.bus]
         F[2*self.bus] -= vm*vm*(1.0/self.rfault)
+
+    def residual_cinj(self, F, v):
+        vr = v[2*self.bus]
+        vi = v[2*self.bus + 1]
+        yfault = 1/self.rfault
+        
+        F[2*self.bus] -= yfault*vr
+        F[2*self.bus + 1] -= yfault*vi
 
     def residual_jac(self, J, z, v, theta, dev):
 
@@ -983,9 +998,8 @@ class GenGENROU(DynamicGenerator):
 
         return None
 
-    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx, ctrl_var):
-
-        resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var)
+    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
+        resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection)
 
     def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
 
@@ -1009,7 +1023,6 @@ class GenGENROU(DynamicGenerator):
         i_q = z[ap + 2]
         i_d = z[ap + 3]
         delta = z[dp + 5]
-
 
         F[2*self.bus] += np.sin(delta)*i_d + np.cos(delta)*i_q
         F[2*self.bus + 1] += -np.cos(delta)*i_d + np.sin(delta)*i_q

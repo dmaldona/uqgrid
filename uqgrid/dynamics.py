@@ -164,7 +164,6 @@ def residual_function(F, z, theta, psys):
         csr_matvec(psys.rybus.shape[0],psys.rybus.shape[1],psys.rybus.indptr,
                 psys.rybus.indices, psys.rybus.data, v, F[alg_size + dif_size:])
     F[alg_size + dif_size:] = -1.0*F[alg_size + dif_size:]
-    print(F)
     
 
     idxs = np.zeros(4, dtype=np.int64)
@@ -178,7 +177,8 @@ def residual_function(F, z, theta, psys):
         ctrl_idx = psys.devices[i].ctrl_idx
         ctrl_var = psys.devices[i].ctrl_var
 
-        psys.devices[i].residual_diff(F, z, v, theta, idxs, ctrl_idx, ctrl_var)
+        psys.devices[i].residual_diff(F, z, v, theta,
+                idxs, ctrl_idx, ctrl_var, psys.power_injection)
         if psys.power_injection:
             psys.devices[i].residual_pinj(F[alg_size + dif_size:], z, v, None,
                                       idxs)
@@ -195,9 +195,10 @@ def residual_function(F, z, theta, psys):
 
     for fault in psys.fault_events:
         if fault.active:
-            fault.residual_pinj(F[alg_size + dif_size:], v)
-    print(F)
-    exit()
+            if psys.power_injection:
+                fault.residual_pinj(F[alg_size + dif_size:], v)
+            else:
+                fault.residual_cinj(F[alg_size + dif_size:], v)
 
     # Restore write access to system vector
     z.flags.writeable = True
@@ -846,7 +847,7 @@ def integrate(zold,
         jac = nd.Jacobian(function_beuler_wrapper)
 
     if fsolve:
-        sol, info, ier, msg = optimize.fsolve(function_beuler_latin_wrapper,
+        sol, info, ier, msg = optimize.fsolve(function_beuler_wrapper,
                                               zold,
                                               args=(zold, h, psys, theta),
                                               full_output=True,

@@ -101,7 +101,7 @@ def realify_ybus(psys):
         [ A  B] (-y) - (b)
     """
 
-    ybus = psys.ybus
+    ybus = psys.ybus_spa
     nbuses = psys.nbuses
     rybus = np.zeros((2*nbuses, 2*nbuses))
 
