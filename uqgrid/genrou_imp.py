@@ -88,8 +88,12 @@ def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
             (x_qp - x_qdp)/(x_qp - xl)*phi_2q + v_d)/x_qdp
 
     # Stator voltage
-    F[ap + 2] = v_d - vm*np.sin(delta - va)
-    F[ap + 3] = v_q - vm*np.cos(delta - va)
+    if power_injection:
+        F[ap + 2] = v_d - vm*np.sin(delta - va)
+        F[ap + 3] = v_q - vm*np.cos(delta - va)
+    else:
+        F[ap + 2] = v_d - (vr*np.sin(delta) - vi*np.cos(delta))
+        F[ap + 3] = v_q - (vr*np.cos(delta) + vi*np.sin(delta))
     
 @jit(nopython=True, cache=True)
 def jac_genrou(z, v, theta, idxs,
