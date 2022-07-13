@@ -174,9 +174,6 @@ class Load(object):
         #F[2*self.bus] -= (vr*yload.real - vi*yload.imag)
         #F[2*self.bus + 1] -= (vr*yload.imag + vi*yload.real)
 
-        
-
-
     def residual_jac(self, J, z, v, theta, dev):
         Pl = self.pload
         Ql = self.qload
@@ -1028,7 +1025,7 @@ class GenGENROU(DynamicGenerator):
         F[2*self.bus + 1] += -np.cos(delta)*i_d + np.sin(delta)*i_q
         return None
 
-    def preallocate_jacobian(self, idxs, psys):
+    def preallocate_jacobian(self, idxs, psys, power_injection):
 
         coord = []
 
@@ -1049,8 +1046,12 @@ class GenGENROU(DynamicGenerator):
         i_q = ap + 2
         i_d = ap + 3
 
-        vm = dev + 2*self.bus
-        va = dev + 2*self.bus + 1
+        if power_injection:
+            vm = dev + 2*self.bus
+            va = dev + 2*self.bus + 1
+        else:
+            vr = dev + 2*self.bus
+            vi = dev + 2*self.bus + 1
 
         # first row
         row = dp
@@ -1096,22 +1097,39 @@ class GenGENROU(DynamicGenerator):
         row = ap + 1
         cols = [e_dp, phi_2q, v_d, i_q]
         coord.append([row, cols])
+        
+        if power_injection:
+            row = ap + 2
+            cols = [delta, v_d, vm, va]
+            coord.append([row, cols])
 
-        row = ap + 2
-        cols = [delta, v_d, vm, va]
-        coord.append([row, cols])
+            row = ap + 3
+            cols = [delta, v_q, vm, va]
+            coord.append([row, cols])
 
-        row = ap + 3
-        cols = [delta, v_q, vm, va]
-        coord.append([row, cols])
+            row = dev + 2*self.bus
+            cols = [v_q, v_d, i_q, i_d]
+            coord.append([row, cols])
 
-        row = dev + 2*self.bus
-        cols = [v_q, v_d, i_q, i_d]
-        coord.append([row, cols])
+            row = dev + 2*self.bus + 1
+            cols = [v_q, v_d, i_q, i_d]
+            coord.append([row, cols])
+        else:
+            row = ap + 2
+            cols = [delta, v_d, vr, vi]
+            coord.append([row, cols])
+            
+            row = ap + 3
+            cols = [delta, v_q, vr, vi]
+            coord.append([row, cols])
+            
+            row = dev + 2*self.bus
+            cols = [delta, i_q, i_d]
+            coord.append([row, cols])
 
-        row = dev + 2*self.bus + 1
-        cols = [v_q, v_d, i_q, i_d]
-        coord.append([row, cols])
+            row = dev + 2*self.bus + 1
+            cols = [delta, i_q, i_d]
+            coord.append([row, cols])
 
         return coord
 
@@ -1205,10 +1223,11 @@ class GenGENROU(DynamicGenerator):
         h_nnz[vm]['rows'].append(i_d)
         h_nnz[vm]['cols'].append([v_q])
 
-    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var,
+            power_injection):
 
         jac_genrou(z, v, theta, idxs, ctrl_idx, ctrl_var, J.data, J.indptr,
-                   J.indices)
+                   J.indices, power_injection)
 
         return None
 

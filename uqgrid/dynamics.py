@@ -314,9 +314,6 @@ def residual_jacobian(J, z, theta, psys):
     y = z[dif_size:dif_size + alg_size]
     v = z[dif_size + alg_size:]
 
-    # NOTE: alpha will NOT pertain to theta in the future.
-    alpha = theta[3]
-
     # Ensure diagonals of diff. eq are 0, else the BEULER
     # routine will add h*I indefinitely.
     # NOTE: should have routine that stores diagonal entries position
@@ -330,12 +327,29 @@ def residual_jacobian(J, z, theta, psys):
         csr_set_row(J.data, J.indptr, J.indices, 1, i, col, val)
         #J[i, i] = 0.0
 
-    # Power flow jacobian (TODO: move to a separate function. Maybe in pflow)
     dev = alg_size + dif_size
+    
+    if psys.power_injection:
+        power_flow_jacobian(psys.ybus_spa.data, psys.ybus_spa.indptr,
+                            psys.ybus_spa.indices, J.data, J.indptr, J.indices,
+                            dev, v, psys.nbuses)
+    else:
+        print(psys.rybus.indptr)
+        print(psys.rybus.indices)
+        for row_idx in range(len(psys.rybus.indptr) - 1):
+            row_ptr = psys.rybus.indptr[row_idx]
+            row_ptr_end = psys.rybus.indptr[row_idx + 1]
+            
+            nvals = row_ptr_end - row_ptr
+            row = row_idx + dev
+            print(row)
+            print(nvals)
+            col = psys.rybus.indices[row_ptr:row_ptr_end] + dev
+            val = -psys.rybus.data[row_ptr:row_ptr_end]
+            print(col)
+            print(val)
 
-    power_flow_jacobian(psys.ybus_spa.data, psys.ybus_spa.indptr,
-                        psys.ybus_spa.indices, J.data, J.indptr, J.indices,
-                        dev, v, psys.nbuses)
+            csr_set_row(J.data, J.indptr, J.indices, nvals, row, col, val)
 
     # DEVICES
     idxs = np.zeros(5, dtype=np.int64)
@@ -351,7 +365,8 @@ def residual_jacobian(J, z, theta, psys):
         ctrl_idx = psys.devices[i].ctrl_idx
         ctrl_var = psys.devices[i].ctrl_var
 
-        psys.devices[i].residual_jac(J, z, v, theta, idxs, ctrl_idx, ctrl_var)
+        psys.devices[i].residual_jac(J, z, v, theta, idxs, ctrl_idx,
+                ctrl_var, psys.power_injection)
 
     for load in psys.loads:
         if load.dynamic == 0:
@@ -1072,7 +1087,7 @@ def preallocate_jacobian(psys):
             alg_size + dif_size
         ],
                         dtype=np.int32)
-        coord = psys.devices[i].preallocate_jacobian(idxs, psys)
+        coord = psys.devices[i].preallocate_jacobian(idxs, psys, psys.power_injection)
 
         for j in range(len(coord)):
             if not list_coordinates[coord[j][0]]:
@@ -1350,7 +1365,7 @@ def integrate_system(psys,
     # retrieve parameters
     volt, Pinj = runpf(psys, verbose=False)
     z0, theta = initialize_system(volt, Pinj, psys)
-    
+    z0[4] = 0.1
     system_size = z0.shape[0]
     J = preallocate_jacobian(psys)
     F = np.zeros(system_size)
