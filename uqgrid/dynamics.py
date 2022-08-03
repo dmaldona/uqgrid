@@ -368,7 +368,7 @@ def residual_jacobian(J, z, theta, psys):
 
     for fault in psys.fault_events:
         if fault.active:
-            fault.residual_jac(J, z, v, theta, dev)
+            fault.residual_jac(J, z, v, theta, dev, psys.power_injection)
 
     # Restore write access to system vector
     z.flags.writeable = True

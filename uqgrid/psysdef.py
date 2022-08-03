@@ -320,17 +320,29 @@ class BusFault(object):
         F[2*self.bus] -= yfault*vr
         F[2*self.bus + 1] -= yfault*vi
 
-    def residual_jac(self, J, z, v, theta, dev):
+    def residual_jac(self, J, z, v, theta, dev, power_injection):
 
         vm = v[2*self.bus]
         col = np.zeros(2)
         val = np.zeros(2)
+        yfault = 1/self.rfault
 
-        # first row
-        row = dev + 2*self.bus
-        col[0] = dev + 2*self.bus
-        val[0] = -2*(1.0/self.rfault)*vm
-        csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+        if power_injection:
+            # first row
+            row = dev + 2*self.bus
+            col[0] = dev + 2*self.bus
+            val[0] = -2*(1.0/self.rfault)*vm
+            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+        else:
+            row = dev + 2*self.bus
+            col[0] = dev + 2*self.bus
+            val[0] = -yfault
+            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+            
+            row = dev + 2*self.bus + 1
+            col[0] = dev + 2*self.bus + 1
+            val[0] = -yfault
+            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
 
     def residual_hes(self, HESS, z, v, theta, dev):
 
