@@ -155,46 +155,73 @@ class Load(object):
         vi = v[2*self.bus + 1]
 
         vm = np.abs(vr + 1j*vi)
-        va = cmath.phase(vr + 1j*vi)
 
         Pl = self.pload
         Ql = self.qload
         v0 = self.v0
         alpha = self.alpha
+        a = alpha
+        ql = Ql
+        pl = Pl
 
         pinj = -alpha*Pl*(vm/v0)**2.0 - (1 - alpha)*Pl
         qinj = alpha*Ql*(vm/v0)**2.0 + (1 - alpha)*Ql
 
         icomp = (pinj - 1j*qinj)/(vr - 1j*vi)
 
+        #irr = (pinj*vr + qinj*vi)/(vr**2.0 + vi**2.0)
+        #iii = (-qinj*vr + pinj*vi)/(vr**2.0 + vi**2.0)
+
         F[2*self.bus] += np.real(icomp)
         F[2*self.bus + 1] += np.imag(icomp)
 
-        yload = (Pl -1j*Ql)/(v0**2)
-        #F[2*self.bus] -= (vr*yload.real - vi*yload.imag)
-        #F[2*self.bus + 1] -= (vr*yload.imag + vi*yload.real)
-
-    def residual_jac(self, J, z, v, theta, dev):
+    def residual_jac(self, J, z, v, theta, dev, power_injection):
         Pl = self.pload
         Ql = self.qload
         v0 = self.v0
-        vm = v[2*self.bus]
         alpha = self.alpha
+        if power_injection:
+            vm = v[2*self.bus]
+            va = v[2*self.bus + 1]
+        else:
+            vr = v[2*self.bus]
+            vi = v[2*self.bus + 1]
+            vm = np.sqrt(vr**2.0 + vi**2.0)
+            va = np.arctan2(vi, vr)
 
         col = np.zeros(2)
         val = np.zeros(2)
 
-        # first row
-        row = dev + 2*self.bus
-        col[0] = dev + 2*self.bus
-        val[0] = -alpha*2.0*Pl*(vm/v0)**2.0/vm
-        csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+        if power_injection:
+            # first row
+            row = dev + 2*self.bus
+            col[0] = dev + 2*self.bus
+            val[0] = -alpha*2.0*Pl*(vm/v0)**2.0/vm
+            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
 
-        # second row
-        row = dev + 2*self.bus + 1
-        col[0] = dev + 2*self.bus
-        val[0] = alpha*(2.0*Ql*(vm/v0)**2.0)/vm
-        csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+            # second row
+            row = dev + 2*self.bus + 1
+            col[0] = dev + 2*self.bus
+            val[0] = alpha*(2.0*Ql*(vm/v0)**2.0)/vm
+            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+
+        else:
+            # Note. Used SYMPY to derive these crazy long expressions.
+            # There should be an easier expression. but for now is a TODO
+            # first row
+            row = dev + 2*self.bus
+            col[0] = dev + 2*self.bus
+            col[1] = dev + 2*self.bus + 1
+            val[0] = -2*vr*(vi*(Ql*alpha*(vi**2 + vr**2)/v0**2 + Ql*(1 - alpha)) + vr*(-Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha)))/(vi**2 + vr**2)**2 + (-2*Pl*alpha*vr**2/v0**2 - Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha) + 2*Ql*alpha*vi*vr/v0**2)/(vi**2 + vr**2)
+            val[1] = -2*vi*(vi*(Ql*alpha*(vi**2 + vr**2)/v0**2 + Ql*(1 - alpha)) + vr*(-Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha)))/(vi**2 + vr**2)**2 + (-2*Pl*alpha*vi*vr/v0**2 + 2*Ql*alpha*vi**2/v0**2 + Ql*alpha*(vi**2 + vr**2)/v0**2 + Ql*(1 - alpha))/(vi**2 + vr**2)
+            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
+
+            row = dev + 2*self.bus + 1
+            col[0] = dev + 2*self.bus
+            col[1] = dev + 2*self.bus + 1
+            val[0] = -2*vr*(vi*(-Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha)) + vr*(-Ql*alpha*(vi**2 + vr**2)/v0**2 - Ql*(1 - alpha)))/(vi**2 + vr**2)**2 + (-2*Pl*alpha*vi*vr/v0**2 - 2*Ql*alpha*vr**2/v0**2 - Ql*alpha*(vi**2 + vr**2)/v0**2 - Ql*(1 - alpha))/(vi**2 + vr**2)
+            val[1] = -2*vi*(vi*(-Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha)) + vr*(-Ql*alpha*(vi**2 + vr**2)/v0**2 - Ql*(1 - alpha)))/(vi**2 + vr**2)**2 + (-2*Pl*alpha*vi**2/v0**2 - Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha) - 2*Ql*alpha*vi*vr/v0**2)/(vi**2 + vr**2)
+            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
 
     def residual_hes(self, H, z, v, theta, dev):
 

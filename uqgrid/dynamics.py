@@ -334,20 +334,14 @@ def residual_jacobian(J, z, theta, psys):
                             psys.ybus_spa.indices, J.data, J.indptr, J.indices,
                             dev, v, psys.nbuses)
     else:
-        print(psys.rybus.indptr)
-        print(psys.rybus.indices)
         for row_idx in range(len(psys.rybus.indptr) - 1):
             row_ptr = psys.rybus.indptr[row_idx]
             row_ptr_end = psys.rybus.indptr[row_idx + 1]
             
             nvals = row_ptr_end - row_ptr
             row = row_idx + dev
-            print(row)
-            print(nvals)
             col = psys.rybus.indices[row_ptr:row_ptr_end] + dev
             val = -psys.rybus.data[row_ptr:row_ptr_end]
-            print(col)
-            print(val)
 
             csr_set_row(J.data, J.indptr, J.indices, nvals, row, col, val)
 
@@ -370,7 +364,7 @@ def residual_jacobian(J, z, theta, psys):
 
     for load in psys.loads:
         if load.dynamic == 0:
-            load.residual_jac(J, z, v, theta, dev)
+            load.residual_jac(J, z, v, theta, dev, psys.power_injection)
 
     for fault in psys.fault_events:
         if fault.active:
@@ -1365,7 +1359,6 @@ def integrate_system(psys,
     # retrieve parameters
     volt, Pinj = runpf(psys, verbose=False)
     z0, theta = initialize_system(volt, Pinj, psys)
-    z0[4] = 0.1
     system_size = z0.shape[0]
     J = preallocate_jacobian(psys)
     F = np.zeros(system_size)
