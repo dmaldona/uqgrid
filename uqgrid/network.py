@@ -90,3 +90,28 @@ def distance_graph(graph, fr, to):
 
 def distance_resistance(graph, fr, to):
     return nx.resistance_distance(graph, nodeA=fr, nodeB=to)
+
+def realify_ybus(psys):
+    """"
+        Given:
+        (A + iB)(x + iy) = b + ic
+
+        We will have
+        [ B -A] ( x) - (c)
+        [ A  B] (-y) - (b)
+    """
+
+    ybus = psys.ybus_spa
+    nbuses = psys.nbuses
+    rybus = np.zeros((2*nbuses, 2*nbuses))
+
+    for i in range(nbuses):
+        for j in range(nbuses):
+            z = ybus[i, j]
+            a = np.real(z)
+            b = np.imag(z)
+            rybus[2*i    , 2*j    ]     += a
+            rybus[2*i + 1, 2*j + 1]     += a
+            rybus[2*i    , 2*j + 1]     += -b
+            rybus[2*i + 1, 2*j    ]     += b
+    return rybus

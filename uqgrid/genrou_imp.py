@@ -5,7 +5,7 @@ from numba import jit
 from .tools import csr_add_row, csr_set_row
 
 @jit(nopython=True, cache=True)
-def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var):
+def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
 
     dp = idxs[0]
     ap = idxs[1]
@@ -40,8 +40,14 @@ def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var):
     i_q      = z[ap + 2]
     i_d      = z[ap + 3]
 
-    vm = v[2*bus]
-    va = v[2*bus + 1]
+    if power_injection:
+        vm = v[2*bus]
+        va = v[2*bus + 1]
+    else:
+        vr = v[2*bus]
+        vi = v[2*bus + 1]
+        vm = np.sqrt(vr**2.0 + vi**2.0)
+        va = np.arctan2(vi, vr)
 
     # control
     pm_idx = ctrl_idx[0]
@@ -82,12 +88,16 @@ def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var):
             (x_qp - x_qdp)/(x_qp - xl)*phi_2q + v_d)/x_qdp
 
     # Stator voltage
-    F[ap + 2] = v_d - vm*np.sin(delta - va)
-    F[ap + 3] = v_q - vm*np.cos(delta - va)
+    if power_injection:
+        F[ap + 2] = v_d - vm*np.sin(delta - va)
+        F[ap + 3] = v_q - vm*np.cos(delta - va)
+    else:
+        F[ap + 2] = v_d - (vr*np.sin(delta) - vi*np.cos(delta))
+        F[ap + 3] = v_q - (vr*np.cos(delta) + vi*np.sin(delta))
     
-@jit(nopython=True, cache=True)
+#@jit(nopython=True, cache=True)
 def jac_genrou(z, v, theta, idxs,
-        ctrl_idx, ctrl_var, J_data, J_ptr, J_idx):
+        ctrl_idx, ctrl_var, J_data, J_ptr, J_idx, power_injection):
 
     dp = idxs[0]
     ap = idxs[1]
@@ -123,8 +133,12 @@ def jac_genrou(z, v, theta, idxs,
     i_q      = z[ap + 2]
     i_d      = z[ap + 3]
 
-    vm = v[2*bus]
-    va = v[2*bus + 1]
+    if power_injection:
+        vm = v[2*bus]
+        va = v[2*bus + 1]
+    else:
+        vr = v[2*bus]
+        vi = v[2*bus + 1]
 
     # control
     pm_idx = ctrl_idx[0]
@@ -150,9 +164,13 @@ def jac_genrou(z, v, theta, idxs,
     v_d_idx = ap + 1
     i_q_idx = ap + 2
     i_d_idx = ap + 3
-    vm_idx = dev + 2*bus
-    va_idx = dev + 2*bus + 1
 
+    if power_injection:
+        vm_idx = dev + 2*bus
+        va_idx = dev + 2*bus + 1
+    else:
+        vr_idx = dev + 2*bus
+        vi_idx = dev + 2*bus + 1
 
     # auxiliary variables
     psi_de = (x_ddp - xl)/(x_dp - xl)*e_qp + \
@@ -271,52 +289,99 @@ def jac_genrou(z, v, theta, idxs,
     val[3] = 1.0
     csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
 
-    # alg. third
-    row = ap + 2
-    col[0] = delta_idx
-    val[0] = -vm*np.cos(delta - va)
-    col[1] = v_d_idx
-    val[1] = 1.0
-    col[2] = vm_idx
-    val[2] = -np.sin(delta - va)
-    col[3] = va_idx
-    val[3] = vm*np.cos(delta - va)
-    csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
+    if power_injection:
+        
+        # alg. third
+        row = ap + 2
+        col[0] = delta_idx
+        val[0] = -vm*np.cos(delta - va)
+        col[1] = v_d_idx
+        val[1] = 1.0
+        col[2] = vm_idx
+        val[2] = -np.sin(delta - va)
+        col[3] = va_idx
+        val[3] = vm*np.cos(delta - va)
+        csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
     
-    # alg. fourth
-    row = ap + 3
-    col[0] = delta_idx
-    val[0] = vm*np.sin(delta - va)
-    col[1] = v_q_idx
-    val[1] = 1.0
-    col[2] = vm_idx
-    val[2] = -np.cos(delta - va)
-    col[3] = va_idx
-    val[3] = -vm*np.sin(delta - va)
-    csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
-    
-    # power injection
-    row = dev + 2*bus
-    col[0] = v_q_idx
-    val[0] = i_q
-    col[1] = v_d_idx
-    val[1] = i_d
-    col[2] = i_q_idx
-    val[2] = v_q
-    col[3] = i_d_idx
-    val[3] = v_d
-    csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
-    
-    row = dev + 2*bus + 1
-    col[0] = v_q_idx
-    val[0] = i_d
-    col[1] = v_d_idx
-    val[1] = -i_q
-    col[2] = i_q_idx
-    val[2] = -v_d
-    col[3] = i_d_idx
-    val[3] = v_q
-    csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
+        # alg. fourth
+        row = ap + 3
+        col[0] = delta_idx
+        val[0] = vm*np.sin(delta - va)
+        col[1] = v_q_idx
+        val[1] = 1.0
+        col[2] = vm_idx
+        val[2] = -np.cos(delta - va)
+        col[3] = va_idx
+        val[3] = -vm*np.sin(delta - va)
+        csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
+        
+        # power injection
+        row = dev + 2*bus
+        col[0] = v_q_idx
+        val[0] = i_q
+        col[1] = v_d_idx
+        val[1] = i_d
+        col[2] = i_q_idx
+        val[2] = v_q
+        col[3] = i_d_idx
+        val[3] = v_d
+        csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
+        
+        row = dev + 2*bus + 1
+        col[0] = v_q_idx
+        val[0] = i_d
+        col[1] = v_d_idx
+        val[1] = -i_q
+        col[2] = i_q_idx
+        val[2] = -v_d
+        col[3] = i_d_idx
+        val[3] = v_q
+        csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
+
+    else:
+        # alg. third
+        row = ap + 2
+        col[0] = delta_idx
+        val[0] = -vr*np.cos(delta) - vi*np.sin(delta)
+        col[1] = v_d_idx
+        val[1] = 1.0
+        col[2] = vr_idx
+        val[2] = -np.sin(delta)
+        col[3] = vi_idx
+        val[3] = np.cos(delta)
+        csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
+        
+        # alg. fourth
+        row = ap + 3
+        col[0] = delta_idx
+        val[0] = vr*np.sin(delta) - vi*np.cos(delta)
+        col[1] = v_q_idx
+        val[1] = 1.0
+        col[2] = vr_idx
+        val[2] = -np.cos(delta )
+        col[3] = vi_idx
+        val[3] = -np.sin(delta)
+        csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
+        
+        # power injection
+        row = dev + 2*bus
+        col[0] = delta_idx
+        val[0] = i_d*np.cos(delta) - i_q*np.sin(delta)
+        col[1] = i_q_idx
+        val[1] = np.cos(delta)
+        col[2] = i_d_idx
+        val[2] = np.sin(delta)
+        csr_set_row(J_data, J_ptr, J_idx, 3, row, col, val)
+        
+        # power injection
+        row = dev + 2*bus + 1
+        col[0] = delta_idx
+        val[0] = i_d*np.sin(delta) + i_q*np.cos(delta)
+        col[1] = i_q_idx
+        val[1] = np.sin(delta)
+        col[2] = i_d_idx
+        val[2] = -np.cos(delta)
+        csr_set_row(J_data, J_ptr, J_idx, 3, row, col, val)
 
 @jit(nopython=True, cache=True)
 def hes_genrou(z, v, theta, idxs,

@@ -11,6 +11,7 @@ from numba import jit
 from scipy.sparse import csr_matrix
 from scipy.sparse.sparsetools import csr_matvec
 from scipy.sparse.linalg import spsolve, factorized
+
 import scipy as sp
 import math
 
@@ -155,9 +156,15 @@ def residual_function(F, z, theta, psys):
     y = z[dif_size:dif_size + alg_size]
     v = z[dif_size + alg_size:]
 
-    compute_pinj_alt(v, F[alg_size + dif_size:], psys.ybus_mat, psys.graph_mat,
+    # Network equations
+    if psys.power_injection:
+        compute_pinj_alt(v, F[alg_size + dif_size:], psys.ybus_mat, psys.graph_mat,
                      psys.nbuses)
+    else:
+        csr_matvec(psys.rybus.shape[0],psys.rybus.shape[1],psys.rybus.indptr,
+                psys.rybus.indices, psys.rybus.data, v, F[alg_size + dif_size:])
     F[alg_size + dif_size:] = -1.0*F[alg_size + dif_size:]
+    
 
     idxs = np.zeros(4, dtype=np.int64)
 
@@ -170,17 +177,28 @@ def residual_function(F, z, theta, psys):
         ctrl_idx = psys.devices[i].ctrl_idx
         ctrl_var = psys.devices[i].ctrl_var
 
-        psys.devices[i].residual_diff(F, z, v, theta, idxs, ctrl_idx, ctrl_var)
-        psys.devices[i].residual_pinj(F[alg_size + dif_size:], z, v, None,
+        psys.devices[i].residual_diff(F, z, v, theta,
+                idxs, ctrl_idx, ctrl_var, psys.power_injection)
+        if psys.power_injection:
+            psys.devices[i].residual_pinj(F[alg_size + dif_size:], z, v, None,
+                                      idxs)
+        else:
+            psys.devices[i].residual_cinj(F[alg_size + dif_size:], z, v, None,
                                       idxs)
 
     for load in psys.loads:
         if load.dynamic == 0:
-            load.residual_pinj(F[alg_size + dif_size:], z, v, None, None)
+            if psys.power_injection:
+                load.residual_pinj(F[alg_size + dif_size:], z, v, None, None)
+            else:
+                load.residual_cinj(F[alg_size + dif_size:], z, v, None, None)
 
     for fault in psys.fault_events:
         if fault.active:
-            fault.residual_pinj(F[alg_size + dif_size:], v)
+            if psys.power_injection:
+                fault.residual_pinj(F[alg_size + dif_size:], v)
+            else:
+                fault.residual_cinj(F[alg_size + dif_size:], v)
 
     # Restore write access to system vector
     z.flags.writeable = True
@@ -296,9 +314,6 @@ def residual_jacobian(J, z, theta, psys):
     y = z[dif_size:dif_size + alg_size]
     v = z[dif_size + alg_size:]
 
-    # NOTE: alpha will NOT pertain to theta in the future.
-    alpha = theta[3]
-
     # Ensure diagonals of diff. eq are 0, else the BEULER
     # routine will add h*I indefinitely.
     # NOTE: should have routine that stores diagonal entries position
@@ -312,12 +327,23 @@ def residual_jacobian(J, z, theta, psys):
         csr_set_row(J.data, J.indptr, J.indices, 1, i, col, val)
         #J[i, i] = 0.0
 
-    # Power flow jacobian (TODO: move to a separate function. Maybe in pflow)
     dev = alg_size + dif_size
+    
+    if psys.power_injection:
+        power_flow_jacobian(psys.ybus_spa.data, psys.ybus_spa.indptr,
+                            psys.ybus_spa.indices, J.data, J.indptr, J.indices,
+                            dev, v, psys.nbuses)
+    else:
+        for row_idx in range(len(psys.rybus.indptr) - 1):
+            row_ptr = psys.rybus.indptr[row_idx]
+            row_ptr_end = psys.rybus.indptr[row_idx + 1]
+            
+            nvals = row_ptr_end - row_ptr
+            row = row_idx + dev
+            col = psys.rybus.indices[row_ptr:row_ptr_end] + dev
+            val = -psys.rybus.data[row_ptr:row_ptr_end]
 
-    power_flow_jacobian(psys.ybus_spa.data, psys.ybus_spa.indptr,
-                        psys.ybus_spa.indices, J.data, J.indptr, J.indices,
-                        dev, v, psys.nbuses)
+            csr_set_row(J.data, J.indptr, J.indices, nvals, row, col, val)
 
     # DEVICES
     idxs = np.zeros(5, dtype=np.int64)
@@ -333,15 +359,16 @@ def residual_jacobian(J, z, theta, psys):
         ctrl_idx = psys.devices[i].ctrl_idx
         ctrl_var = psys.devices[i].ctrl_var
 
-        psys.devices[i].residual_jac(J, z, v, theta, idxs, ctrl_idx, ctrl_var)
+        psys.devices[i].residual_jac(J, z, v, theta, idxs, ctrl_idx,
+                ctrl_var, psys.power_injection)
 
     for load in psys.loads:
         if load.dynamic == 0:
-            load.residual_jac(J, z, v, theta, dev)
+            load.residual_jac(J, z, v, theta, dev, psys.power_injection)
 
     for fault in psys.fault_events:
         if fault.active:
-            fault.residual_jac(J, z, v, theta, dev)
+            fault.residual_jac(J, z, v, theta, dev, psys.power_injection)
 
     # Restore write access to system vector
     z.flags.writeable = True
@@ -829,7 +856,7 @@ def integrate(zold,
         jac = nd.Jacobian(function_beuler_wrapper)
 
     if fsolve:
-        sol, info, ier, msg = optimize.fsolve(function_beuler_latin_wrapper,
+        sol, info, ier, msg = optimize.fsolve(function_beuler_wrapper,
                                               zold,
                                               args=(zold, h, psys, theta),
                                               full_output=True,
@@ -959,7 +986,21 @@ def initialize_system(v, p_inj, psys):
 
     sysvec[:dif_size] = x
     sysvec[dif_size:dif_size + alg_size] = y
-    sysvec[dif_size + alg_size:] = v
+    
+    
+    if psys.power_injection:
+        sysvec[dif_size + alg_size:] = v
+    else:
+        for i in range(psys.nbuses):
+            vm = v[2*i]
+            va = v[2*i + 1]
+            sysvec[dif_size + alg_size + 2*i] = vm*np.cos(va)
+            sysvec[dif_size + alg_size + 2*i + 1] = vm*np.sin(va)
+
+        # In addition, we will need the realified admittance matrix
+        # Perhaps not the best place to put this as it might result
+        # in extra overhead when doing MC sampling.
+        psys.ybus_complex2real()
 
     # initialize theta
     theta = np.zeros(psys.num_pars)
@@ -1040,7 +1081,7 @@ def preallocate_jacobian(psys):
             alg_size + dif_size
         ],
                         dtype=np.int32)
-        coord = psys.devices[i].preallocate_jacobian(idxs, psys)
+        coord = psys.devices[i].preallocate_jacobian(idxs, psys, psys.power_injection)
 
         for j in range(len(coord)):
             if not list_coordinates[coord[j][0]]:
@@ -1286,6 +1327,7 @@ if petsc4py:
             
 
 def integrate_system(psys,
+                     power_injection=True,
                      tend=10.0,
                      dt=(1.0/120.0),
                      steps=-1,
@@ -1312,7 +1354,8 @@ def integrate_system(psys,
         [type]: [description]
     """
     results = {}
-    
+    psys.power_injection=power_injection
+
     # retrieve parameters
     volt, Pinj = runpf(psys, verbose=False)
     z0, theta = initialize_system(volt, Pinj, psys)

@@ -3,6 +3,7 @@ from itertools import count
 import cmath
 from numpy.linalg import inv, det
 from scipy import optimize
+from scipy.sparse import csr_matrix
 from abc import ABC, abstractmethod, abstractproperty
 from .tools import csr_add_row, csr_set_row
 import numba
@@ -147,28 +148,80 @@ class Load(object):
 
         F[2*self.bus] += -alpha*Pl*(vm/v0)**2.0 - (1 - alpha)*Pl
         F[2*self.bus + 1] += alpha*Ql*(vm/v0)**2.0 + (1 - alpha)*Ql
+    
+    def residual_cinj(self, F, z, v, theta, idxs):
 
-    def residual_jac(self, J, z, v, theta, dev):
+        vr = v[2*self.bus]
+        vi = v[2*self.bus + 1]
+
+        vm = np.abs(vr + 1j*vi)
+
         Pl = self.pload
         Ql = self.qload
         v0 = self.v0
-        vm = v[2*self.bus]
         alpha = self.alpha
+        a = alpha
+        ql = Ql
+        pl = Pl
+
+        pinj = -alpha*Pl*(vm/v0)**2.0 - (1 - alpha)*Pl
+        qinj = alpha*Ql*(vm/v0)**2.0 + (1 - alpha)*Ql
+
+        icomp = (pinj - 1j*qinj)/(vr - 1j*vi)
+
+        #irr = (pinj*vr + qinj*vi)/(vr**2.0 + vi**2.0)
+        #iii = (-qinj*vr + pinj*vi)/(vr**2.0 + vi**2.0)
+
+        F[2*self.bus] += np.real(icomp)
+        F[2*self.bus + 1] += np.imag(icomp)
+
+    def residual_jac(self, J, z, v, theta, dev, power_injection):
+        Pl = self.pload
+        Ql = self.qload
+        v0 = self.v0
+        alpha = self.alpha
+        if power_injection:
+            vm = v[2*self.bus]
+            va = v[2*self.bus + 1]
+        else:
+            vr = v[2*self.bus]
+            vi = v[2*self.bus + 1]
+            vm = np.sqrt(vr**2.0 + vi**2.0)
+            va = np.arctan2(vi, vr)
 
         col = np.zeros(2)
         val = np.zeros(2)
 
-        # first row
-        row = dev + 2*self.bus
-        col[0] = dev + 2*self.bus
-        val[0] = -alpha*2.0*Pl*(vm/v0)**2.0/vm
-        csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+        if power_injection:
+            # first row
+            row = dev + 2*self.bus
+            col[0] = dev + 2*self.bus
+            val[0] = -alpha*2.0*Pl*(vm/v0)**2.0/vm
+            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
 
-        # second row
-        row = dev + 2*self.bus + 1
-        col[0] = dev + 2*self.bus
-        val[0] = alpha*(2.0*Ql*(vm/v0)**2.0)/vm
-        csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+            # second row
+            row = dev + 2*self.bus + 1
+            col[0] = dev + 2*self.bus
+            val[0] = alpha*(2.0*Ql*(vm/v0)**2.0)/vm
+            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+
+        else:
+            # Note. Used SYMPY to derive these crazy long expressions.
+            # There should be an easier expression. but for now is a TODO
+            # first row
+            row = dev + 2*self.bus
+            col[0] = dev + 2*self.bus
+            col[1] = dev + 2*self.bus + 1
+            val[0] = -2*vr*(vi*(Ql*alpha*(vi**2 + vr**2)/v0**2 + Ql*(1 - alpha)) + vr*(-Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha)))/(vi**2 + vr**2)**2 + (-2*Pl*alpha*vr**2/v0**2 - Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha) + 2*Ql*alpha*vi*vr/v0**2)/(vi**2 + vr**2)
+            val[1] = -2*vi*(vi*(Ql*alpha*(vi**2 + vr**2)/v0**2 + Ql*(1 - alpha)) + vr*(-Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha)))/(vi**2 + vr**2)**2 + (-2*Pl*alpha*vi*vr/v0**2 + 2*Ql*alpha*vi**2/v0**2 + Ql*alpha*(vi**2 + vr**2)/v0**2 + Ql*(1 - alpha))/(vi**2 + vr**2)
+            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
+
+            row = dev + 2*self.bus + 1
+            col[0] = dev + 2*self.bus
+            col[1] = dev + 2*self.bus + 1
+            val[0] = -2*vr*(vi*(-Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha)) + vr*(-Ql*alpha*(vi**2 + vr**2)/v0**2 - Ql*(1 - alpha)))/(vi**2 + vr**2)**2 + (-2*Pl*alpha*vi*vr/v0**2 - 2*Ql*alpha*vr**2/v0**2 - Ql*alpha*(vi**2 + vr**2)/v0**2 - Ql*(1 - alpha))/(vi**2 + vr**2)
+            val[1] = -2*vi*(vi*(-Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha)) + vr*(-Ql*alpha*(vi**2 + vr**2)/v0**2 - Ql*(1 - alpha)))/(vi**2 + vr**2)**2 + (-2*Pl*alpha*vi**2/v0**2 - Pl*alpha*(vi**2 + vr**2)/v0**2 - Pl*(1 - alpha) - 2*Ql*alpha*vi*vr/v0**2)/(vi**2 + vr**2)
+            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
 
     def residual_hes(self, H, z, v, theta, dev):
 
@@ -259,17 +312,37 @@ class BusFault(object):
         vm = v[2*self.bus]
         F[2*self.bus] -= vm*vm*(1.0/self.rfault)
 
-    def residual_jac(self, J, z, v, theta, dev):
+    def residual_cinj(self, F, v):
+        vr = v[2*self.bus]
+        vi = v[2*self.bus + 1]
+        yfault = 1/self.rfault
+        
+        F[2*self.bus] -= yfault*vr
+        F[2*self.bus + 1] -= yfault*vi
+
+    def residual_jac(self, J, z, v, theta, dev, power_injection):
 
         vm = v[2*self.bus]
         col = np.zeros(2)
         val = np.zeros(2)
+        yfault = 1/self.rfault
 
-        # first row
-        row = dev + 2*self.bus
-        col[0] = dev + 2*self.bus
-        val[0] = -2*(1.0/self.rfault)*vm
-        csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+        if power_injection:
+            # first row
+            row = dev + 2*self.bus
+            col[0] = dev + 2*self.bus
+            val[0] = -2*(1.0/self.rfault)*vm
+            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+        else:
+            row = dev + 2*self.bus
+            col[0] = dev + 2*self.bus
+            val[0] = -yfault
+            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
+            
+            row = dev + 2*self.bus + 1
+            col[0] = dev + 2*self.bus + 1
+            val[0] = -yfault
+            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
 
     def residual_hes(self, HESS, z, v, theta, dev):
 
@@ -416,6 +489,7 @@ class Psystem:
         self.assembled = -1
         self.init_flag = False
         self.geo_flag = False
+        self.power_injection = True
 
     def __str__(self):
         return (
@@ -585,6 +659,10 @@ class Psystem:
                 ybus_mat[i, j + 1] = self.ybus_spa[i, to_bus]
 
         self.ybus_mat = ybus_mat
+
+    def ybus_complex2real(self):
+        from .network import realify_ybus
+        self.rybus = csr_matrix(realify_ybus(self))
 
     # For exciters and governors, these are always associated to a generator.
     # Associated generator must be provided.
@@ -956,9 +1034,8 @@ class GenGENROU(DynamicGenerator):
 
         return None
 
-    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx, ctrl_var):
-
-        resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var)
+    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
+        resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection)
 
     def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
 
@@ -972,8 +1049,22 @@ class GenGENROU(DynamicGenerator):
         F[2*self.bus] += v_d*i_d + v_q*i_q
         F[2*self.bus + 1] += v_q*i_d - v_d*i_q
         return None
+    
+    def residual_cinj(self, F, z, v, theta, idxs, alpha=False):
 
-    def preallocate_jacobian(self, idxs, psys):
+        dp = idxs[0]
+        ap = idxs[1]
+        v_q = z[ap]
+        v_d = z[ap + 1]
+        i_q = z[ap + 2]
+        i_d = z[ap + 3]
+        delta = z[dp + 5]
+
+        F[2*self.bus] += np.sin(delta)*i_d + np.cos(delta)*i_q
+        F[2*self.bus + 1] += -np.cos(delta)*i_d + np.sin(delta)*i_q
+        return None
+
+    def preallocate_jacobian(self, idxs, psys, power_injection):
 
         coord = []
 
@@ -994,8 +1085,12 @@ class GenGENROU(DynamicGenerator):
         i_q = ap + 2
         i_d = ap + 3
 
-        vm = dev + 2*self.bus
-        va = dev + 2*self.bus + 1
+        if power_injection:
+            vm = dev + 2*self.bus
+            va = dev + 2*self.bus + 1
+        else:
+            vr = dev + 2*self.bus
+            vi = dev + 2*self.bus + 1
 
         # first row
         row = dp
@@ -1041,22 +1136,39 @@ class GenGENROU(DynamicGenerator):
         row = ap + 1
         cols = [e_dp, phi_2q, v_d, i_q]
         coord.append([row, cols])
+        
+        if power_injection:
+            row = ap + 2
+            cols = [delta, v_d, vm, va]
+            coord.append([row, cols])
 
-        row = ap + 2
-        cols = [delta, v_d, vm, va]
-        coord.append([row, cols])
+            row = ap + 3
+            cols = [delta, v_q, vm, va]
+            coord.append([row, cols])
 
-        row = ap + 3
-        cols = [delta, v_q, vm, va]
-        coord.append([row, cols])
+            row = dev + 2*self.bus
+            cols = [v_q, v_d, i_q, i_d]
+            coord.append([row, cols])
 
-        row = dev + 2*self.bus
-        cols = [v_q, v_d, i_q, i_d]
-        coord.append([row, cols])
+            row = dev + 2*self.bus + 1
+            cols = [v_q, v_d, i_q, i_d]
+            coord.append([row, cols])
+        else:
+            row = ap + 2
+            cols = [delta, v_d, vr, vi]
+            coord.append([row, cols])
+            
+            row = ap + 3
+            cols = [delta, v_q, vr, vi]
+            coord.append([row, cols])
+            
+            row = dev + 2*self.bus
+            cols = [delta, i_q, i_d]
+            coord.append([row, cols])
 
-        row = dev + 2*self.bus + 1
-        cols = [v_q, v_d, i_q, i_d]
-        coord.append([row, cols])
+            row = dev + 2*self.bus + 1
+            cols = [delta, i_q, i_d]
+            coord.append([row, cols])
 
         return coord
 
@@ -1150,10 +1262,11 @@ class GenGENROU(DynamicGenerator):
         h_nnz[vm]['rows'].append(i_d)
         h_nnz[vm]['cols'].append([v_q])
 
-    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var,
+            power_injection):
 
         jac_genrou(z, v, theta, idxs, ctrl_idx, ctrl_var, J.data, J.indptr,
-                   J.indices)
+                   J.indices, power_injection)
 
         return None
 
