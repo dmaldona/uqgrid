@@ -1327,7 +1327,7 @@ if petsc4py:
             
 
 def integrate_system(psys,
-                     power_injection=False,
+                     power_injection=True,
                      tend=10.0,
                      dt=(1.0/120.0),
                      steps=-1,
