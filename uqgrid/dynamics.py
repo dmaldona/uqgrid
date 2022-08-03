@@ -1354,7 +1354,7 @@ def integrate_system(psys,
         [type]: [description]
     """
     results = {}
-    if power_injection: psys.power_injection=True
+    psys.power_injection=power_injection
 
     # retrieve parameters
     volt, Pinj = runpf(psys, verbose=False)

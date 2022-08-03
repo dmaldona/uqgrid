@@ -489,7 +489,7 @@ class Psystem:
         self.assembled = -1
         self.init_flag = False
         self.geo_flag = False
-        self.power_injection = False
+        self.power_injection = True
 
     def __str__(self):
         return (
