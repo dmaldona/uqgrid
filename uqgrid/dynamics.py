@@ -304,6 +304,9 @@ def residual_jacobian(J, z, theta, psys):
     # Lock system vector
     z.flags.writeable = False
 
+    # Initialize Jacobian matrix to 0s
+    J.data.fill(0.0)
+
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
     pow_size = 2*psys.nbuses  # power balance equations
@@ -313,19 +316,6 @@ def residual_jacobian(J, z, theta, psys):
     x = z[:dif_size]
     y = z[dif_size:dif_size + alg_size]
     v = z[dif_size + alg_size:]
-
-    # Ensure diagonals of diff. eq are 0, else the BEULER
-    # routine will add h*I indefinitely.
-    # NOTE: should have routine that stores diagonal entries position
-    # and perfors this operation quickly.
-
-    val = np.zeros(1)
-    col = np.zeros(1)
-
-    for i in range(dif_size):
-        col[0] = i
-        csr_set_row(J.data, J.indptr, J.indices, 1, i, col, val)
-        #J[i, i] = 0.0
 
     dev = alg_size + dif_size
     
