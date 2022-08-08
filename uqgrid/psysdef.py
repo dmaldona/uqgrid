@@ -17,7 +17,6 @@ from .cim5_imp import residualFinit_cim5
 # constants
 ws = 2*np.pi*60
 
-
 # Element classes
 class DynamicModel(ABC):
     """ Base class for dynamic model object.
@@ -65,7 +64,6 @@ class DynamicModel(ABC):
                 "\tDifferential dof: %d\tGlobal Pointer: %d" %
                 (self.dif_dim, self.dif_ptr))
 
-
 class Bus(object):
     """ Generic bus class.
 
@@ -99,7 +97,6 @@ class Bus(object):
         # (TODO): remove this typecode and refactor with something that makes sense.
         self.alpha = alpha
 
-
 class Branch(object):
     """ Generic branch class """
 
@@ -111,7 +108,6 @@ class Branch(object):
         self.sh = sh  # shunt reactance (p.u)
         self.tap = tap
         self.shift = shift
-
 
 class Load(object):
     def __init__(self, bus, tag, pload, qload, basemva):
@@ -420,7 +416,6 @@ class Governor(DynamicModel):
         self.pref = None
         self.initialized = False
 
-
 class Exciter(DynamicModel):
     def __init__(self, id_tag, initdim, ddim, adim, pdim, state_list):
         self.initdim = initdim
@@ -429,7 +424,6 @@ class Exciter(DynamicModel):
         self.e_fd0 = None  # this will be initialized by the generator
         self.vref = None
         self.initialized = False
-
 
 class Motor(DynamicModel):
     def __init__(self, id_tag, initdim, ddim, adim, pdim, state_list):
@@ -441,10 +435,62 @@ class Motor(DynamicModel):
     def set_weight(self, weight):
         self.weight = weight
 
+class COI(DynamicModel):
+    """
+        Simple COI model. Rather than computing it a posteriori, we include it as a state variable.
+        This is useful to account for it in transient stability indexes. 
+
+        NOTE: the indexes and parameters of the generators are retrieved in the initialization.
+        This means that if a new generator is added after adding the COI model, it will not be
+        accounted for. 
+    """
+    def __init__(self):
+        DynamicModel.__init__(self, 0, 1, 0, "COI1", 'COI')
+
+    def initialize(self, vm, va, p, q, x, y, psys):
+        self.w_idx = np.array(psys.genspeed_idx_set())
+        self.H = np.array([gen.H for gen in psys.gendyn])
+
+    def initialize_theta(self, theta):
+        pass
+
+    def preallocate_jacobian(self, idxs, psys, power_injection):
+        coord = []
+        ap = idxs[1]
+        w_idxs = self.w_idx
+        row = ap
+        cols = w_idxs
+        coord.append([row, cols])
+        return coord
+    
+    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
+        ap = idxs[1]
+        wsum = np.dot(self.H, z[self.w_idx])
+        hsum = np.sum(self.H)
+        F[ap] = z[ap] - (wsum/hsum)
+        return None
+
+    def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
+        pass
+    
+    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var,
+            power_injection):
+        
+        ap = idxs[1]
+        ngens = self.H.shape[0]
+        hsum = np.sum(self.H)
+
+        row = ap
+        col = np.zeros(ngens + 1)
+        val = np.zeros(ngens + 1)
+        col[:ngens] = self.w_idx
+        col[ngens] = ap
+        val[:ngens] = -(1.0/hsum)*self.H
+        val[ngens] = 1.0
+        
+        csr_add_row(J.data, J.indptr, J.indices, ngens + 1, row, col, val)
 
 # System class
-
-
 class Psystem:
     def __init__(self, basemva=100.0):
 
@@ -463,6 +509,7 @@ class Psystem:
         self.loads = []
         self.shunts = []
         self.gens = []
+        self.COI = []
 
         self.fault_events = []
 
@@ -690,8 +737,12 @@ class Psystem:
         self.add_device(self.mot[-1])
         mot.set_bus(load.bus)
 
-    def initialize(self):
+    def add_COI(self):
+        coi_obj = COI()
+        self.COI.append(coi_obj)
+        self.add_device(self.COI[-1])
 
+    def initialize(self):
         # survey generators and assign indexes
         for gen in self.gendyn:
             if gen.exciter:
@@ -769,6 +820,12 @@ class Psystem:
     def genspeed_idx_set(self):
         """ Returns list of generator speed deviations """
         return [gen.dif_ptr + 4 for gen in self.gendyn]
+
+    def coi_idx(self):
+        if not self.COI:
+            return None
+        else:
+            return self.num_dof_dif + self.COI[0].alg_ptr
 
     def idx_to_description(self, idx_num):
 
