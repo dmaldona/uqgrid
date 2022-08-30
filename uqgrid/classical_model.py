@@ -1,5 +1,5 @@
 from numba import jit, njit
-from .pflow import runpf, compute_pinj
+from .pflow import runpf
 import numpy as np
 
 WS = 377.0
@@ -94,7 +94,7 @@ def reduced_system(psys):
     gen_damping = np.zeros(ngen)
 
     # Retrieve admittance matrix
-    ymat = np.copy(psys.ybus)
+    ymat = psys.ybus_spa.todense()
 
     # We assume loads are constant admittance.
     for load in psys.loads:
