@@ -3,6 +3,7 @@ from .pflow import runpf
 import numpy as np
 
 WS = 377.0
+WS = 1.0
 
 @njit
 def compute_pelec(pelec, vmag, vang, yred):
@@ -28,7 +29,7 @@ def classic_resfun(t, x, v, yred, pmec, H, D):
     compute_pelec(pelec, v, delta, yred)
     for i in range(ngen):
         F[i] = (1.0/(2.0*H[i]))*(pmec[i] - pelec[i] - D[i]*w[i])
-        F[ngen + i] = w[i] - 1.0
+        F[ngen + i] = WS*w[i]
     return F
 
 def classic_resfun_lin(t, x, J):
@@ -43,7 +44,7 @@ def classic_jacobian(t, x, v, yred, pmec, H, D):
         ## df1/dw
         J[i, i] = -D[i]/(2*H[i])
         ## df2/dw
-        J[ngen + i, i] = 1
+        J[ngen + i, i] = WS
 
         for j in range(ngen):
             if i != j:
@@ -149,7 +150,7 @@ def reduced_system(psys):
     yred = (ynn - np.dot(ynr, np.dot(np.linalg.inv(yrr), yrn)))
 
     ## Determine initial state
-    w = np.ones(ngen) # ws = 1
+    w = np.zeros(ngen) # ws = 1
     delta = vang
 
     ## Compute mechanical power vector
