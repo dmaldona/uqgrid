@@ -69,7 +69,7 @@ def compute_vibration_matrices(yred, H, D):
 
     return M, D, K
 
-def reduced_system(psys):
+def reduced_system(psys, disable_kron=False):
     """ Compute reduced system via Kron reduction. In this system, we only have
         generator buses and we assume generator-behind-reactance (constant voltage)
         hypothesis
@@ -146,7 +146,10 @@ def reduced_system(psys):
     yrr = ybus_aug[ngen:, ngen:]
 
     # Kron reduction
-    yred = (ynn - np.dot(ynr, np.dot(np.linalg.inv(yrr), yrn)))
+    if disable_kron:
+        yred = yrr
+    else:
+        yred = (ynn - np.dot(ynr, np.dot(np.linalg.inv(yrr), yrn)))
 
     ## Determine initial state
     w = np.ones(ngen) # ws = 1
