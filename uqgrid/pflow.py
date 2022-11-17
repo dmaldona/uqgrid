@@ -2,16 +2,18 @@ import numpy as np
 import cmath
 import numba
 from numba import jit
+from scipy.sparse import csr_matrix
 
 from .psysdef import Psystem
 from scipy import optimize
+from scipy.optimize.nonlin import nonlin_solve
 
 # Notes: this implementation of power flow is awful. But I cannot spend too much time here.
 # Matpower has a cool implementation. But they use rectangular coordinates and their own
 # N-R implementation. If I want to use a SCIPY solver I need to write the problem
 # in a canonical form.
 
-#@jit(nopython=True, cache=True)
+@jit(nopython=True, cache=True)
 def resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat):
 
     # The first step is to susbtitute back the vmag and vang unknown variables
@@ -23,17 +25,11 @@ def resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, gr
     nbus = len(bus_type)
 
     for i in range(nbus):
-
         if PQ_idx[i] >= 0:
             vmag[i] = x[PQ_idx[i]]
 
         if PQV_idx[i] >= 0:
             vang[i] = x[nPQ + PQV_idx[i]]
-
-    # Form the residual. Currently, for each bus we iterate all the n buses and
-    # compute equations if ymat[i, j] is non-zero.
-    # This is of course a waste of time. We need to have data structures that 
-    # list the buses connected to one bus (e.g. a dictionary)
 
     for fr in range(nbus):
         if PQ_idx[fr] >= 0:
@@ -71,13 +67,159 @@ def resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, gr
                 
                 F[nPQ + PQV_idx[fr]] += vmag[fr]*vmag[to]*(gij*np.cos(angleij)
                     + bij*np.sin(angleij))
-
     return F
 
 def resfun_wrapper(x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat):
     F = np.zeros(len(x))
     resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat)
     return F
+
+@jit(nopython=True, cache=True)
+def compute_jac_nnz(graph_mat, PQ_idx, PQV_idx):
+    nnz = 0
+    for i in range(graph_mat.shape[0]):
+        if PQ_idx[i] >= 0:
+            nnz += 4
+        elif PQV_idx[i] >= 0:
+            nnz += 1
+        else:
+            continue
+
+        for j in range(graph_mat[i, 0]):
+            to = graph_mat[i, j + 1]
+            if PQ_idx[to] >= 0 and PQ_idx[i] >= 0:
+                nnz += 4
+            elif PQ_idx[to] >= 0 and PQV_idx[i] >= 0:
+                nnz += 2
+            elif PQV_idx[to] >= 0 and PQ_idx[i] >= 0:
+                nnz += 2
+            elif PQV_idx[to] >= 0 and PQV_idx[i] >= 0:
+                nnz += 1
+    return nnz
+
+@jit(nopython=True, cache=True)
+def fill_jacobian(x, vmag, vang, Pinj, Qinj, ybus_mat,
+        bus_type, PQ_idx, PQV_idx, graph_mat,
+        row, col, val):
+    ptr = 0
+    nPQ = np.sum(bus_type == 1)
+    nbus = len(bus_type)
+
+    for i in range(nbus):
+        if PQ_idx[i] >= 0:
+            vmag[i] = x[PQ_idx[i]]
+
+        if PQV_idx[i] >= 0:
+            vang[i] = x[nPQ + PQV_idx[i]]
+
+    for (fr, elem) in enumerate(graph_mat):
+        if PQ_idx[fr] >= 0:
+            # self contribution
+            vmag_fr_idx = PQ_idx[fr]
+            vang_fr_idx = nPQ + PQV_idx[fr]
+
+            bij = ybus_mat[fr, 0].imag
+
+            accum_self_vmag = -2*vmag[fr]*bij
+            accum_self_vang = 0.0
+
+            for j in range(graph_mat[fr, 0]):
+                to = graph_mat[fr, j + 1]
+                gij = ybus_mat[fr, j + 1].real
+                bij = ybus_mat[fr, j + 1].imag
+
+                angleij = vang[fr] - vang[to]
+
+                accum_self_vmag += vmag[to]*(gij*np.sin(angleij)
+                        - bij*np.cos(angleij))
+                accum_self_vang += vmag[fr]*vmag[to]*(gij*np.cos(angleij)
+                        + bij*np.sin(angleij))
+
+                if PQV_idx[to] >= 0:
+                    vang_to_idx = nPQ + PQV_idx[to]
+                    row[ptr] = PQ_idx[fr]
+                    col[ptr] = vang_to_idx
+                    val[ptr] = vmag[fr]*vmag[to]*(-gij*np.cos(angleij)
+                        - bij*np.sin(angleij))
+                    ptr += 1
+
+                if PQ_idx[to] >= 0:
+                    vmag_to_idx = PQ_idx[to]
+                    row[ptr] = PQ_idx[fr]
+                    col[ptr] = vmag_to_idx
+                    val[ptr] = vmag[fr]*(gij*np.sin(angleij)
+                        - bij*np.cos(angleij))
+                    ptr += 1
+
+            row[ptr] = PQ_idx[fr]
+            col[ptr] = vmag_fr_idx
+            val[ptr] = accum_self_vmag
+            ptr += 1
+
+            row[ptr] = PQ_idx[fr]
+            col[ptr] = vang_fr_idx
+            val[ptr] = accum_self_vang
+            ptr += 1
+
+        if PQV_idx[fr] >= 0:
+            # self contribution
+            gij = ybus_mat[fr, 0].real
+            #F[nPQ + PQV_idx[fr]] += vmag[fr]*vmag[fr]*gij
+
+            bij = ybus_mat[fr, 0].imag
+
+            accum_self_vmag = 2*vmag[fr]*gij
+            accum_self_vang = 0.0
+
+            for j in range(graph_mat[fr, 0]):
+                to = graph_mat[fr, j + 1]
+                gij = ybus_mat[fr, j + 1].real
+                bij = ybus_mat[fr, j + 1].imag
+                angleij = vang[fr] - vang[to]
+                accum_self_vmag += vmag[to]*(gij*np.cos(angleij)
+                        + bij*np.sin(angleij))
+                accum_self_vang += vmag[fr]*vmag[to]*(-gij*np.sin(angleij)
+                        + bij*np.cos(angleij))
+
+                if PQV_idx[to] >= 0:
+                    vang_to_idx = nPQ + PQV_idx[to]
+                    row[ptr] = nPQ + PQV_idx[fr]
+                    col[ptr] = vang_to_idx
+                    val[ptr] = vmag[fr]*vmag[to]*(gij*np.sin(angleij)
+                        - bij*np.cos(angleij))
+                    ptr += 1
+
+                if PQ_idx[to] >= 0:
+                    vmag_to_idx = PQ_idx[to]
+                    row[ptr] = nPQ + PQV_idx[fr]
+                    col[ptr] = vmag_to_idx
+                    val[ptr] = vmag[fr]*(gij*np.cos(angleij)
+                        + bij*np.sin(angleij))
+                    ptr += 1
+
+            if PQ_idx[fr] >= 0:
+                vmag_fr_idx = PQ_idx[fr]
+                row[ptr] = nPQ + PQV_idx[fr]
+                col[ptr] = vmag_fr_idx
+                val[ptr] = accum_self_vmag
+                ptr += 1
+
+            vang_fr_idx = nPQ + PQV_idx[fr]
+            row[ptr] = nPQ + PQV_idx[fr]
+            col[ptr] = vang_fr_idx
+            val[ptr] = accum_self_vang
+            ptr += 1
+
+def jac_wrapper(x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat):
+    nnz = compute_jac_nnz(graph_mat, PQ_idx, PQV_idx)
+    row = np.zeros(nnz)
+    col = np.zeros(nnz)
+    val = np.zeros(nnz)
+    fill_jacobian(x, vmag, vang, Pinj, Qinj, ybus_mat,
+        bus_type, PQ_idx, PQV_idx, graph_mat,
+        row, col, val)
+    J =  csr_matrix((val, (row, col)), shape=(x.shape[0], x.shape[0]))
+    return J
 
 @jit(nopython=True, cache=True)
 def compute_pinj_alt(v, Sinj, ybus_mat, graph_mat, nbus):
@@ -118,7 +260,6 @@ def compute_pinj_alt(v, Sinj, ybus_mat, graph_mat, nbus):
 
             Sinj[2*fr_bus + 1] += vmag_i*vmag_j*(gij*np.sin(angleij)
                 - bij*np.cos(angleij))
-            
 
 def runpf(psys, verbose=False):
 
@@ -138,7 +279,6 @@ def runpf(psys, verbose=False):
     Qinj = np.zeros(psys.nbuses, dtype=float)
 
     for i in range(psys.nbuses):
-
         vmag[i] = psys.buses[i].v0m
         vang[i] = psys.buses[i].v0a
         bus_type[i] = psys.buses[i].type
@@ -159,8 +299,8 @@ def runpf(psys, verbose=False):
         nslack, nPV, nPQ))
 
     x0 = np.zeros(2*nPQ + nPV)
-    # indexing for PQ buses
 
+    # indexing for PQ buses
     PQ_bus = np.where(bus_type == 1, 1, 0)
     PQ_idx = (np.where(PQ_bus == 1, np.cumsum(PQ_bus), PQ_bus) - 1)
 
@@ -174,7 +314,6 @@ def runpf(psys, verbose=False):
     #   x0 =  [vang] ~ 1 ... nPV
 
     for i in range(psys.nbuses):
-
         if PQ_idx[i] >= 0:
             x0[PQ_idx[i]] = psys.buses[i].v0m
 
@@ -182,19 +321,27 @@ def runpf(psys, verbose=False):
             x0[nPQ + PQV_idx[i]] = psys.buses[i].v0a
 
     # pack data structures
-    sol, info, ier, msg = optimize.fsolve(resfun_wrapper, x0, args = (vmag, vang, Pinj, Qinj, 
-        psys.ybus_mat, bus_type, PQ_idx, PQV_idx, psys.graph_mat), full_output=True, epsfcn=1e-10)
+    #sol, info, ier, msg = optimize.fsolve(resfun_wrapper, x0, args = (vmag, vang, Pinj, Qinj, 
+    #    psys.ybus_mat, bus_type, PQ_idx, PQV_idx, psys.graph_mat),
+    #    full_output=True, epsfcn=1e-10, fprime=jac_wrapper)
 
-    if ier == 1:
+    fun = lambda x : resfun_wrapper(x, vmag, vang, Pinj, Qinj, psys.ybus_mat, bus_type,
+            PQ_idx, PQV_idx, psys.graph_mat)
+    jac = lambda x : jac_wrapper(x, vmag, vang, Pinj, Qinj, psys.ybus_mat, bus_type,
+            PQ_idx, PQV_idx, psys.graph_mat)
+
+    # https://github.com/scipy/scipy/blob/main/scipy/optimize/_nonlin.py#L116
+    # The only solver in SciPy that allowed me to pass a sparse Jacobian
+    sol, info = nonlin_solve(fun, x0, jacobian=jac, full_output=True, f_tol=1e-9)
+
+    if info["success"]:
         if verbose: print("Power flow converged.")
     else:
-        print(msg)
+        print(info["message"])
         raise("Power flow solution did not converge")
-
 
     # retrieve voltage magnitudes and angles
     for i in range(psys.nbuses):
-
         if PQ_idx[i] >= 0:
             vmag[i] = sol[PQ_idx[i]]
 
@@ -207,4 +354,5 @@ def runpf(psys, verbose=False):
     v = np.array([vmag, vang]).T.flatten()
     Sinj = np.zeros(len(v))
     compute_pinj_alt(v, Sinj, psys.ybus_mat, psys.graph_mat, psys.nbuses)
+
     return v, Sinj
