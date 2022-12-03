@@ -49,12 +49,13 @@ def gradient_p(psys, z, theta, load_idx=0):
     dif_size = psys.num_dof_dif
     pow_size = 2*psys.nbuses  # power balance equations
     sys_size = alg_size + dif_size + 2*psys.nbuses
+    dev = alg_size + dif_size
 
     v = z[dif_size + alg_size:]
 
     # alocate gradient
     G = np.zeros(sys_size)
-    psys.loads[load_idx].gradient_alpha(G[alg_size + dif_size:], z, v, theta)
+    psys.loads[load_idx].gradient_alpha(G[alg_size + dif_size:], z, v, theta, dev, psys.power_injection)
 
     # This gradient is for CIM5 + Z load implementation.
     # Commenting out until I have a better way to select sensitivity parameters.
