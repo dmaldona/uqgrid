@@ -271,17 +271,39 @@ class Load(object):
         val[0] = alpha*(2.0*Ql*(1.0/v0)**2.0)
         csr_add_row(HQ.data, HQ.indptr, HQ.indices, 1, row, col, val)
 
-    def gradient_alpha(self, G, z, v, theta):
+    def gradient_alpha(self, G, z, v, theta, dev, power_injection):
 
-        vm = v[2*self.bus]
+        if power_injection:
+            vm = v[2*self.bus]
+            va = v[2*self.bus + 1]
+        else:
+            vr = v[2*self.bus]
+            vi = v[2*self.bus + 1]
+            vm = np.sqrt(vr**2.0 + vi**2.0)
+            va = np.arctan2(vi, vr)
 
         Pl = self.pload
         Ql = self.qload
         v0 = self.v0
         alpha = self.alpha
 
-        G[2*self.bus] += -Pl*(vm/v0)**2.0 + Pl
-        G[2*self.bus + 1] += Ql*(vm/v0)**2.0 - Ql
+        if power_injection:
+            G[2*self.bus] += -Pl*(vm/v0)**2.0 + Pl
+            G[2*self.bus + 1] += Ql*(vm/v0)**2.0 - Ql
+        else:
+            dylda = (Pl + 1j*Ql)/(v0**2.0)
+            vm2 = vr*vr + vi*vi
+            vm2_tld = 0.2
+
+            G[2*self.bus] -= vr*dylda.real - vi*dylda.imag
+            G[2*self.bus + 1] -= vr*dylda.imag + vi*dylda.real
+
+            if vm2 > vm2_tld:
+                G[2*self.bus] += (Pl*vr - Ql*vi)/vm2
+                G[2*self.bus + 1] += (Ql*vr + Pl*vi)/vm2
+            else:
+                G[2*self.bus] += (Pl*vr - Ql*vi)/vm2_tld
+                G[2*self.bus + 1] += (Ql*vr + Pl*vi)/vm2_tld
 
     def gradient_pp_alpha(self, GX, z, v, theta, dev):
 
