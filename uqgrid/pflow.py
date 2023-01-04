@@ -1,24 +1,18 @@
 import numpy as np
-import cmath
-import numba
 from numba import jit
 from scipy.sparse import csr_matrix
-
-from .psysdef import Psystem
 from scipy import optimize
 from scipy.optimize.nonlin import nonlin_solve
+from .psysdef import Psystem
 
-# Notes: this implementation of power flow is awful. But I cannot spend too much time here.
-# Matpower has a cool implementation. But they use rectangular coordinates and their own
-# N-R implementation. If I want to use a SCIPY solver I need to write the problem
-# in a canonical form.
 
 @jit(nopython=True, cache=True)
-def resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat):
+def resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat,
+           bus_type, PQ_idx, PQV_idx, graph_mat):
 
     # The first step is to susbtitute back the vmag and vang unknown variables
     # from x to 'vmag' and 'vang'. It might seem confusing to mix in the same
-    # vector unknown variables and parameters. However, this makes writing the 
+    # vector unknown variables and parameters. However, this makes writing the
     # equations cleaner.
 
     nPQ = np.sum(bus_type == 1)
@@ -34,45 +28,49 @@ def resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, gr
     for fr in range(nbus):
         if PQ_idx[fr] >= 0:
             F[PQ_idx[fr]] -= Qinj[fr]
-            
+
             # self contribution
             bij = ybus_mat[fr, 0].imag
             F[PQ_idx[fr]] -= vmag[fr]*vmag[fr]*bij
 
             for j in range(graph_mat[fr, 0]):
                 to = graph_mat[fr, j + 1]
-                
+
                 gij = ybus_mat[fr, j + 1].real
                 bij = ybus_mat[fr, j + 1].imag
 
                 angleij = vang[fr] - vang[to]
 
                 F[PQ_idx[fr]] += vmag[fr]*vmag[to]*(gij*np.sin(angleij)
-                    - bij*np.cos(angleij))
+                                 - bij*np.cos(angleij))
 
         if PQV_idx[fr] >= 0:
             F[nPQ + PQV_idx[fr]] -= Pinj[fr]
-            
+
             # self contribution
             gij = ybus_mat[fr, 0].real
             F[nPQ + PQV_idx[fr]] += vmag[fr]*vmag[fr]*gij
 
             for j in range(graph_mat[fr, 0]):
                 to = graph_mat[fr, j + 1]
-                
+
                 gij = ybus_mat[fr, j + 1].real
                 bij = ybus_mat[fr, j + 1].imag
 
                 angleij = vang[fr] - vang[to]
-                
+
                 F[nPQ + PQV_idx[fr]] += vmag[fr]*vmag[to]*(gij*np.cos(angleij)
-                    + bij*np.sin(angleij))
+                                        + bij*np.sin(angleij))
     return F
 
-def resfun_wrapper(x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat):
+
+def resfun_wrapper(x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type,
+                   PQ_idx, PQV_idx, graph_mat):
     F = np.zeros(len(x))
-    resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat)
+    resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type,
+           PQ_idx, PQV_idx, graph_mat)
     return F
+
 
 @jit(nopython=True, cache=True)
 def compute_jac_nnz(graph_mat, PQ_idx, PQV_idx):
@@ -229,20 +227,20 @@ def compute_pinj_alt(v, Sinj, ybus_mat, graph_mat, nbus):
 
         Sinj[2*fr_bus] = 0.0 # P
         Sinj[2*fr_bus + 1] = 0.0 # Q
-        
+
         vmag_i = v[2*fr_bus]
         vang_i = v[2*fr_bus + 1]
         angleij = 0.0
-        
+
         gij = ybus_mat[fr_bus, 0].real
         bij = ybus_mat[fr_bus, 0].imag
-            
+
         Sinj[2*fr_bus] += vmag_i*vmag_i*(gij*np.cos(angleij)
             + bij*np.sin(angleij))
 
         Sinj[2*fr_bus + 1] += vmag_i*vmag_i*(gij*np.sin(angleij)
             - bij*np.cos(angleij))
-        
+
         for j in range(graph_mat[fr_bus, 0]):
 
             to_bus = graph_mat[fr_bus, j + 1]
@@ -263,7 +261,7 @@ def compute_pinj_alt(v, Sinj, ybus_mat, graph_mat, nbus):
 
 def runpf(psys, verbose=False):
 
-    # Slack  (1) variables: p, q. parameters: vmag, vang. 
+    # Slack  (1) variables: p, q. parameters: vmag, vang.
     # PV gen (2) variables: q, vang. parameters: P, vmag.
     # PQ load (3) variables: vmag, vang. parameters: P, Q.
 
@@ -321,10 +319,6 @@ def runpf(psys, verbose=False):
             x0[nPQ + PQV_idx[i]] = psys.buses[i].v0a
 
     # pack data structures
-    #sol, info, ier, msg = optimize.fsolve(resfun_wrapper, x0, args = (vmag, vang, Pinj, Qinj, 
-    #    psys.ybus_mat, bus_type, PQ_idx, PQV_idx, psys.graph_mat),
-    #    full_output=True, epsfcn=1e-10, fprime=jac_wrapper)
-
     fun = lambda x : resfun_wrapper(x, vmag, vang, Pinj, Qinj, psys.ybus_mat, bus_type,
             PQ_idx, PQV_idx, psys.graph_mat)
     jac = lambda x : jac_wrapper(x, vmag, vang, Pinj, Qinj, psys.ybus_mat, bus_type,
@@ -338,7 +332,7 @@ def runpf(psys, verbose=False):
         if verbose: print("Power flow converged.")
     else:
         print(info["message"])
-        raise("Power flow solution did not converge")
+        raise Exception("Power flow solution did not converge")
 
     # retrieve voltage magnitudes and angles
     for i in range(psys.nbuses):
