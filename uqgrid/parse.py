@@ -235,6 +235,7 @@ def load_matpower(mat_file):
         psys.add_branch(fr_internal, to_internal, mat_branches[i, 2], mat_branches[i, 3], 
                 sh=mat_branches[i, 4], tap=mat_branches[i, 8], shift=mat_branches[i, 9])
 
+    psys.add_ext2int(mat_to_int)
     psys.assemble()
 
     return psys
