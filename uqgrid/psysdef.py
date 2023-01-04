@@ -1806,7 +1806,7 @@ class GovIEESGO(Governor):
     def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
         return None
 
-    def preallocate_jacobian(self, idxs, psys):
+    def preallocate_jacobian(self, idxs, psys, power_injection):
 
         coord = []
 
@@ -1861,7 +1861,8 @@ class GovIEESGO(Governor):
     def residual_hess(self, HESS, z, v, theta, idxs, ctrl_idx, ctrl_var):
         pass
 
-    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var,
+            power_injection):
         dp = idxs[0]
         ap = idxs[1]
         dev = idxs[2]

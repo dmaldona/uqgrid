@@ -1314,8 +1314,20 @@ if petsc4py:
             #A[:,:] = 0.0
             A.assemble()
             return True
-            
 
+## Small-signal analysis
+def compute_equilibrium(psys, power_injection=True):
+    psys.power_injection=power_injection
+    volt, Pinj = runpf(psys, verbose=False)
+    z0, theta = initialize_system(volt, Pinj, psys)
+    return z0, theta
+
+def compute_rhs_jacobian(psys, z, theta, power_injection=True):
+    J = preallocate_jacobian(psys)
+    residual_jacobian(J, z, theta, psys)
+    return J
+
+## Integration of DAE
 def integrate_system(psys,
                      power_injection=True,
                      tend=10.0,
