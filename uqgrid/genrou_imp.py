@@ -95,7 +95,7 @@ def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
         F[ap + 2] = v_d - (vr*np.sin(delta) - vi*np.cos(delta))
         F[ap + 3] = v_q - (vr*np.cos(delta) + vi*np.sin(delta))
     
-#@jit(nopython=True, cache=True)
+@jit(nopython=True, cache=True)
 def jac_genrou(z, v, theta, idxs,
         ctrl_idx, ctrl_var, J_data, J_ptr, J_idx, power_injection):
 

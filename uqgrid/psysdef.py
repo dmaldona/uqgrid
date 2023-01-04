@@ -59,9 +59,11 @@ class DynamicModel(ABC):
         self.bus = bus_ptr
 
     def __str__(self):
-        return ("\tAlgebraic dof: %d\tGlobal Pointer: %d\n" %
+        return ("DEVICE ID: {0}\n".format(self.id_tag) +
+                "Type: {0}\n".format(self.model_type) +
+                "Algebraic dof: %d\tGlobal Pointer: %d\n" %
                 (self.alg_dim, self.alg_ptr) +
-                "\tDifferential dof: %d\tGlobal Pointer: %d" %
+                "Differential dof: %d\tGlobal Pointer: %d" %
                 (self.dif_dim, self.dif_ptr))
 
 class Bus(object):
@@ -453,6 +455,10 @@ class DynamicGenerator(DynamicModel):
 
     def attach_governor(self, governor):
         self.governor = governor
+    
+    def __str__(self):
+        st = "\nInitialized: {0}".format(self.initialized)
+        return super().__str__()+st
 
 
 class Governor(DynamicModel):
@@ -758,7 +764,7 @@ class Psystem:
 
     def ybus_complex2real(self):
         from .network import realify_ybus
-        self.rybus = csr_matrix(realify_ybus(self))
+        self.rybus = realify_ybus(self)
 
     # For exciters and governors, these are always associated to a generator.
     # Associated generator must be provided.

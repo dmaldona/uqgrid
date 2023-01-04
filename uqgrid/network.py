@@ -104,14 +104,46 @@ def realify_ybus(psys):
     ybus = psys.ybus_spa
     nbuses = psys.nbuses
     rybus = np.zeros((2*nbuses, 2*nbuses))
+    nnz = ybus.nnz
 
-    for i in range(nbuses):
-        for j in range(nbuses):
-            z = ybus[i, j]
-            a = np.real(z)
-            b = np.imag(z)
-            rybus[2*i    , 2*j    ]     += a
-            rybus[2*i + 1, 2*j + 1]     += a
-            rybus[2*i    , 2*j + 1]     += -b
-            rybus[2*i + 1, 2*j    ]     += b
+    # the realified ybus has 4 times the complex nnz
+    new_val = np.zeros(4*nnz)
+    new_row = np.zeros(4*nnz)
+    new_col = np.zeros(4*nnz)
+
+    # iterate sparse complex ybus, find out column and row
+    # note, we assume CSR matrix
+    c_idx = 0
+    for row in range(ybus.shape[0]):
+        row_s = ybus.indptr[row]
+        row_e = ybus.indptr[row + 1]
+
+        ncols = row_e - row_s
+        for i in range(ncols):
+            col = ybus.indices[row_s + i]
+            entry = ybus.data[row_s + i]
+
+            zr = np.real(entry)
+            zi = np.imag(entry)
+
+            new_row[c_idx] = 2*row
+            new_col[c_idx] = 2*col
+            new_val[c_idx] = zr
+            
+            new_row[c_idx + 1] = 2*row + 1
+            new_col[c_idx + 1] = 2*col + 1
+            new_val[c_idx + 1] = zr
+            
+            new_row[c_idx + 2] = 2*row
+            new_col[c_idx + 2] = 2*col + 1
+            new_val[c_idx + 2] = -zi
+            
+            new_row[c_idx + 3] = 2*row + 1
+            new_col[c_idx + 3] = 2*col
+            new_val[c_idx + 3] = zi
+
+            c_idx += 4
+
+    rybus = csr_matrix((new_val, (new_row, new_col)),
+            shape=(2*ybus.shape[0], 2*ybus.shape[1]))
     return rybus

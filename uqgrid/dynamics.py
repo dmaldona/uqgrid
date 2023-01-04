@@ -969,9 +969,9 @@ def initialize_system(v, p_inj, psys):
         else:
             pi = p_load[2*device.bus]
             qi = p_load[2*device.bus + 1]
-
         device.initialize(vm, va, pi, qi, x, y, psys)
 
+    print("cacota")
     for load in psys.loads:
         load.base_voltage(v[2*load.bus])
 
@@ -992,6 +992,7 @@ def initialize_system(v, p_inj, psys):
         # Perhaps not the best place to put this as it might result
         # in extra overhead when doing MC sampling.
         psys.ybus_complex2real()
+        print("cacota")
 
     # initialize theta
     theta = np.zeros(psys.num_pars)
@@ -1361,11 +1362,14 @@ def integrate_system(psys,
 
     # retrieve parameters
     volt, Pinj = runpf(psys, verbose=False)
+    print("cacota")
     z0, theta = initialize_system(volt, Pinj, psys)
+    print("cacota")
     system_size = z0.shape[0]
     J = preallocate_jacobian(psys)
+    print("cacota")
     F = np.zeros(system_size)
-
+    print("cacota")
     # calculate nsteps
     h = dt
     if steps > 0:
