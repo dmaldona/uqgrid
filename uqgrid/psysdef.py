@@ -13,6 +13,7 @@ import networkx as nx
 # IMPORT DEVICE IMPLEMENTATIONS
 from .genrou_imp import resdiff_genrou, jac_genrou, hes_genrou
 from .cim5_imp import residualFinit_cim5
+from .load_imp import cinj_load, jac_load
 
 # constants
 ws = 2*np.pi*60
@@ -147,7 +148,7 @@ class Load(DeviceModel):
     # add dynamics to a generator)
 
     def __init__(self, bus, tag, pload, qload, basemva):
-        DeviceModel.__init__(self, 0, 0, 5, tag, 'ZIPLoad')
+        DeviceModel.__init__(self, 0, 0, 7, tag, 'ZIPLoad')
         self.bus = bus
         self.pload = pload/basemva
         self.qload = qload/basemva
@@ -186,6 +187,11 @@ class Load(DeviceModel):
         theta[idx + 2] = self.alpha
         theta[idx + 3] = self.weight
         theta[idx + 4] = self.v0
+        
+        yload = self.alpha*(self.pload + 1j*self.qload)/(self.v0**2.0)
+        
+        theta[idx + 5] = yload.real
+        theta[idx + 6] = yload.imag
 
     def preallocate_jacobian(self, idxs, psys, power_injection):
         return []
@@ -201,119 +207,21 @@ class Load(DeviceModel):
 
         vm = v[2*self.bus]
 
-        Pl = self.pload
-        Ql = self.qload
+        pl = self.pload
+        ql = self.qload
         v0 = self.v0
         alpha = self.alpha
 
-        F[2*self.bus] += -alpha*Pl*(vm/v0)**2.0 - (1 - alpha)*Pl
-        F[2*self.bus + 1] += alpha*Ql*(vm/v0)**2.0 + (1 - alpha)*Ql
+        F[2*self.bus] += -alpha*pl*(vm/v0)**2.0 - (1 - alpha)*pl
+        F[2*self.bus + 1] += alpha*ql*(vm/v0)**2.0 + (1 - alpha)*ql
 
-    def residual_cinj(self, F, z, v, theta, idxs):
+    def residual_cinj(self, F, z, v, theta, idx):
+        cinj_load(F, z, v, theta, idx)
 
-        pp = idxs[2]
-        bus = idxs[3]
-
-        vr = v[2*bus]
-        vi = v[2*bus + 1]
-
-        pl = theta[pp]
-        ql = theta[pp + 1]
-        alpha = theta[pp + 2]
-        weight = theta[pp + 3]
-        v0 = theta[pp + 4]
-
-        yload = alpha*(pl + 1j*ql)/(v0**2.0)
-        vm2 = vr*vr + vi*vi
-        vm2_tld = 0.2
-
-        F[2*bus] -= vr*yload.real - vi*yload.imag
-        F[2*bus + 1] -= vr*yload.imag + vi*yload.real
-
-        if vm2 > vm2_tld:
-            F[2*bus] -= (1-alpha)*(pl*vr - ql*vi)/vm2
-            F[2*bus + 1] -= (1-alpha)*(ql*vr + pl*vi)/vm2
-        else:
-            F[2*bus] -= (1-alpha)*(pl*vr - ql*vi)/vm2_tld
-            F[2*bus + 1] -= (1-alpha)*(ql*vr + pl*vi)/vm2_tld
-
-    #def residual_jac(self, J, z, v, theta, dev, power_injection):
     def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var,
             power_injection):
-        Pl = self.pload
-        Ql = self.qload
-        v0 = self.v0
-        alpha = self.alpha
-        bus = idxs[4]
-        dev = idxs[2]
-        if power_injection:
-            vm = v[2*self.bus]
-            va = v[2*self.bus + 1]
-        else:
-            vr = v[2*self.bus]
-            vi = v[2*self.bus + 1]
-            vm = np.sqrt(vr**2.0 + vi**2.0)
-            va = np.arctan2(vi, vr)
-
-        col = np.zeros(2)
-        val = np.zeros(2)
-
-        if power_injection:
-            # first row
-            row = dev + 2*self.bus
-            col[0] = dev + 2*self.bus
-            val[0] = -alpha*2.0*Pl*(vm/v0)**2.0/vm
-            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
-
-            # second row
-            row = dev + 2*self.bus + 1
-            col[0] = dev + 2*self.bus
-            val[0] = alpha*(2.0*Ql*(vm/v0)**2.0)/vm
-            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
-
-        else:
-            yload = (Pl + 1j*Ql)/(v0**2.0)
-            # constant admittance contribution
-            row = dev + 2*self.bus
-            col[0] = dev + 2*self.bus
-            col[1] = dev + 2*self.bus + 1
-            val[0] = -alpha*yload.real
-            val[1] = alpha*yload.imag
-            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-            row = dev + 2*self.bus + 1
-            col[0] = dev + 2*self.bus
-            col[1] = dev + 2*self.bus + 1
-            val[0] = -alpha*yload.imag
-            val[1] = -alpha*yload.real
-            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-            # constant power contribution
-            vm2 = vr*vr + vi*vi
-            vm2_tld = 0.2
-
-            row = dev + 2*self.bus
-            col[0] = dev + 2*self.bus
-            col[1] = dev + 2*self.bus + 1
-            if vm2 > vm2_tld:
-                val[0] = (1-alpha)*((Pl*vr - Ql*vi)*2*vr - Pl*vm2)/vm2**2.0
-                val[1] = (1-alpha)*((Pl*vr - Ql*vi)*2*vi + Ql*vm2)/vm2**2.0
-            else:
-                val[0] = (1-alpha)*(-Pl)/vm2_tld
-                val[1] = (1-alpha)*(Ql)/vm2_tld
-            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-            row = dev + 2*self.bus + 1
-            col[0] = dev + 2*self.bus
-            col[1] = dev + 2*self.bus + 1
-
-            if vm2 > vm2_tld:
-                val[0] = (1-alpha)*((Ql*vr + Pl*vi)*2*vr - Ql*vm2)/vm2**2.0
-                val[1] = (1-alpha)*((Ql*vr + Pl*vi)*2*vi - Pl*vm2)/vm2**2.0
-            else:
-                val[0] = (1-alpha)*(-Ql)/vm2_tld
-                val[1] = (1-alpha)*(-Pl)/vm2_tld
-            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
+        jac_load(z, v, theta, idxs, ctrl_idx, ctrl_var, J.data, J.indptr,
+                   J.indices, power_injection)
 
     def residual_hess(self, H, z, v, theta, idxs, ctrl_idx, ctrl_var):
         # (TODO) Need to refactor and fit residual_hes into residual_hess. But I remember

@@ -165,7 +165,6 @@ def residual_function(F, z, theta, psys):
         csr_matvec(psys.rybus.shape[0],psys.rybus.shape[1],psys.rybus.indptr,
                 psys.rybus.indices, psys.rybus.data, v, F[alg_size + dif_size:])
     F[alg_size + dif_size:] = -1.0*F[alg_size + dif_size:]
-    
 
     idxs = np.zeros(4, dtype=np.int64)
 
