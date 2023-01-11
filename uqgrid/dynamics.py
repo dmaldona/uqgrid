@@ -181,18 +181,11 @@ def residual_function(F, z, theta, psys):
         psys.devices[i].residual_diff(F, z, v, theta,
                 idxs, ctrl_idx, ctrl_var, psys.power_injection)
         if psys.power_injection:
-            psys.devices[i].residual_pinj(F[alg_size + dif_size:], z, v, None,
+            psys.devices[i].residual_pinj(F[alg_size + dif_size:], z, v, theta,
                                       idxs)
         else:
-            psys.devices[i].residual_cinj(F[alg_size + dif_size:], z, v, None,
+            psys.devices[i].residual_cinj(F[alg_size + dif_size:], z, v, theta,
                                       idxs)
-
-    for load in psys.loads:
-        if load.dynamic == 0:
-            if psys.power_injection:
-                load.residual_pinj(F[alg_size + dif_size:], z, v, None, None)
-            else:
-                load.residual_cinj(F[alg_size + dif_size:], z, v, None, None)
 
     for fault in psys.fault_events:
         if fault.active:
@@ -352,10 +345,6 @@ def residual_jacobian(J, z, theta, psys):
 
         psys.devices[i].residual_jac(J, z, v, theta, idxs, ctrl_idx,
                 ctrl_var, psys.power_injection)
-
-    for load in psys.loads:
-        if load.dynamic == 0:
-            load.residual_jac(J, z, v, theta, dev, psys.power_injection)
 
     for fault in psys.fault_events:
         if fault.active:
@@ -971,13 +960,8 @@ def initialize_system(v, p_inj, psys):
             qi = p_load[2*device.bus + 1]
         device.initialize(vm, va, pi, qi, x, y, psys)
 
-    print("cacota")
-    for load in psys.loads:
-        load.base_voltage(v[2*load.bus])
-
     sysvec[:dif_size] = x
     sysvec[dif_size:dif_size + alg_size] = y
-    
     
     if psys.power_injection:
         sysvec[dif_size + alg_size:] = v
@@ -992,7 +976,6 @@ def initialize_system(v, p_inj, psys):
         # Perhaps not the best place to put this as it might result
         # in extra overhead when doing MC sampling.
         psys.ybus_complex2real()
-        print("cacota")
 
     # initialize theta
     theta = np.zeros(psys.num_pars)
@@ -1362,14 +1345,10 @@ def integrate_system(psys,
 
     # retrieve parameters
     volt, Pinj = runpf(psys, verbose=False)
-    print("cacota")
     z0, theta = initialize_system(volt, Pinj, psys)
-    print("cacota")
     system_size = z0.shape[0]
     J = preallocate_jacobian(psys)
-    print("cacota")
     F = np.zeros(system_size)
-    print("cacota")
     # calculate nsteps
     h = dt
     if steps > 0:
