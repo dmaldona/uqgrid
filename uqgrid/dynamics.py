@@ -759,17 +759,21 @@ def mixed_sensitivity(psys, x, u, sfact, HES, mold, theta, h):
             mold[:,k] = sfact(mu)
             k += 1
 
-
-def jacobian_beuler(J, NDIFFEQ, h):
-    #J[:NDIFFEQ,:] = -h*J[:NDIFFEQ,:]
+@jit(nopython=True, cache=True)
+def _jacobian_beuler(J_data, J_ptr, J_idx, NDIFFEQ, h):
     for i in range(NDIFFEQ):
-        csr_mult_row(J.data, J.indptr, J.indices, i, -h)
-    #J[:NDIFFEQ, :NDIFFEQ] += sp.sparse.eye(NDIFFEQ)
+        csr_mult_row(J_data, J_ptr, J_idx, i, -h)
     col = np.array([0])
     data = np.array([1.0])
     for i in range(NDIFFEQ):
         col[0] = i
-        csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
+        csr_add_row(J_data, J_ptr, J_idx, 1, i, col, data)
+
+
+def jacobian_beuler(J, NDIFFEQ, h):
+    #J[:NDIFFEQ,:] = -h*J[:NDIFFEQ,:]
+    #J[:NDIFFEQ, :NDIFFEQ] += sp.sparse.eye(NDIFFEQ)
+    _jacobian_beuler(J.data, J.indptr, J.indices, NDIFFEQ, h)
 
 
 @jit(nopython=True, cache=True)
