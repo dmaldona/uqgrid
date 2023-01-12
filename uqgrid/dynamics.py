@@ -192,7 +192,6 @@ def residual_function(F, z, theta, psys):
 
     # Restore write access to system vector
     z.flags.writeable = True
-
     return None
 
 

@@ -188,7 +188,7 @@ class Load(DeviceModel):
         theta[idx + 3] = self.weight
         theta[idx + 4] = self.v0
         
-        yload = self.alpha*(self.pload + 1j*self.qload)/(self.v0**2.0)
+        yload = (self.pload + 1j*self.qload)/(self.v0**2.0)
         
         theta[idx + 5] = yload.real
         theta[idx + 6] = yload.imag
