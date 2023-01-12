@@ -4,6 +4,7 @@ import numba
 from numba import jit
 from .tools import csr_add_row, csr_set_row
 
+@jit(nopython=True, cache=True)
 def cinj_load(F, z, v, theta, idxs):
 
     pp = idxs[2]
@@ -34,6 +35,7 @@ def cinj_load(F, z, v, theta, idxs):
         F[2*bus] -= (1-alpha)*(pl*vr - ql*vi)/vm2_tld
         F[2*bus + 1] -= (1-alpha)*(ql*vr + pl*vi)/vm2_tld
 
+@jit(nopython=True, cache=True)
 def jac_load(z, v, theta, idxs,
         ctrl_idx, ctrl_var, J_data, J_ptr, J_idx, power_injection):
 

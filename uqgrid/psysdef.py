@@ -574,6 +574,10 @@ class Psystem:
         self.geo_flag = False
         self.power_injection = True
 
+        # numerical integration flags.
+        # perhaps this should not be here?
+        self.first_jacobian_evaluation = True
+
     def __str__(self):
         return (
             "Power system instance composed of:\n" +
@@ -797,6 +801,7 @@ class Psystem:
                                                   gen.state_list.index('w'))
 
         self.init_flag = True
+        self.first_jacobian_evaluation = True
 
     # Tools
 

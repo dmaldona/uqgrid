@@ -6,13 +6,11 @@ from scipy import optimize
 import numdifftools as nd
 from numpy import linalg as LA
 from scipy import optimize
-import numba
 from numba import jit
 from scipy.sparse import csr_matrix
 from scipy.sparse.sparsetools import csr_matvec
 from scipy.sparse.linalg import spsolve, factorized
 
-import scipy as sp
 import math
 
 # optional include: PETSC4py
@@ -39,7 +37,6 @@ warnings.filterwarnings(action="ignore",
 TEST_JACOBIAN = False
 VERIFY_HESSIAN = False
 SECONDORDER = True
-
 
 def gradient_p(psys, z, theta, load_idx=0):
     """Generates gradient of the r.h.s with respect to a single parameter p.
@@ -291,19 +288,41 @@ def power_flow_jacobian(ybus_data, ybus_ptr, ybus_idx, J_data, J_ptr, J_idx,
                                            bij*np.sin(angleij))
                 csr_add_row(J_data, J_ptr, J_idx, 2, row, col, val)
 
+def current_injection_jacobian(ybus_data, ybus_ptr, ybus_idx,
+        jac_data, jac_ptr, jac_idx, dev):
+
+    for row_idx in range(len(ybus_ptr) - 1):
+        row_ptr = ybus_ptr[row_idx]
+        row_ptr_end = ybus_ptr[row_idx + 1]
+
+        nvals = row_ptr_end - row_ptr
+        row = row_idx + dev
+        col = ybus_idx[row_ptr:row_ptr_end] + dev
+        val = -ybus_data[row_ptr:row_ptr_end]
+
+        csr_set_row(jac_data, jac_ptr, jac_idx, nvals, row, col, val)
+
+@jit(nopython=True, cache=True)
+def _jacobian_diagonal_zeros(J_data, J_ptr, J_idx, ndim, NDIFFEQ):
+    col = np.array([0])
+    data = np.array([0.0])
+    for i in range(NDIFFEQ):
+        col[0] = i
+        csr_set_row(J_data, J_ptr, J_idx, 1, i, col, data)
 
 def residual_jacobian(J, z, theta, psys):
 
     # Lock system vector
     z.flags.writeable = False
 
-    # Initialize Jacobian matrix to 0s
-    J.data.fill(0.0)
-
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
     pow_size = 2*psys.nbuses  # power balance equations
     sys_size = alg_size + dif_size + 2*psys.nbuses
+
+    # Initialize Jacobian matrix to 0s
+    #J.data.fill(0.0)
+    _jacobian_diagonal_zeros(J.data, J.indptr, J.indices, J.shape[0], dif_size)
 
     # Assign vectors
     x = z[:dif_size]
@@ -317,16 +336,18 @@ def residual_jacobian(J, z, theta, psys):
                             psys.ybus_spa.indices, J.data, J.indptr, J.indices,
                             dev, v, psys.nbuses)
     else:
-        for row_idx in range(len(psys.rybus.indptr) - 1):
-            row_ptr = psys.rybus.indptr[row_idx]
-            row_ptr_end = psys.rybus.indptr[row_idx + 1]
-            
-            nvals = row_ptr_end - row_ptr
-            row = row_idx + dev
-            col = psys.rybus.indices[row_ptr:row_ptr_end] + dev
-            val = -psys.rybus.data[row_ptr:row_ptr_end]
+        current_injection_jacobian(psys.rybus.data, psys.rybus.indptr,
+                                   psys.rybus.indices, J.data, J.indptr,
+                                   J.indices, dev)
+        #for row_idx in range(len(psys.rybus.indptr) - 1):
+        #    row_ptr = psys.rybus.indptr[row_idx]
+        #    row_ptr_end = psys.rybus.indptr[row_idx + 1]
+        #    nvals = row_ptr_end - row_ptr
+        #    row = row_idx + dev
+        #    col = psys.rybus.indices[row_ptr:row_ptr_end] + dev
+        #    val = -psys.rybus.data[row_ptr:row_ptr_end]
 
-            csr_set_row(J.data, J.indptr, J.indices, nvals, row, col, val)
+        #    csr_set_row(J.data, J.indptr, J.indices, nvals, row, col, val)
 
     # DEVICES
     idxs = np.zeros(5, dtype=np.int64)
@@ -739,19 +760,24 @@ def jacobian_beuler(J, NDIFFEQ, h):
         col[0] = i
         csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
 
-def jacobian_implicit(J, NDIFFEQ, a):
-    # Converts the Jacobian of the r.h.s into:
-    # J = [a*I-df_dx, -df_dy
-    #     -dg_dx, -dg_dy]
 
-    for i in range(J.shape[0]):
-        csr_mult_row(J.data, J.indptr, J.indices, i, -1)
+@jit(nopython=True, cache=True)
+def _jacobian_implicit(J_data, J_ptr, J_idx, ndim, NDIFFEQ, a):
+    for i in range(ndim):
+        csr_mult_row(J_data, J_ptr, J_idx, i, -1)
     
     col = np.array([0])
     data = np.array([a])
     for i in range(NDIFFEQ):
         col[0] = i
-        csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
+        csr_add_row(J_data, J_ptr, J_idx, 1, i, col, data)
+
+
+def jacobian_implicit(J, NDIFFEQ, a):
+    # Converts the Jacobian of the r.h.s into:
+    # J = [a*I-df_dx, -df_dy
+    #     -dg_dx, -dg_dy]
+    _jacobian_implicit(J.data, J.indptr, J.indices, J.shape[0], NDIFFEQ, a)
 
 
 def function_beuler_wrapper(z, zold, h, psys, theta):
