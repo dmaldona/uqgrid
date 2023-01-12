@@ -287,8 +287,18 @@ def power_flow_jacobian(ybus_data, ybus_ptr, ybus_idx, J_data, J_ptr, J_idx,
                                            bij*np.sin(angleij))
                 csr_add_row(J_data, J_ptr, J_idx, 2, row, col, val)
 
+@jit(nopython=True, cache=True)
 def current_injection_jacobian(ybus_data, ybus_ptr, ybus_idx,
         jac_data, jac_ptr, jac_idx, dev):
+    
+    # TODO: This needs to come from the maximum interconnected nodes
+    col = np.zeros(100, dtype=np.int32)
+    val = np.zeros(100, dtype=np.double)
+
+    row_ptr = 0
+    row_ptr_end = 0
+    nvals = 0
+    row = 0
 
     for row_idx in range(len(ybus_ptr) - 1):
         row_ptr = ybus_ptr[row_idx]
@@ -296,8 +306,10 @@ def current_injection_jacobian(ybus_data, ybus_ptr, ybus_idx,
 
         nvals = row_ptr_end - row_ptr
         row = row_idx + dev
-        col = ybus_idx[row_ptr:row_ptr_end] + dev
-        val = -ybus_data[row_ptr:row_ptr_end]
+
+        for j in range(nvals):
+            col[j] = ybus_idx[row_ptr + j] + dev
+            val[j] = -ybus_data[row_ptr + j]
 
         csr_set_row(jac_data, jac_ptr, jac_idx, nvals, row, col, val)
 
