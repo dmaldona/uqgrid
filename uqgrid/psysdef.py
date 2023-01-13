@@ -11,21 +11,22 @@ from numba import jit
 import networkx as nx
 
 # IMPORT DEVICE IMPLEMENTATIONS
-from .genrou_imp import resdiff_genrou, jac_genrou, hes_genrou
+from .genrou_imp import resdiff_genrou, jac_genrou, hes_genrou, cinj_genrou
 from .cim5_imp import residualFinit_cim5
+from .load_imp import cinj_load, jac_load
 
 # constants
 ws = 2*np.pi*60
 
-# Element classes
-class DynamicModel(ABC):
-    """ Base class for dynamic model object.
+
+class DeviceModel(ABC):
+    """ Base class for device model object.
 
 
         Attibutes:
             dif_dim (int): differential degrees of freedom
             alg_dim (int): algebraic degrees of freedom
-            id_tag (int): dynamic element tag (external)
+            id_tag (int): device element tag (external)
             model_type (string): model type
             bus (int) internal bus pointer
 
@@ -59,10 +60,34 @@ class DynamicModel(ABC):
         self.bus = bus_ptr
 
     def __str__(self):
-        return ("\tAlgebraic dof: %d\tGlobal Pointer: %d\n" %
+        return ("DEVICE ID: {0}\n".format(self.id_tag) +
+                "Type: {0}\n".format(self.model_type) +
+                "Algebraic dof: %d\tGlobal Pointer: %d\n" %
                 (self.alg_dim, self.alg_ptr) +
-                "\tDifferential dof: %d\tGlobal Pointer: %d" %
+                "Differential dof: %d\tGlobal Pointer: %d" %
                 (self.dif_dim, self.dif_ptr))
+
+    @abstractmethod
+    def initialize(self, vm, va, p, q, x, y, psys):
+        pass
+
+    @abstractmethod
+    def initialize_theta(self, theta):
+        pass
+
+    @abstractmethod
+    def preallocate_jacobian(self, idxs, psys, power_injection):
+        """ Returns a list of coordinates for the Jacobian matrix in the
+            format coord = [[row1, [col1, col2], [row2, [col1, col2], ...]
+
+            If no contribution to Jacobian -> return empty list []
+        """
+        pass
+
+    @abstractmethod
+    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx,
+                      ctrl_var, power_injection):
+        pass
 
 class Bus(object):
     """ Generic bus class.
@@ -97,6 +122,7 @@ class Bus(object):
         # (TODO): remove this typecode and refactor with something that makes sense.
         self.alpha = alpha
 
+
 class Branch(object):
     """ Generic branch class """
 
@@ -109,10 +135,21 @@ class Branch(object):
         self.tap = tap
         self.shift = shift
 
-class Load(object):
+
+class Load(DeviceModel):
+    """ Class for load model. """
+    # (NOTE) This class is a bit inconsistent wit the rest. The load is created
+    # at the static level (power flow) but, by default (as in PSSE), it is a ZIP
+    # load model that plays a role in the dynamics.
+    # I have decided to make this load a "DeviceModel" that will share interface
+    # with the rest of the models and also participate in the "theta" vector of
+    # parameters. Perhaps in the future, I will turn Load to be a vanilla object
+    # and automatically generate a ZIPLoad device (similar to what we do when we 
+    # add dynamics to a generator)
+
     def __init__(self, bus, tag, pload, qload, basemva):
+        DeviceModel.__init__(self, 0, 0, 7, tag, 'ZIPLoad')
         self.bus = bus
-        self.id_tag = tag
         self.pload = pload/basemva
         self.qload = qload/basemva
 
@@ -125,126 +162,72 @@ class Load(object):
         # By default this load is type static
         self.dynamic = 0
 
+        # We initialize v0 to -1 to indicate there has not been a power-flow
+        self.v0 = -1.0
+
+        # theta = [pload, qload, alpha, weight]
+        self.initialized = False
+
     def set_alpha(self, alpha):
         assert alpha <= 1.0
         assert alpha >= 0.0
         self.alpha = alpha
 
-    def base_voltage(self, vmag):
-        self.v0 = vmag
+    def initialize(self, vm, va, p, q, x, y, psys):
+        # set base voltage
+        self.v0 = vm
+        self.initialized = True
+        pass
+
+    def initialize_theta(self, theta):
+        idx = self.par_ptr
+
+        theta[idx] = self.pload
+        theta[idx + 1] = self.qload
+        theta[idx + 2] = self.alpha
+        theta[idx + 3] = self.weight
+        theta[idx + 4] = self.v0
+        
+        yload = (self.pload + 1j*self.qload)/(self.v0**2.0)
+        
+        theta[idx + 5] = yload.real
+        theta[idx + 6] = yload.imag
+
+    def preallocate_jacobian(self, idxs, psys, power_injection):
+        return []
+
+    def preallocate_hessian(self, h_nnz, idxs, psys):
+        pass
+
+    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx,
+                      ctrl_var, power_injection):
+        pass
 
     def residual_pinj(self, F, z, v, theta, idxs):
 
         vm = v[2*self.bus]
 
-        Pl = self.pload
-        Ql = self.qload
+        pl = self.pload
+        ql = self.qload
         v0 = self.v0
         alpha = self.alpha
 
-        F[2*self.bus] += -alpha*Pl*(vm/v0)**2.0 - (1 - alpha)*Pl
-        F[2*self.bus + 1] += alpha*Ql*(vm/v0)**2.0 + (1 - alpha)*Ql
-    
-    def residual_cinj(self, F, z, v, theta, idxs):
+        F[2*self.bus] += -alpha*pl*(vm/v0)**2.0 - (1 - alpha)*pl
+        F[2*self.bus + 1] += alpha*ql*(vm/v0)**2.0 + (1 - alpha)*ql
 
-        vr = v[2*self.bus]
-        vi = v[2*self.bus + 1]
+    def residual_cinj(self, F, z, v, theta, idx):
+        cinj_load(F, z, v, theta, idx)
 
-        Pl = self.pload
-        Ql = self.qload
-        v0 = self.v0
-        alpha = self.alpha
-        a = alpha
-        ql = Ql
-        pl = Pl
+    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var,
+            power_injection):
+        jac_load(z, v, theta, idxs, ctrl_idx, ctrl_var, J.data, J.indptr,
+                   J.indices, power_injection)
 
-        yload = alpha*(Pl + 1j*Ql)/(v0**2.0)
-        vm2 = vr*vr + vi*vi
-        vm2_tld = 0.2
-
-        F[2*self.bus] -= vr*yload.real - vi*yload.imag
-        F[2*self.bus + 1] -= vr*yload.imag + vi*yload.real
-
-        if vm2 > vm2_tld:
-            F[2*self.bus] -= (1-alpha)*(Pl*vr - Ql*vi)/vm2
-            F[2*self.bus + 1] -= (1-alpha)*(Ql*vr + Pl*vi)/vm2
-        else:
-            F[2*self.bus] -= (1-alpha)*(Pl*vr - Ql*vi)/vm2_tld
-            F[2*self.bus + 1] -= (1-alpha)*(Ql*vr + Pl*vi)/vm2_tld
-
-    def residual_jac(self, J, z, v, theta, dev, power_injection):
-        Pl = self.pload
-        Ql = self.qload
-        v0 = self.v0
-        alpha = self.alpha
-        if power_injection:
-            vm = v[2*self.bus]
-            va = v[2*self.bus + 1]
-        else:
-            vr = v[2*self.bus]
-            vi = v[2*self.bus + 1]
-            vm = np.sqrt(vr**2.0 + vi**2.0)
-            va = np.arctan2(vi, vr)
-
-        col = np.zeros(2)
-        val = np.zeros(2)
-
-        if power_injection:
-            # first row
-            row = dev + 2*self.bus
-            col[0] = dev + 2*self.bus
-            val[0] = -alpha*2.0*Pl*(vm/v0)**2.0/vm
-            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
-
-            # second row
-            row = dev + 2*self.bus + 1
-            col[0] = dev + 2*self.bus
-            val[0] = alpha*(2.0*Ql*(vm/v0)**2.0)/vm
-            csr_add_row(J.data, J.indptr, J.indices, 1, row, col, val)
-
-        else:
-            yload = (Pl + 1j*Ql)/(v0**2.0)
-            # constant admittance contribution
-            row = dev + 2*self.bus
-            col[0] = dev + 2*self.bus
-            col[1] = dev + 2*self.bus + 1
-            val[0] = -alpha*yload.real
-            val[1] = alpha*yload.imag
-            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-            row = dev + 2*self.bus + 1
-            col[0] = dev + 2*self.bus
-            col[1] = dev + 2*self.bus + 1
-            val[0] = -alpha*yload.imag
-            val[1] = -alpha*yload.real
-            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-            # constant power contribution
-            vm2 = vr*vr + vi*vi
-            vm2_tld = 0.2
-
-            row = dev + 2*self.bus
-            col[0] = dev + 2*self.bus
-            col[1] = dev + 2*self.bus + 1
-            if vm2 > vm2_tld:
-                val[0] = (1-alpha)*((Pl*vr - Ql*vi)*2*vr - Pl*vm2)/vm2**2.0
-                val[1] = (1-alpha)*((Pl*vr - Ql*vi)*2*vi + Ql*vm2)/vm2**2.0
-            else:
-                val[0] = (1-alpha)*(-Pl)/vm2_tld
-                val[1] = (1-alpha)*(Ql)/vm2_tld
-            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-            row = dev + 2*self.bus + 1
-            col[0] = dev + 2*self.bus
-            col[1] = dev + 2*self.bus + 1
-
-            if vm2 > vm2_tld:
-                val[0] = (1-alpha)*((Ql*vr + Pl*vi)*2*vr - Ql*vm2)/vm2**2.0
-                val[1] = (1-alpha)*((Ql*vr + Pl*vi)*2*vi - Pl*vm2)/vm2**2.0
-            else:
-                val[0] = (1-alpha)*(-Ql)/vm2_tld
-                val[1] = (1-alpha)*(-Pl)/vm2_tld
-            csr_add_row(J.data, J.indptr, J.indices, 2, row, col, val)
+    def residual_hess(self, H, z, v, theta, idxs, ctrl_idx, ctrl_var):
+        # (TODO) Need to refactor and fit residual_hes into residual_hess. But I remember
+        # i needed to call the hessian of the load before the rest of the objects to avoid
+        # an issue? Make sure it is correct
+        pass
 
     def residual_hes(self, H, z, v, theta, dev):
 
@@ -401,10 +384,10 @@ class BusFault(object):
         csr_add_row(H2.data, H2.indptr, H2.indices, 1, row, col, val)
 
 
-class DynamicGenerator(DynamicModel):
+class DynamicGenerator(DeviceModel):
     """ Generic generator class.
 
-        Refer to DynamicModel for additional parameters/methods.
+        Refer to DeviceModel for additional parameters/methods.
 
         Attributes:
             initdim (int): degrees of freedom for initialization.
@@ -414,7 +397,7 @@ class DynamicGenerator(DynamicModel):
     def __init__(self, id_tag, initdim, ddim, adim, pdim, state_list):
         self.initdim = initdim
         self.state_list = state_list
-        DynamicModel.__init__(self, ddim, adim, pdim, id_tag, 'generator')
+        DeviceModel.__init__(self, ddim, adim, pdim, id_tag, 'generator')
         self.initialized = False
 
         # attached devices
@@ -453,38 +436,42 @@ class DynamicGenerator(DynamicModel):
 
     def attach_governor(self, governor):
         self.governor = governor
+    
+    def __str__(self):
+        st = "\nInitialized: {0}".format(self.initialized)
+        return super().__str__()+st
 
 
-class Governor(DynamicModel):
+class Governor(DeviceModel):
     def __init__(self, id_tag, initdim, ddim, adim, pdim, state_list):
         self.initdim = initdim
         self.state_list = state_list
-        DynamicModel.__init__(self, ddim, adim, pdim, id_tag, 'governor')
+        DeviceModel.__init__(self, ddim, adim, pdim, id_tag, 'governor')
         self.p_m0 = None  # this will be initialized by the generator
         self.w_idx = -1  # location of generator's frequency
         self.pref = None
         self.initialized = False
 
-class Exciter(DynamicModel):
+class Exciter(DeviceModel):
     def __init__(self, id_tag, initdim, ddim, adim, pdim, state_list):
         self.initdim = initdim
         self.state_list = state_list
-        DynamicModel.__init__(self, ddim, adim, pdim, id_tag, 'exciter')
+        DeviceModel.__init__(self, ddim, adim, pdim, id_tag, 'exciter')
         self.e_fd0 = None  # this will be initialized by the generator
         self.vref = None
         self.initialized = False
 
-class Motor(DynamicModel):
+class Motor(DeviceModel):
     def __init__(self, id_tag, initdim, ddim, adim, pdim, state_list):
         self.initdim = initdim
         self.state_list = state_list
-        DynamicModel.__init__(self, ddim, adim, pdim, id_tag, 'motor')
+        DeviceModel.__init__(self, ddim, adim, pdim, id_tag, 'motor')
         self.initialized = False
 
     def set_weight(self, weight):
         self.weight = weight
 
-class COI(DynamicModel):
+class COI(DeviceModel):
     """
         Simple COI model. Rather than computing it a posteriori, we include it as a state variable.
         This is useful to account for it in transient stability indexes. 
@@ -494,7 +481,7 @@ class COI(DynamicModel):
         accounted for. 
     """
     def __init__(self):
-        DynamicModel.__init__(self, 0, 1, 0, "COI1", 'COI')
+        DeviceModel.__init__(self, 0, 1, 0, "COI1", 'COI')
 
     def initialize(self, vm, va, p, q, x, y, psys):
         self.w_idx = np.array(psys.genspeed_idx_set())
@@ -587,6 +574,10 @@ class Psystem:
         self.geo_flag = False
         self.power_injection = True
 
+        # numerical integration flags.
+        # perhaps this should not be here?
+        self.first_jacobian_evaluation = True
+
     def __str__(self):
         return (
             "Power system instance composed of:\n" +
@@ -630,6 +621,7 @@ class Psystem:
 
     def add_load(self, bus, tag, pload, qload):
         self.loads.append(Load(bus, tag, pload, qload, self.basemva))
+        self.add_device(self.loads[-1])
         self.nloads += 1
 
     def add_shunt(self, bus, gsh, bsh):
@@ -758,7 +750,7 @@ class Psystem:
 
     def ybus_complex2real(self):
         from .network import realify_ybus
-        self.rybus = csr_matrix(realify_ybus(self))
+        self.rybus = realify_ybus(self)
 
     # For exciters and governors, these are always associated to a generator.
     # Associated generator must be provided.
@@ -809,11 +801,12 @@ class Psystem:
                                                   gen.state_list.index('w'))
 
         self.init_flag = True
+        self.first_jacobian_evaluation = True
 
     # Tools
 
     def device_to_global(self, dev, dev_idx):
-        assert isinstance(dev, DynamicModel)
+        assert isinstance(dev, DeviceModel)
         if dev_idx < dev.dif_dim:
             return dev.dif_ptr + dev_idx
         else:
@@ -1157,18 +1150,7 @@ class GenGENROU(DynamicGenerator):
         return None
     
     def residual_cinj(self, F, z, v, theta, idxs, alpha=False):
-
-        dp = idxs[0]
-        ap = idxs[1]
-        v_q = z[ap]
-        v_d = z[ap + 1]
-        i_q = z[ap + 2]
-        i_d = z[ap + 3]
-        delta = z[dp + 5]
-
-        F[2*self.bus] += np.sin(delta)*i_d + np.cos(delta)*i_q
-        F[2*self.bus + 1] += -np.cos(delta)*i_d + np.sin(delta)*i_q
-        return None
+        cinj_genrou(F, z, v, theta, idxs)
 
     def preallocate_jacobian(self, idxs, psys, power_injection):
 

@@ -6,13 +6,11 @@ from scipy import optimize
 import numdifftools as nd
 from numpy import linalg as LA
 from scipy import optimize
-import numba
 from numba import jit
 from scipy.sparse import csr_matrix
 from scipy.sparse.sparsetools import csr_matvec
 from scipy.sparse.linalg import spsolve, factorized
 
-import scipy as sp
 import math
 
 # optional include: PETSC4py
@@ -39,7 +37,6 @@ warnings.filterwarnings(action="ignore",
 TEST_JACOBIAN = False
 VERIFY_HESSIAN = False
 SECONDORDER = True
-
 
 def gradient_p(psys, z, theta, load_idx=0):
     """Generates gradient of the r.h.s with respect to a single parameter p.
@@ -165,7 +162,6 @@ def residual_function(F, z, theta, psys):
         csr_matvec(psys.rybus.shape[0],psys.rybus.shape[1],psys.rybus.indptr,
                 psys.rybus.indices, psys.rybus.data, v, F[alg_size + dif_size:])
     F[alg_size + dif_size:] = -1.0*F[alg_size + dif_size:]
-    
 
     idxs = np.zeros(4, dtype=np.int64)
 
@@ -181,18 +177,11 @@ def residual_function(F, z, theta, psys):
         psys.devices[i].residual_diff(F, z, v, theta,
                 idxs, ctrl_idx, ctrl_var, psys.power_injection)
         if psys.power_injection:
-            psys.devices[i].residual_pinj(F[alg_size + dif_size:], z, v, None,
+            psys.devices[i].residual_pinj(F[alg_size + dif_size:], z, v, theta,
                                       idxs)
         else:
-            psys.devices[i].residual_cinj(F[alg_size + dif_size:], z, v, None,
+            psys.devices[i].residual_cinj(F[alg_size + dif_size:], z, v, theta,
                                       idxs)
-
-    for load in psys.loads:
-        if load.dynamic == 0:
-            if psys.power_injection:
-                load.residual_pinj(F[alg_size + dif_size:], z, v, None, None)
-            else:
-                load.residual_cinj(F[alg_size + dif_size:], z, v, None, None)
 
     for fault in psys.fault_events:
         if fault.active:
@@ -203,7 +192,6 @@ def residual_function(F, z, theta, psys):
 
     # Restore write access to system vector
     z.flags.writeable = True
-
     return None
 
 
@@ -299,19 +287,53 @@ def power_flow_jacobian(ybus_data, ybus_ptr, ybus_idx, J_data, J_ptr, J_idx,
                                            bij*np.sin(angleij))
                 csr_add_row(J_data, J_ptr, J_idx, 2, row, col, val)
 
+@jit(nopython=True, cache=True)
+def current_injection_jacobian(ybus_data, ybus_ptr, ybus_idx,
+        jac_data, jac_ptr, jac_idx, dev):
+    
+    # TODO: This needs to come from the maximum interconnected nodes
+    col = np.zeros(100, dtype=np.int32)
+    val = np.zeros(100, dtype=np.double)
+
+    row_ptr = 0
+    row_ptr_end = 0
+    nvals = 0
+    row = 0
+
+    for row_idx in range(len(ybus_ptr) - 1):
+        row_ptr = ybus_ptr[row_idx]
+        row_ptr_end = ybus_ptr[row_idx + 1]
+
+        nvals = row_ptr_end - row_ptr
+        row = row_idx + dev
+
+        for j in range(nvals):
+            col[j] = ybus_idx[row_ptr + j] + dev
+            val[j] = -ybus_data[row_ptr + j]
+
+        csr_set_row(jac_data, jac_ptr, jac_idx, nvals, row, col, val)
+
+@jit(nopython=True, cache=True)
+def _jacobian_diagonal_zeros(J_data, J_ptr, J_idx, ndim, NDIFFEQ):
+    col = np.array([0])
+    data = np.array([0.0])
+    for i in range(NDIFFEQ):
+        col[0] = i
+        csr_set_row(J_data, J_ptr, J_idx, 1, i, col, data)
 
 def residual_jacobian(J, z, theta, psys):
 
     # Lock system vector
     z.flags.writeable = False
 
-    # Initialize Jacobian matrix to 0s
-    J.data.fill(0.0)
-
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
     pow_size = 2*psys.nbuses  # power balance equations
     sys_size = alg_size + dif_size + 2*psys.nbuses
+
+    # Initialize Jacobian matrix to 0s
+    #J.data.fill(0.0)
+    _jacobian_diagonal_zeros(J.data, J.indptr, J.indices, J.shape[0], dif_size)
 
     # Assign vectors
     x = z[:dif_size]
@@ -325,16 +347,18 @@ def residual_jacobian(J, z, theta, psys):
                             psys.ybus_spa.indices, J.data, J.indptr, J.indices,
                             dev, v, psys.nbuses)
     else:
-        for row_idx in range(len(psys.rybus.indptr) - 1):
-            row_ptr = psys.rybus.indptr[row_idx]
-            row_ptr_end = psys.rybus.indptr[row_idx + 1]
-            
-            nvals = row_ptr_end - row_ptr
-            row = row_idx + dev
-            col = psys.rybus.indices[row_ptr:row_ptr_end] + dev
-            val = -psys.rybus.data[row_ptr:row_ptr_end]
+        current_injection_jacobian(psys.rybus.data, psys.rybus.indptr,
+                                   psys.rybus.indices, J.data, J.indptr,
+                                   J.indices, dev)
+        #for row_idx in range(len(psys.rybus.indptr) - 1):
+        #    row_ptr = psys.rybus.indptr[row_idx]
+        #    row_ptr_end = psys.rybus.indptr[row_idx + 1]
+        #    nvals = row_ptr_end - row_ptr
+        #    row = row_idx + dev
+        #    col = psys.rybus.indices[row_ptr:row_ptr_end] + dev
+        #    val = -psys.rybus.data[row_ptr:row_ptr_end]
 
-            csr_set_row(J.data, J.indptr, J.indices, nvals, row, col, val)
+        #    csr_set_row(J.data, J.indptr, J.indices, nvals, row, col, val)
 
     # DEVICES
     idxs = np.zeros(5, dtype=np.int64)
@@ -352,10 +376,6 @@ def residual_jacobian(J, z, theta, psys):
 
         psys.devices[i].residual_jac(J, z, v, theta, idxs, ctrl_idx,
                 ctrl_var, psys.power_injection)
-
-    for load in psys.loads:
-        if load.dynamic == 0:
-            load.residual_jac(J, z, v, theta, dev, psys.power_injection)
 
     for fault in psys.fault_events:
         if fault.active:
@@ -636,7 +656,6 @@ def first_sensitivity(psys, z, sfact, uold, theta, h):
 
 @jit("f8(f8[:], f8[:], i8)", nopython=True, cache=True)
 def numba_dot(x, y, n):
-
     res = 0.0
     for i in range(n):
         res += x[i]*y[i]
@@ -739,31 +758,40 @@ def mixed_sensitivity(psys, x, u, sfact, HES, mold, theta, h):
             mold[:,k] = sfact(mu)
             k += 1
 
-
-def jacobian_beuler(J, NDIFFEQ, h):
-    #J[:NDIFFEQ,:] = -h*J[:NDIFFEQ,:]
+@jit(nopython=True, cache=True)
+def _jacobian_beuler(J_data, J_ptr, J_idx, NDIFFEQ, h):
     for i in range(NDIFFEQ):
-        csr_mult_row(J.data, J.indptr, J.indices, i, -h)
-    #J[:NDIFFEQ, :NDIFFEQ] += sp.sparse.eye(NDIFFEQ)
+        csr_mult_row(J_data, J_ptr, J_idx, i, -h)
     col = np.array([0])
     data = np.array([1.0])
     for i in range(NDIFFEQ):
         col[0] = i
-        csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
+        csr_add_row(J_data, J_ptr, J_idx, 1, i, col, data)
 
-def jacobian_implicit(J, NDIFFEQ, a):
-    # Converts the Jacobian of the r.h.s into:
-    # J = [a*I-df_dx, -df_dy
-    #     -dg_dx, -dg_dy]
 
-    for i in range(J.shape[0]):
-        csr_mult_row(J.data, J.indptr, J.indices, i, -1)
+def jacobian_beuler(J, NDIFFEQ, h):
+    #J[:NDIFFEQ,:] = -h*J[:NDIFFEQ,:]
+    #J[:NDIFFEQ, :NDIFFEQ] += sp.sparse.eye(NDIFFEQ)
+    _jacobian_beuler(J.data, J.indptr, J.indices, NDIFFEQ, h)
+
+
+@jit(nopython=True, cache=True)
+def _jacobian_implicit(J_data, J_ptr, J_idx, ndim, NDIFFEQ, a):
+    for i in range(ndim):
+        csr_mult_row(J_data, J_ptr, J_idx, i, -1)
     
     col = np.array([0])
     data = np.array([a])
     for i in range(NDIFFEQ):
         col[0] = i
-        csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
+        csr_add_row(J_data, J_ptr, J_idx, 1, i, col, data)
+
+
+def jacobian_implicit(J, NDIFFEQ, a):
+    # Converts the Jacobian of the r.h.s into:
+    # J = [a*I-df_dx, -df_dy
+    #     -dg_dx, -dg_dy]
+    _jacobian_implicit(J.data, J.indptr, J.indices, J.shape[0], NDIFFEQ, a)
 
 
 def function_beuler_wrapper(z, zold, h, psys, theta):
@@ -969,15 +997,10 @@ def initialize_system(v, p_inj, psys):
         else:
             pi = p_load[2*device.bus]
             qi = p_load[2*device.bus + 1]
-
         device.initialize(vm, va, pi, qi, x, y, psys)
-
-    for load in psys.loads:
-        load.base_voltage(v[2*load.bus])
 
     sysvec[:dif_size] = x
     sysvec[dif_size:dif_size + alg_size] = y
-    
     
     if psys.power_injection:
         sysvec[dif_size + alg_size:] = v
@@ -1219,8 +1242,8 @@ if petsc4py:
 
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
-            xx = np.array([x[i] for i in range(start, end)])
-            ff = np.zeros_like(xx)
+            xx = np.array(x[start:end])
+            ff = np.zeros(xx.shape, dtype=np.float64)
             residual_function(ff, xx, self.theta, self.psys)
             f.setArray(-ff)
             f[:NDIFFEQ] += xdot[:NDIFFEQ]
@@ -1235,7 +1258,7 @@ if petsc4py:
                 self.psys.fault_events[0].apply()
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
-            xx = np.array([x[i] for i in range(start, end)])
+            xx = np.array(x[start:end])
             residual_jacobian(self.J, xx, self.theta, self.psys)
             jacobian_implicit(self.J, NDIFFEQ, a)
             P.setValuesCSR(self.J.indptr, self.J.indices, self.J.data)
@@ -1246,7 +1269,7 @@ if petsc4py:
         def evalJacobianP(self, ts, t, x, xdot, a, P):
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
-            xx = np.array([x[i] for i in range(start, end)])
+            xx = np.array(x[start:end])
             # Placeholder. Need to work on preallocating and obtaining J_p.
             mat_temp = csr_matrix(np.ones([len(xx), self.psys.nloads]))
             for i in range(self.psys.nloads):
@@ -1266,7 +1289,7 @@ if petsc4py:
         def evalFunction(self, snes, x, f):
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
-            xx = np.array([x[i] for i in range(start, end)])
+            xx = np.array(x[start:end])
             ff = np.zeros_like(xx)
             residual_function(ff, xx, self.theta, self.psys)
             ff[:NDIFFEQ] = 0.0
@@ -1365,7 +1388,6 @@ def integrate_system(psys,
     system_size = z0.shape[0]
     J = preallocate_jacobian(psys)
     F = np.zeros(system_size)
-
     # calculate nsteps
     h = dt
     if steps > 0:
