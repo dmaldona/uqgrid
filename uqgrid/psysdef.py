@@ -11,7 +11,7 @@ from numba import jit
 import networkx as nx
 
 # IMPORT DEVICE IMPLEMENTATIONS
-from .genrou_imp import resdiff_genrou, jac_genrou, hes_genrou
+from .genrou_imp import resdiff_genrou, jac_genrou, hes_genrou, cinj_genrou
 from .cim5_imp import residualFinit_cim5
 from .load_imp import cinj_load, jac_load
 
@@ -1150,18 +1150,7 @@ class GenGENROU(DynamicGenerator):
         return None
     
     def residual_cinj(self, F, z, v, theta, idxs, alpha=False):
-
-        dp = idxs[0]
-        ap = idxs[1]
-        v_q = z[ap]
-        v_d = z[ap + 1]
-        i_q = z[ap + 2]
-        i_d = z[ap + 3]
-        delta = z[dp + 5]
-
-        F[2*self.bus] += np.sin(delta)*i_d + np.cos(delta)*i_q
-        F[2*self.bus + 1] += -np.cos(delta)*i_d + np.sin(delta)*i_q
-        return None
+        cinj_genrou(F, z, v, theta, idxs)
 
     def preallocate_jacobian(self, idxs, psys, power_injection):
 

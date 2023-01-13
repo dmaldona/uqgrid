@@ -656,7 +656,6 @@ def first_sensitivity(psys, z, sfact, uold, theta, h):
 
 @jit("f8(f8[:], f8[:], i8)", nopython=True, cache=True)
 def numba_dot(x, y, n):
-
     res = 0.0
     for i in range(n):
         res += x[i]*y[i]
@@ -1243,8 +1242,8 @@ if petsc4py:
 
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
-            xx = np.array([x[i] for i in range(start, end)])
-            ff = np.zeros_like(xx)
+            xx = np.array(x[start:end])
+            ff = np.zeros(xx.shape, dtype=np.float64)
             residual_function(ff, xx, self.theta, self.psys)
             f.setArray(-ff)
             f[:NDIFFEQ] += xdot[:NDIFFEQ]
@@ -1259,7 +1258,7 @@ if petsc4py:
                 self.psys.fault_events[0].apply()
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
-            xx = np.array([x[i] for i in range(start, end)])
+            xx = np.array(x[start:end])
             residual_jacobian(self.J, xx, self.theta, self.psys)
             jacobian_implicit(self.J, NDIFFEQ, a)
             P.setValuesCSR(self.J.indptr, self.J.indices, self.J.data)
@@ -1270,7 +1269,7 @@ if petsc4py:
         def evalJacobianP(self, ts, t, x, xdot, a, P):
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
-            xx = np.array([x[i] for i in range(start, end)])
+            xx = np.array(x[start:end])
             # Placeholder. Need to work on preallocating and obtaining J_p.
             mat_temp = csr_matrix(np.ones([len(xx), self.psys.nloads]))
             for i in range(self.psys.nloads):
@@ -1290,7 +1289,7 @@ if petsc4py:
         def evalFunction(self, snes, x, f):
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
-            xx = np.array([x[i] for i in range(start, end)])
+            xx = np.array(x[start:end])
             ff = np.zeros_like(xx)
             residual_function(ff, xx, self.theta, self.psys)
             ff[:NDIFFEQ] = 0.0
