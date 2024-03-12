@@ -36,7 +36,7 @@ warnings.filterwarnings(action="ignore",
 # Test flags
 TEST_JACOBIAN = False
 VERIFY_HESSIAN = False
-SECONDORDER = True
+SECONDORDER = False
 
 def gradient_p(psys, z, theta, load_idx=0):
     """Generates gradient of the r.h.s with respect to a single parameter p.
