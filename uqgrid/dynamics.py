@@ -1220,18 +1220,17 @@ if petsc4py:
     class DAE_petsc(object):
         n = 1
         comm = PETSc.COMM_SELF
-        def __init__(self, psys, theta, J, tfon, tfoff):
+
+        def __init__(self, psys, theta, J, tfon, tfoff, slow_indices=None, fast_indices=None):
             self.psys = psys
             self.theta = theta
             self.J = J
             self.tfon = tfon
             self.tfoff = tfoff
-        
+            self.slow_indices = slow_indices
+            self.fast_indices = fast_indices
+
         def evalFunction(self, ts, t, x, xdot, f):
-            # This operation is redundant but necessary for the correct
-            # computation of the adjoint in the backward run. Might
-            # not generalize when we consider multiple faults.
-            # (TODO): consider using TSEvent.
             if t < self.tfon:
                 self.psys.fault_events[0].remove()
             elif t > self.tfoff:
@@ -1247,7 +1246,7 @@ if petsc4py:
             f.setArray(-ff)
             f[:NDIFFEQ] += xdot[:NDIFFEQ]
             f.assemble()
-        
+
         def evalJacobian(self, ts, t, x, xdot, a, J, P):
             if t < self.tfon:
                 self.psys.fault_events[0].remove()
@@ -1255,6 +1254,7 @@ if petsc4py:
                 self.psys.fault_events[0].remove()
             else:
                 self.psys.fault_events[0].apply()
+
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
             xx = np.array(x[start:end])
@@ -1263,8 +1263,45 @@ if petsc4py:
             P.setValuesCSR(self.J.indptr, self.J.indices, self.J.data)
             P.assemble()
             if J != P: J.assemble()
-            return True # same nonzero pattern
-        
+            return True
+
+        def evalRHSFunctionSlow(self, ts, t, x, f):
+            start, end = x.getOwnershipRange()
+            xx = np.array(x[start:end])
+            ff = np.zeros_like(xx)
+            residual_function(ff, xx, self.theta, self.psys)
+            f.setArray(-ff[self.slow_indices])
+            f.assemble()
+
+        def evalRHSFunctionFast(self, ts, t, x, f):
+            start, end = x.getOwnershipRange()
+            xx = np.array(x[start:end])
+            ff = np.zeros_like(xx)
+            residual_function(ff, xx, self.theta, self.psys)
+            f.setArray(-ff[self.fast_indices])
+            f.assemble()
+
+        def evalIFunctionFast(self, ts, t, x, xdot, f):
+            start, end = x.getOwnershipRange()
+            xx = np.array(x[start:end])
+            ff = np.zeros_like(xx)
+            residual_function(ff, xx, self.theta, self.psys)
+            f.setArray(xdot[self.fast_indices] - ff[self.fast_indices])
+            f.assemble()
+
+        def evalIJacobianFast(self, ts, t, x, xdot, a, J, P):
+            start, end = x.getOwnershipRange()
+            xx = np.array(x[start:end])
+            residual_jacobian(self.J, xx, self.theta, self.psys)
+            J_fast = self.J[self.fast_indices][:, self.fast_indices]
+            J_fast *= -1
+            J_fast += a * np.eye(len(self.fast_indices))
+            P.setValuesCSR(J_fast.indptr, J_fast.indices, J_fast.data)
+            P.assemble()
+            if J != P:
+                J.assemble()
+            return True
+
         def evalJacobianP(self, ts, t, x, xdot, a, P):
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
@@ -1338,6 +1375,26 @@ if petsc4py:
             A.assemble()
             return True
 
+def generate_default_partition_indices(psys):
+    slow_indices = []
+    fast_indices = []
+
+    dif_size = psys.num_dof_dif
+    alg_size = psys.num_dof_alg
+    pow_size = 2 * psys.nbuses
+    sys_size = alg_size + dif_size + pow_size
+
+    # The first half of the differential variables are slow
+    slow_indices.extend(range(dif_size // 2))
+
+    # The second half of the differential variables are fast
+    fast_indices.extend(range(dif_size // 2, dif_size))
+
+    # Algebraic and power variables are slow (if they are included in the splitting)
+    fast_indices.extend(range(dif_size, dif_size + alg_size + pow_size))
+
+    return slow_indices, fast_indices
+
 ## Small-signal analysis
 def compute_equilibrium(psys, power_injection=True):
     psys.power_injection=power_injection
@@ -1378,6 +1435,9 @@ def integrate_system(psys,
     Returns:
         [type]: [description]
     """
+
+    arkimex = True
+
     results = {}
     psys.power_injection=power_injection
 
@@ -1459,10 +1519,34 @@ def integrate_system(psys,
 
         ts = PETSc.TS().create(comm=PETSc.COMM_WORLD)
         ts.setProblemType(ts.ProblemType.NONLINEAR)
-        ts.setType(ts.Type.THETA)
-        ts.setIFunction(dae.evalFunction, fp)
-        ts.setIJacobian(dae.evalJacobian, Jp)
-        ts.setIJacobianP(dae.evalJacobianP, Jtheta)
+
+        if arkimex:
+            slow_indices, fast_indices = generate_default_partition_indices(psys)
+            
+            # Set the optional fields in the DAE object
+            dae.slow_indices = slow_indices
+            dae.fast_indices = fast_indices
+
+            # Debugging: Print the indices and system size
+            print(f"System Size: {system_size}")
+            print(f"Slow Indices: {slow_indices}")
+            print(f"Fast Indices: {fast_indices}")
+
+            iss = PETSc.IS().createGeneral(slow_indices, comm=PETSc.COMM_WORLD)
+            isf = PETSc.IS().createGeneral(fast_indices, comm=PETSc.COMM_WORLD)
+            ts.setType(ts.Type.ARKIMEX)
+            ts.setARKIMEXFastSlowSplit(True)
+            ts.setRHSSplitIS("slow", iss)
+            ts.setRHSSplitIS("fast", isf)
+            ts.setRHSSplitRHSFunction("slow", dae.evalRHSFunctionSlow, None)
+            ts.setRHSSplitRHSFunction("fast", dae.evalRHSFunctionFast, None)
+            ts.setRHSSplitIFunction("fast", dae.evalIFunctionFast, None)
+            ts.setRHSSplitIJacobian("fast", dae.evalIJacobianFast, Jp, Jp)
+        else:
+            ts.setType(ts.Type.THETA)
+            ts.setIFunction(dae.evalFunction, fp)
+            ts.setIJacobian(dae.evalJacobian, Jp)
+            ts.setIJacobianP(dae.evalJacobianP, Jtheta)
 
         # create adjoint integrator
         if comp_sens:
@@ -1531,8 +1615,6 @@ def integrate_system(psys,
             
             results["cost"] = np.array(cst)
             results["v_mu"] = np.array(v_mu)
-
-
 
         # Cast history to numpy arrays
         history = np.transpose(np.array(historyp))
