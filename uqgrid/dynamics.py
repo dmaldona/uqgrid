@@ -8,9 +8,8 @@ from numpy import linalg as LA
 from scipy import optimize
 from numba import jit
 from scipy.sparse import csr_matrix
-from scipy.sparse.sparsetools import csr_matvec
 from scipy.sparse.linalg import spsolve, factorized
-
+from scipy.sparse._sparsetools import csr_matvec
 import math
 
 # optional include: PETSC4py

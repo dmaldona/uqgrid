@@ -2,7 +2,7 @@ import numpy as np
 from numba import jit
 from scipy.sparse import csr_matrix
 from scipy import optimize
-from scipy.optimize.nonlin import nonlin_solve
+from scipy.optimize._nonlin import nonlin_solve
 from .psysdef import Psystem
 
 
