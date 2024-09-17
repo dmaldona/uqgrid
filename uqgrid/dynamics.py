@@ -1273,7 +1273,7 @@ if petsc4py:
             xx = np.array(x[start:end])
             ff = np.zeros_like(xx)
             residual_function(ff, xx, self.theta, self.psys)
-            f.setArray(-ff[self.slow_indices])
+            f.setArray(ff[self.slow_indices])
             f.assemble()
 
         def evalIFunctionFast(self, ts, t, x, xdot, f):
