@@ -1599,6 +1599,7 @@ def integrate_system(psys,
             print("Disturbance time")
             ts.setTime(ton)
             ts.setMaxTime(toff)
+            ts.setTimeStep(dt)
             ts.solve(z0p)
 
             # fault removal
@@ -1610,6 +1611,7 @@ def integrate_system(psys,
             print("Post disturbance time")
             ts.setTime(toff)
             ts.setMaxTime(tend)
+            ts.setTimeStep(dt)
             ts.solve(z0p)
 
         # adjoint computation
