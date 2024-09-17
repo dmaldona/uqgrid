@@ -1286,6 +1286,19 @@ if petsc4py:
             f[:ndiffeq_fast] += xdot[:ndiffeq_fast]
             f.assemble()
 
+        def evalIJacobianFast(self, ts, t, x, xdot, a, J, P):
+            start, end = x.getOwnershipRange()
+            xx = np.array(x[start:end])
+            residual_jacobian(self.J, xx, self.theta, self.psys)
+            J_fast = self.J[self.fast_indices][:, self.fast_indices]
+            J_fast *= -1
+            J_fast += a * np.eye(len(self.fast_indices))
+            P.setValuesCSR(J_fast.indptr, J_fast.indices, J_fast.data)
+            P.assemble()
+            if J != P:
+                J.assemble()
+            return True
+
         def evalJacobianP(self, ts, t, x, xdot, a, P):
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
