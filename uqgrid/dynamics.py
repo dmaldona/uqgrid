@@ -1269,6 +1269,13 @@ if petsc4py:
             return True
 
         def evalRHSFunctionSlow(self, ts, t, x, f):
+            if t < self.tfon:
+                self.psys.fault_events[0].remove()
+            elif t > self.tfoff:
+                self.psys.fault_events[0].remove()
+            else:
+                self.psys.fault_events[0].apply()
+
             start, end = x.getOwnershipRange()
             xx = np.array(x[start:end])
             ff = np.zeros_like(xx)
@@ -1277,6 +1284,13 @@ if petsc4py:
             f.assemble()
 
         def evalIFunctionFast(self, ts, t, x, xdot, f):
+            if t < self.tfon:
+                self.psys.fault_events[0].remove()
+            elif t > self.tfoff:
+                self.psys.fault_events[0].remove()
+            else:
+                self.psys.fault_events[0].apply()
+
             ndiffeq_fast = self.ndiffeq_fast
             start, end = x.getOwnershipRange()
             xx = np.array(x[start:end])
@@ -1459,8 +1473,6 @@ def integrate_system(psys,
 
     # Integration of D.A.E
     z = z0
-    print("Applying perturbation to initial conditions")
-    z[6] += 0.005
     # Sensitivity parameters
     nparam = psys.nloads # For now, we only suport sensitivities of loads
     nmixed = int((nparam**2 - nparam)/2)

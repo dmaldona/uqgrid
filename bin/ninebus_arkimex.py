@@ -29,8 +29,8 @@ v, Sinj = runpf(psys, verbose=True)
 pnom = np.array([0.5, 0.5, 0.5])
 psys.set_load_parameters(pnom)
 
-tend = 0.3
-ton = 1.5
+tend = 5.0
+ton = 0.3
 
 # Experiment 1: no faut is applied
 results = integrate_system(psys, verbose=True, comp_sens=False,
