@@ -1588,13 +1588,14 @@ def integrate_system(psys,
         ts.setMonitor(monitor)
         ts.setTime(0.0)
         ts.setTimeStep(dt)
-        ts.setMaxTime(tend)
+        ts.setMaxTime(ton)
         ts.setExactFinalTime(PETSc.TS.ExactFinalTime.MATCHSTEP)
         ts.setFromOptions()
         ts.solve(z0p)
         
         if ton < tend:
             # fault application
+            print("Apply fault")
             psys.fault_events[0].apply()
             alg = ALG_petsc(psys, theta, J)
             fsp = z0p.duplicate()
@@ -1607,15 +1608,18 @@ def integrate_system(psys,
             snes.solve(None, z0p)
 
             # disturbance time
+            print("Disturbance time")
             ts.setTime(ton)
             ts.setMaxTime(toff)
             ts.solve(z0p)
 
             # fault removal
+            print("Remove fault")
             psys.fault_events[0].remove()
             snes.solve(None, z0p)
 
             # post disturbance time
+            print("Post disturbance time")
             ts.setTime(toff)
             ts.setMaxTime(tend)
             ts.solve(z0p)

@@ -30,6 +30,7 @@ pnom = np.array([0.5, 0.5, 0.5])
 psys.set_load_parameters(pnom)
 
 tend = 5.0
+tend = 0.3
 ton = 0.3
 
 # Experiment 1: no faut is applied
