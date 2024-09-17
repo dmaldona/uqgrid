@@ -1269,12 +1269,6 @@ if petsc4py:
             return True
 
         def evalRHSFunctionSlow(self, ts, t, x, f):
-            if t < self.tfon:
-                self.psys.fault_events[0].remove()
-            elif t > self.tfoff:
-                self.psys.fault_events[0].remove()
-            else:
-                self.psys.fault_events[0].apply()
 
             start, end = x.getOwnershipRange()
             xx = np.array(x[start:end])
@@ -1284,12 +1278,6 @@ if petsc4py:
             f.assemble()
 
         def evalIFunctionFast(self, ts, t, x, xdot, f):
-            if t < self.tfon:
-                self.psys.fault_events[0].remove()
-            elif t > self.tfoff:
-                self.psys.fault_events[0].remove()
-            else:
-                self.psys.fault_events[0].apply()
 
             ndiffeq_fast = self.ndiffeq_fast
             start, end = x.getOwnershipRange()
