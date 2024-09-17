@@ -1230,6 +1230,9 @@ if petsc4py:
             self.slow_indices = slow_indices
             self.fast_indices = fast_indices
 
+        def set_ndiffeq_fast(self, ndiffeq_fast):
+            self.ndiffeq_fast = ndiffeq_fast
+
         def evalFunction(self, ts, t, x, xdot, f):
             if t < self.tfon:
                 self.psys.fault_events[0].remove()
@@ -1273,34 +1276,15 @@ if petsc4py:
             f.setArray(-ff[self.slow_indices])
             f.assemble()
 
-        def evalRHSFunctionFast(self, ts, t, x, f):
+        def evalIFunctionFast(self, ts, t, x, xdot, f):
+            ndiffeq_fast = self.ndiffeq_fast
             start, end = x.getOwnershipRange()
             xx = np.array(x[start:end])
             ff = np.zeros_like(xx)
             residual_function(ff, xx, self.theta, self.psys)
             f.setArray(-ff[self.fast_indices])
+            f[:ndiffeq_fast] += xdot[:ndiffeq_fast]
             f.assemble()
-
-        def evalIFunctionFast(self, ts, t, x, xdot, f):
-            start, end = x.getOwnershipRange()
-            xx = np.array(x[start:end])
-            ff = np.zeros_like(xx)
-            residual_function(ff, xx, self.theta, self.psys)
-            f.setArray(xdot[self.fast_indices] - ff[self.fast_indices])
-            f.assemble()
-
-        def evalIJacobianFast(self, ts, t, x, xdot, a, J, P):
-            start, end = x.getOwnershipRange()
-            xx = np.array(x[start:end])
-            residual_jacobian(self.J, xx, self.theta, self.psys)
-            J_fast = self.J[self.fast_indices][:, self.fast_indices]
-            J_fast *= -1
-            J_fast += a * np.eye(len(self.fast_indices))
-            P.setValuesCSR(J_fast.indptr, J_fast.indices, J_fast.data)
-            P.assemble()
-            if J != P:
-                J.assemble()
-            return True
 
         def evalJacobianP(self, ts, t, x, xdot, a, P):
             start, end = x.getOwnershipRange()
@@ -1393,7 +1377,10 @@ def generate_default_partition_indices(psys):
     # Algebraic and power variables are slow (if they are included in the splitting)
     fast_indices.extend(range(dif_size, dif_size + alg_size + pow_size))
 
-    return slow_indices, fast_indices
+    # dimension of fast differential variables
+    ndiff_fast = dif_size // 2
+
+    return slow_indices, fast_indices, ndiff_fast
 
 ## Small-signal analysis
 def compute_equilibrium(psys, power_injection=True):
@@ -1418,7 +1405,8 @@ def integrate_system(psys,
                      fsolve=False,
                      ton=0.25,
                      toff=0.4,
-                     petsc=False):
+                     petsc=False,
+                     arkimex=False):
     """integrate power system dynamics
 
     Args:
@@ -1435,8 +1423,6 @@ def integrate_system(psys,
     Returns:
         [type]: [description]
     """
-
-    arkimex = True
 
     results = {}
     psys.power_injection=power_injection
@@ -1460,6 +1446,8 @@ def integrate_system(psys,
 
     # Integration of D.A.E
     z = z0
+    print("Applying perturbation to initial conditions")
+    z[6] += 0.005
     # Sensitivity parameters
     nparam = psys.nloads # For now, we only suport sensitivities of loads
     nmixed = int((nparam**2 - nparam)/2)
@@ -1521,11 +1509,12 @@ def integrate_system(psys,
         ts.setProblemType(ts.ProblemType.NONLINEAR)
 
         if arkimex:
-            slow_indices, fast_indices = generate_default_partition_indices(psys)
+            slow_indices, fast_indices, ndiff_fast = generate_default_partition_indices(psys)
             
             # Set the optional fields in the DAE object
             dae.slow_indices = slow_indices
             dae.fast_indices = fast_indices
+            dae.set_ndiffeq_fast(ndiff_fast)
 
             # Debugging: Print the indices and system size
             print(f"System Size: {system_size}")
@@ -1539,9 +1528,7 @@ def integrate_system(psys,
             ts.setRHSSplitIS("slow", iss)
             ts.setRHSSplitIS("fast", isf)
             ts.setRHSSplitRHSFunction("slow", dae.evalRHSFunctionSlow, None)
-            ts.setRHSSplitRHSFunction("fast", dae.evalRHSFunctionFast, None)
             ts.setRHSSplitIFunction("fast", dae.evalIFunctionFast, None)
-            ts.setRHSSplitIJacobian("fast", dae.evalIJacobianFast, Jp, Jp)
         else:
             ts.setType(ts.Type.THETA)
             ts.setIFunction(dae.evalFunction, fp)
@@ -1576,7 +1563,7 @@ def integrate_system(psys,
         ts.setMonitor(monitor)
         ts.setTime(0.0)
         ts.setTimeStep(dt)
-        ts.setMaxTime(ton)
+        ts.setMaxTime(tend)
         ts.setExactFinalTime(PETSc.TS.ExactFinalTime.MATCHSTEP)
         ts.setFromOptions()
         ts.solve(z0p)
