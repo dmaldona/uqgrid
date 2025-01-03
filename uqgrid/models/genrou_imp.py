@@ -2,7 +2,7 @@
 import numpy as np
 import numba
 from numba import jit
-from .tools import csr_add_row, csr_set_row
+from uqgrid.utils.tools import csr_add_row, csr_set_row
 
 @jit(nopython=True, cache=True)
 def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):

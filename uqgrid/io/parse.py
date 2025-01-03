@@ -1,5 +1,5 @@
-from .psysdef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
-from .parse_psse import read_raw
+from uqgrid.core.psydef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
+from uqgrid.io.parse_psse import read_raw
 import scipy.io as sio
 import numpy as np
 import warnings

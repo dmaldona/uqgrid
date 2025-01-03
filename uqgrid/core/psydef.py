@@ -5,15 +5,15 @@ from numpy.linalg import inv, det
 from scipy import optimize
 from scipy.sparse import csr_matrix
 from abc import ABC, abstractmethod, abstractproperty
-from .tools import csr_add_row, csr_set_row
+from uqgrid.utils.tools import csr_add_row, csr_set_row
 import numba
 from numba import jit
 import networkx as nx
 
 # IMPORT DEVICE IMPLEMENTATIONS
-from .genrou_imp import resdiff_genrou, jac_genrou, hes_genrou, cinj_genrou
-from .cim5_imp import residualFinit_cim5
-from .load_imp import cinj_load, jac_load
+from uqgrid.models.genrou_imp import resdiff_genrou, jac_genrou, hes_genrou, cinj_genrou
+from uqgrid.models.cim5_imp import residualFinit_cim5
+from uqgrid.models.load_imp import cinj_load, jac_load
 
 # constants
 ws = 2*np.pi*60
@@ -732,7 +732,7 @@ class Psystem:
         self.assembled = 1
 
     def createYbusComplex(self):
-        from .network import createYbusComplex
+        from uqgrid.models.network import createYbusComplex
         self.ybus_spa = createYbusComplex(self)
 
 
@@ -749,7 +749,7 @@ class Psystem:
         self.ybus_mat = ybus_mat
 
     def ybus_complex2real(self):
-        from .network import realify_ybus
+        from uqgrid.models.network import realify_ybus
         self.rybus = realify_ybus(self)
 
     # For exciters and governors, these are always associated to a generator.

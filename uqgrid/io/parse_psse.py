@@ -1,6 +1,4 @@
-# This module implements classes and functions to parse, modify and print
-# raw and dyr files.
-
+# 
 import datetime
 import xml.etree.ElementTree as ET
 import re

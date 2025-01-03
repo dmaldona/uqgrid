@@ -3,7 +3,7 @@ from numba import jit
 from scipy.sparse import csr_matrix
 from scipy import optimize
 from scipy.optimize.nonlin import nonlin_solve
-from .psysdef import Psystem
+from uqgrid.core.psydef import Psystem
 
 
 @jit(nopython=True, cache=True)

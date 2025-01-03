@@ -24,9 +24,9 @@ if petsc4py:
     from petsc4py import PETSc
 
 #from psysdef import Psystem
-from .psysdef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
-from .pflow import runpf, compute_pinj_alt
-from .tools import matprint, csr_mult_row, csr_add_row, csr_set_row, csr_to_zeros
+from ..core.psydef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
+from ..simulation.pflow import runpf, compute_pinj_alt
+from ..utils.tools import matprint, csr_mult_row, csr_add_row, csr_set_row, csr_to_zeros
 # supress annoying LAPACK warning on MACOS
 import warnings
 warnings.filterwarnings(action="ignore",
