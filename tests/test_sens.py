@@ -3,11 +3,9 @@
 import os
 import pytest
 import numpy as np
-import scipy.io as sio
-from uqgrid.core.psydef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
 from uqgrid.simulation.dynamics import integrate_system
 from uqgrid.io.parse import load_psse, add_dyr
-from uqgrid.simulation.pflow import runpf
+from uqgrid.simulation.config import IntegrationConfig
 
 
 EPS = 1e-10  # Tolerance for floating-point comparisons
@@ -48,10 +46,24 @@ def test_forward_sensitivities(data_dir):
     var2 = 5
     var3 = 10
 
+    # Define the integration configuration for nominal trajectory
+    config_nominal = IntegrationConfig(
+        tend=10.0,                 # Integration end time in seconds
+        dt=h,                      # Time step in seconds
+        steps=-1,                  # Number of integration steps (-1 for automatic)
+        power_injection=True,     # Adjust based on your requirements
+        verbose=False,             # Disable verbose output for testing
+        comp_sens=True,            # Enable sensitivity computation
+        fsolve=False,              # Disable fsolve for nonlinear equations
+        petsc=False,               # Disable PETSc integration
+        ton=0.25,                  # Fault activation time
+        toff=0.4                   # Fault deactivation time
+    )
+
     # Integrate nominal trajectory
     for load in psys.loads[:3]:
         load.set_alpha(alpha)
-    res = integrate_system(psys, verbose=False, comp_sens=True, tend=10.0, dt=h)
+    res = integrate_system(psys, config=config_nominal)
 
     history = res["history"]
     tvec = res["tvec"]
@@ -59,10 +71,23 @@ def test_forward_sensitivities(data_dir):
     history_v = res["history_v"]
     history_m = res["history_m"]
 
+    config_perturbed = IntegrationConfig(
+        tend=10.0,
+        dt=h,
+        steps=-1,
+        power_injection=True,
+        verbose=False,
+        comp_sens=False,
+        fsolve=False,
+        petsc=False,
+        ton=0.25,
+        toff=0.4
+    )
+
     # TEST FIRST-ORDER SENSITIVITIES
     for load_idx in range(3):
         psys.loads[load_idx].set_alpha(alpha2)
-        res2 = integrate_system(psys, verbose=False, comp_sens=False, tend=10.0, dt=h)
+        res2 = integrate_system(psys, config=config_perturbed)
         history2 = res2["history"]
 
         fd = (history2[var1, :] - history[var1, :]) / eps
@@ -86,12 +111,12 @@ def test_forward_sensitivities(data_dir):
 
         # Integrate perturbed trajectories
         psys.loads[load_idx].set_alpha(alpha2)
-        res2 = integrate_system(psys, verbose=False, comp_sens=False, tend=10.0, dt=h)
+        res2 = integrate_system(psys, config=config_perturbed)
         history2 = res2["history"]
 
         # Integrate perturbed trajectories
         psys.loads[load_idx].set_alpha(alpha3)
-        res3 = integrate_system(psys, verbose=False, comp_sens=False, tend=10.0, dt=h)
+        res3 = integrate_system(psys, config=config_perturbed)
         history3 = res3["history"]
 
         fd = (history2[var1, :] - 2 * history[var1, :] + history3[var1, :]) / (eps ** 2.0)
@@ -115,28 +140,28 @@ def test_forward_sensitivities(data_dir):
     psys.loads[0].set_alpha(alpha2)
     psys.loads[1].set_alpha(alpha2)
     psys.loads[2].set_alpha(alpha)
-    resa = integrate_system(psys, verbose=False, comp_sens=False, tend=10.0, dt=h)
+    resa = integrate_system(psys, config=config_perturbed)
     hisA = resa["history"]
 
     # Integrate perturbed trajectories
     psys.loads[0].set_alpha(alpha2)
     psys.loads[1].set_alpha(alpha3)
     psys.loads[2].set_alpha(alpha)
-    resb = integrate_system(psys, verbose=False, comp_sens=False, tend=10.0, dt=h)
+    resb = integrate_system(psys, config=config_perturbed)
     hisB = resb["history"]
 
     # Integrate perturbed trajectories
     psys.loads[0].set_alpha(alpha3)
     psys.loads[1].set_alpha(alpha2)
     psys.loads[2].set_alpha(alpha)
-    resc = integrate_system(psys, verbose=False, comp_sens=False, tend=10.0, dt=h)
+    resc = integrate_system(psys, config=config_perturbed)
     hisC = resc["history"]
 
     # Integrate perturbed trajectories
     psys.loads[0].set_alpha(alpha3)
     psys.loads[1].set_alpha(alpha3)
     psys.loads[2].set_alpha(alpha)
-    resd = integrate_system(psys, verbose=False, comp_sens=False, tend=10.0, dt=h)
+    resd = integrate_system(psys, config=config_perturbed)
     hisD = resd["history"]
 
     fd_var1 = (hisA[var1, :] - hisB[var1, :] - hisC[var1, :] + hisD[var1, :]) / (4 * eps ** 2.0)

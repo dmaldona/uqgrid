@@ -5,28 +5,35 @@ import sys
 from scipy import optimize
 import numdifftools as nd
 from numpy import linalg as LA
-from scipy import optimize
 from numba import jit
 from scipy.sparse import csr_matrix
 from scipy.sparse.sparsetools import csr_matvec
 from scipy.sparse.linalg import spsolve, factorized
-
 import math
 
-# optional include: PETSC4py
+import logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# Optional: PETSC4py
 try:
     import petsc4py
-except:
-    petsc4py = None
-    print("Warning: using uqgrid without PETSc4py. Some functionality will not be available")
-if petsc4py:
     petsc4py.init(sys.argv)
     from petsc4py import PETSc
+except ImportError:
+    petsc4py = None
+    logger.warning("PETSc4py not available. Some functionality will not be available.")
 
-#from psysdef import Psystem
-from ..core.psydef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
-from ..simulation.pflow import runpf, compute_pinj_alt
-from ..utils.tools import matprint, csr_mult_row, csr_add_row, csr_set_row, csr_to_zeros
+from uqgrid.simulation.config import IntegrationConfig
+from uqgrid.core.psydef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
+from uqgrid.simulation.pflow import runpf, compute_pinj_alt
+from uqgrid.utils.tools import (
+    matprint,
+    csr_mult_row,
+    csr_add_row,
+    csr_set_row,
+    csr_to_zeros,
+)
 # supress annoying LAPACK warning on MACOS
 import warnings
 warnings.filterwarnings(action="ignore",
@@ -1351,34 +1358,27 @@ def compute_rhs_jacobian(psys, z, theta, power_injection=True):
     residual_jacobian(J, z, theta, psys)
     return J
 
-## Integration of DAE
-def integrate_system(psys,
-                     power_injection=True,
-                     tend=10.0,
-                     dt=(1.0/120.0),
-                     steps=-1,
-                     verbose=False,
-                     comp_sens=False,
-                     fsolve=False,
-                     ton=0.25,
-                     toff=0.4,
-                     petsc=False):
-    """integrate power system dynamics
+def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
+    """Integrate power system dynamics
 
     Args:
-        psys (powersystem): power system object
-        tend (float, optional): integration end (seconds). Defaults to 10.0.
-        dt (float, optional): time step. Defaults to (1.0/120.0).
-        steps (int, optional): if greater than 0, integration will stop after "steps". Defaults to -1.
-        verbose (bool, optional): prints additional information. Defaults to False.
-        comp_sens (bool, optional): computes first and second order sensitivities. Defaults to False.
-        fsolve (bool, optional): uses fsolve to solve the non-liner equations. Defaults to False.
-        ton (float, optional): fault activation time. Defaults to 0.25.
-        toff (float, optional): fault deactivation time. Defaults to 0.4.
+        psys (Psystem): Power system object.
+        config (IntegrationConfig): Configuration parameters.
 
     Returns:
-        [type]: [description]
+        dict: Integration results.
     """
+    tend = config.tend
+    dt = config.dt
+    steps = config.steps
+    verbose = config.verbose
+    comp_sens = config.comp_sens
+    fsolve = config.fsolve
+    ton = config.ton
+    toff = config.toff
+    petsc = config.petsc
+    power_injection = config.power_injection
+
     results = {}
     psys.power_injection=power_injection
 
