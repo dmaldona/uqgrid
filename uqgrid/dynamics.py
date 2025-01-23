@@ -1288,17 +1288,26 @@ if petsc4py:
             f[:ndiffeq_fast] += xdot[:ndiffeq_fast]
             f.assemble()
 
-        def evalIJacobianFast(self, ts, t, x, xdot, a, J, P):
+        def evalIJacobianFast(self, ts, t, x, xdot, a, Jfast, Pfast):
+            if t < self.tfon:
+                self.psys.fault_events[0].remove()
+            elif t > self.tfoff:
+                self.psys.fault_events[0].remove()
+            else:
+                self.psys.fault_events[0].apply()
+
             start, end = x.getOwnershipRange()
+            NDIFFEQ = self.psys.num_dof_dif
             xx = np.array(x[start:end])
             residual_jacobian(self.J, xx, self.theta, self.psys)
-            J_fast = self.J[self.fast_indices][:, self.fast_indices]
-            J_fast *= -1
-            J_fast += a * np.eye(len(self.fast_indices))
-            P.setValuesCSR(J_fast.indptr, J_fast.indices, J_fast.data)
-            P.assemble()
-            if J != P:
-                J.assemble()
+            jacobian_implicit(self.J, NDIFFEQ, a)
+
+            # Extract the fast part of the Jacobian
+            J_temp = self.J[self.fast_indices][:, self.fast_indices]
+            Pfast.setValuesCSR(J_temp.indptr, J_temp.indices, J_temp.data)
+            Pfast.assemble()
+
+            if Jfast != Pfast: Jfast.assemble()
             return True
 
         def evalJacobianP(self, ts, t, x, xdot, a, P):
@@ -1534,6 +1543,18 @@ def integrate_system(psys,
             print(f"Slow Indices: {slow_indices}")
             print(f"Fast Indices: {fast_indices}")
 
+            # Preallocate the Jacobian for the fast variables
+            nfast = len(fast_indices)
+            Jim = PETSc.Mat()
+            Jim.create(PETSc.COMM_WORLD)
+            Jim.setSizes([nfast, nfast])
+            Jim.setType('seqaij')
+
+            J_fast_pattern = J[fast_indices][:, fast_indices]
+            Jim.setPreallocationCSR([J_fast_pattern.indptr, J_fast_pattern.indices, J_fast_pattern.data])
+            Jim.assemblyBegin()
+            Jim.assemblyEnd()
+
             iss = PETSc.IS().createGeneral(slow_indices, comm=PETSc.COMM_WORLD)
             isf = PETSc.IS().createGeneral(fast_indices, comm=PETSc.COMM_WORLD)
             ts.setType(ts.Type.ARKIMEX)
@@ -1542,6 +1563,7 @@ def integrate_system(psys,
             ts.setRHSSplitIS("fast", isf)
             ts.setRHSSplitRHSFunction("slow", dae.evalRHSFunctionSlow, None)
             ts.setRHSSplitIFunction("fast", dae.evalIFunctionFast, None)
+            ts.setRHSSplitIJacobian("fast", dae.evalIJacobianFast, Jim, Jim)
         else:
             ts.setType(ts.Type.THETA)
             ts.setIFunction(dae.evalFunction, fp)
