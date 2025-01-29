@@ -17,13 +17,13 @@ dt = 1.0/(120.0) # integration step in seconds
 
 # load static file
 #psys = load_psse(raw_filename="../data/ieee9_v33.raw")
-#psys = load_psse(raw_filename="../data/IEEE39_v33.raw")
-psys = load_psse(raw_filename="../data/2bus_33.raw")
+psys = load_psse(raw_filename="../data/IEEE39_v33.raw")
+#psys = load_psse(raw_filename="../data/2bus_33.raw")
 
 # add dynamics
 #add_dyr(psys, "../data/ieee9bus.dyr")
-#add_dyr(psys, "../data/IEEE39.dyr")
-add_dyr(psys, "../data/GENROU.dyr")
+add_dyr(psys, "../data/IEEE39.dyr")
+#add_dyr(psys, "../data/GENROU.dyr")
 
 # add fault and create initial data structures
 psys.add_busfault(1, zfault, 1.0)
@@ -35,7 +35,7 @@ ton = 0.05
 
 # OPTIONS
 
-THETA = False
+THETA = True
 ARKIMEX = True
 PLOT_RESULTS = (THETA and ARKIMEX) and True
 
@@ -58,9 +58,15 @@ if PLOT_RESULTS:
 
     ngen = len(bus_idx)
 
-    fig, axs = plt.subplots(ngen, 1)
-    for i, bus in enumerate(bus_idx):
-        axs[i].plot(results["tvec"], results["history"][bus,:], label="Theta")
-        axs[i].plot(results2["tvec"], results2["history"][bus,:], label="Arkimex")
-        axs[i].legend()
-plt.show()
+    if ngen == 1:
+        fig, axs = plt.subplots(1, 1)
+        axs.plot(results["tvec"], results["history"][bus_idx[0],:], label="Theta")
+        axs.plot(results2["tvec"], results2["history"][bus_idx[0],:], label="Arkimex")
+        axs.legend()
+    else:
+        fig, axs = plt.subplots(ngen, 1)
+        for i, bus in enumerate(bus_idx):
+            axs[i].plot(results["tvec"], results["history"][bus,:], label="Theta")
+            axs[i].plot(results2["tvec"], results2["history"][bus,:], label="Arkimex")
+            axs[i].legend()
+    plt.show()
