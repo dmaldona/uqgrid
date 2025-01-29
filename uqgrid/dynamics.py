@@ -1700,6 +1700,7 @@ def integrate_system(psys,
             ts.setTime(ton)
             ts.setMaxTime(toff)
             ts.setTimeStep(dt)
+            ts.setFromOptions()
             ts.solve(z0p)
 
             # fault removal
@@ -1712,6 +1713,7 @@ def integrate_system(psys,
             ts.setTime(toff)
             ts.setMaxTime(tend)
             ts.setTimeStep(dt)
+            ts.setFromOptions()
             ts.solve(z0p)
 
         # adjoint computation

@@ -12,7 +12,7 @@ from uqgrid.pflow import runpf
 from time import time
 
 # runtime parameters
-zfault = 0.5 # perturbation fault
+zfault = 0.05 # perturbation fault
 dt = 1.0/(120.0) # integration step in seconds
 
 # load static file
@@ -30,12 +30,12 @@ psys.add_busfault(1, zfault, 1.0)
 psys.createYbusComplex()
 v, Sinj = runpf(psys, verbose=True)
 
-tend = 0.5
+tend = 2.0
 ton = 0.05
 
 # OPTIONS
 
-THETA = True
+THETA = False
 ARKIMEX = True
 PLOT_RESULTS = (THETA and ARKIMEX) and True
 
