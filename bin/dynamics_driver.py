@@ -10,6 +10,16 @@ from uqgrid.simulation.pflow import runpf
 from uqgrid.simulation.config import IntegrationConfig
 
 def parse_args():
+    # Find the index of '--' if it exists
+    try:
+        split_index = sys.argv.index('--')
+        script_args = sys.argv[1:split_index]
+        petsc_args = sys.argv[split_index+1:]
+    except ValueError:
+        script_args = sys.argv[1:]
+        petsc_args = []
+
+    # Your original argument parser
     parser = argparse.ArgumentParser(description="Run power system dynamics integration.")
     parser.add_argument('--raw', type=str, required=True, help='Path to RAW file.')
     parser.add_argument('--dyr', type=str, required=True, help='Path to DYR file.')
@@ -24,8 +34,13 @@ def parse_args():
     parser.add_argument('--toff', type=float, default=0.4, help='Fault deactivation time.')
     parser.add_argument('--petsc', action='store_true', help='Enable PETSc integration.')
 
-    args = parser.parse_args()
+    # Parse only the script arguments
+    args = parser.parse_args(script_args)
 
+    # If PETSc is enabled, add its arguments to sys.argv
+    if args.petsc and petsc_args:
+        sys.argv = [sys.argv[0]] + petsc_args
+    
     try:
         config = IntegrationConfig(
             tend=args.tend,
@@ -33,7 +48,7 @@ def parse_args():
             ton=args.ton,
             toff=args.toff,
             steps=args.steps,
-            power_injection=False,  # Adjust based on your requirements
+            power_injection=False,
             verbose=args.verbose,
             comp_sens=args.comp_sens,
             fsolve=args.fsolve,
@@ -43,11 +58,7 @@ def parse_args():
         print(f"Configuration Error: {e}")
         sys.exit(1)
 
-    raw = args.raw
-    dyr = args.dyr
-    zfault = args.zfault
-
-    return raw, dyr, zfault, config
+    return args.raw, args.dyr, args.zfault, config
 
 def main():
     raw, dyr, zfault, config = parse_args()
