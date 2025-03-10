@@ -1,7 +1,8 @@
 import os
 import pytest
 import numpy as np
-from uqgrid.core.psydef import Psystem, GenGENROU
+from uqgrid.core.psydef import Psystem
+from uqgrid.models import GenGENROU
 from uqgrid.simulation.dynamics import integrate_system
 from uqgrid.io.parse import load_psse, add_dyr
 from uqgrid.simulation.pflow import runpf

@@ -25,7 +25,7 @@ except ImportError:
     logger.warning("PETSc4py not available. Some functionality will not be available.")
 
 from uqgrid.simulation.config import IntegrationConfig
-from uqgrid.core.psydef import Psystem, GenGENROU, ExcESDC1A, GovIEESGO, MotCIM5
+from uqgrid.core import Psystem
 from uqgrid.simulation.pflow import runpf, compute_pinj_alt
 from uqgrid.utils.tools import (
     matprint,
