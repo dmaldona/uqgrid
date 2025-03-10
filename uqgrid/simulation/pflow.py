@@ -2,9 +2,8 @@ import numpy as np
 from numba import jit
 from scipy.sparse import csr_matrix
 from scipy import optimize
-from scipy.optimize._nonlin import nonlin_solve
-from .psysdef import Psystem
-
+from scipy.optimize.nonlin import nonlin_solve
+from uqgrid.core.psydef import Psystem
 
 @jit(nopython=True, cache=True)
 def resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat,

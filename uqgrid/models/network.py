@@ -5,9 +5,6 @@ import scipy.io as sio
 import networkx as nx
 from scipy.sparse import csr_matrix
 
-from .psysdef import Psystem
-from .parse import load_matpower
-
 def createYbusComplex(psys):
     """ Create Ybus matrix from bus and branch data """
 

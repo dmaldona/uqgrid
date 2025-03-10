@@ -1,8 +1,467 @@
 # IMPLEMENTATION OF GENROU
 import numpy as np
-import numba
 from numba import jit
-from .tools import csr_add_row, csr_set_row
+from uqgrid.utils.tools import csr_add_row, csr_set_row
+from uqgrid.core.base_models import DynamicGenerator
+from scipy import optimize
+
+class GenGENROU(DynamicGenerator):
+    def __init__(self, id_tag, x_d, x_q, x_dp, x_qp, x_ddp, xl, H, D, T_d0p,
+                 T_q0p, T_d0dp, T_q0dp):
+
+        self.x_d = x_d
+        self.x_q = x_q
+        self.x_dp = x_dp
+        self.x_qp = x_qp
+        self.x_ddp = x_ddp
+        self.x_qdp = x_ddp
+        self.xl = xl
+        self.H = H
+        self.D = D
+        self.T_d0p = T_d0p
+        self.T_q0p = T_q0p
+        self.T_d0dp = T_d0dp
+        self.T_q0dp = T_q0dp
+        # (MBASE/SBASE) ratio. To be modified depending on MBASE.
+        self.ratio = 1.0
+
+        state_list = [
+            'e_qp', 'e_dp', 'phi_1d', 'phi_2q', 'w', 'delta', 'v_q', 'v_d',
+            'i_q', 'i_d'
+        ]
+
+        par_list = [
+            'x_d', 'x_q', 'x_dp', 'x_qp', 'x_ddp', 'x_qdp', 'xl', 'H', 'D',
+            'T_d0p', 'T_q0p', 'T_d0dp', 'T_q0dp'
+        ]
+
+        DynamicGenerator.__init__(self, id_tag, 12, 6, 4, len(par_list),
+                                  state_list)
+
+    def set_ratio(self, ratio):
+        """ Modify machine parameters for a given MBASE/SBASE ratio"""
+
+        self.ratio = ratio
+        self.x_d = self.x_d*(1.0/ratio)
+        self.x_q = self.x_q*(1.0/ratio)
+        self.x_dp = self.x_dp*(1.0/ratio)
+        self.x_qp = self.x_qp*(1.0/ratio)
+        self.x_ddp = self.x_ddp*(1.0/ratio)
+        self.x_qdp = self.x_qdp*(1.0/ratio)
+        self.xl = self.xl*(1.0/ratio)
+        self.H = self.H*ratio
+        self.D = self.D*ratio
+
+    def initialize_theta(self, theta):
+
+        idx = self.par_ptr
+
+        theta[idx] = self.x_d
+        theta[idx + 1] = self.x_q
+        theta[idx + 2] = self.x_dp
+        theta[idx + 3] = self.x_qp
+        theta[idx + 4] = self.x_ddp
+        theta[idx + 5] = self.x_qdp
+        theta[idx + 6] = self.xl
+        theta[idx + 7] = self.H
+        theta[idx + 8] = self.D
+        theta[idx + 9] = self.T_d0p
+        theta[idx + 10] = self.T_q0p
+        theta[idx + 11] = self.T_d0dp
+        theta[idx + 12] = self.T_q0dp
+
+    def residualFinit(self, x, v, theta, p0, q0):
+
+        F = np.zeros(self.initdim)
+
+        # state variables
+        e_qp = x[0]
+        e_dp = x[1]
+        phi_1d = x[2]
+        phi_2q = x[3]
+        w = x[4]
+        delta = x[5]
+        v_q = x[6]
+        v_d = x[7]
+        i_q = x[8]
+        i_d = x[9]
+        e_fd = x[10]
+        p_m = x[11]
+
+        # parameters
+        x_d = self.x_d
+        x_q = self.x_q
+        x_dp = self.x_dp
+        x_qp = self.x_qp
+        x_ddp = self.x_ddp
+        x_qdp = self.x_ddp
+        xl = self.xl
+        H = self.H
+        D = self.D
+        T_d0p = self.T_d0p
+        T_q0p = self.T_q0p
+        T_d0dp = self.T_d0dp
+        T_q0dp = self.T_q0dp
+        ratio = self.ratio
+
+        # auxiliary variables
+        psi_de = (x_ddp - xl)/(x_dp - xl)*e_qp + \
+            (x_dp - x_ddp)/(x_dp - xl)*phi_1d
+
+        psi_qe = -(x_ddp - xl)/(x_qp - xl)*e_dp + \
+            (x_qp - x_ddp)/(x_qp - xl)*phi_2q
+
+        # Machine states
+        F[0] = (-e_qp + e_fd - (i_d - (-x_ddp + x_dp)*(-e_qp + i_d*
+                                                       (x_dp - xl) + phi_1d)/
+                                ((x_dp - xl)**2.0))*(x_d - x_dp))/T_d0p
+        F[1] = (-e_dp + (i_q - (-x_qdp + x_qp)*
+                         (e_dp + i_q*(x_qp - xl) + phi_2q)/((x_qp - xl)**2.0))*
+                (x_q - x_qp))/T_q0p
+        F[2] = (e_qp - i_d*(x_dp - xl) - phi_1d)/T_d0dp
+        F[3] = (-e_dp - i_q*(x_qp - xl) - phi_2q)/T_q0dp
+
+        F[4] = (p_m - psi_de*i_q + psi_qe*i_d)/(2.0*H)
+        F[5] = 2.0*np.pi*60.0*w
+
+        # Stator currents
+        F[6] = i_d - ((x_ddp - xl)/(x_dp - xl)*e_qp + \
+            (x_dp - x_ddp)/(x_dp - xl)*phi_1d - v_q)/x_ddp
+        F[7] = i_q - (-(x_qdp - xl)/(x_qp - xl)*e_dp + \
+            (x_qp - x_qdp)/(x_qp - xl)*phi_2q + v_d)/x_qdp
+
+        # Stator voltage
+        F[8] = v_d - v*np.sin(delta - theta)
+        F[9] = v_q - v*np.cos(delta - theta)
+
+        #Stator additional equations
+        F[10] = v_d*i_d + v_q*i_q - p0
+        F[11] = v_q*i_d - v_d*i_q - q0
+
+        return F
+
+    def initialize(self, vm, va, p, q, x, y, psys):
+
+        # parameters
+        x_d = self.x_d
+        x_q = self.x_q
+        x_dp = self.x_dp
+        x_qp = self.x_qp
+        x_ddp = self.x_ddp
+        x_qdp = self.x_ddp
+        xl = self.xl
+        H = self.H
+        D = self.D
+        T_d0p = self.T_d0p
+        T_q0p = self.T_q0p
+        T_d0dp = self.T_d0dp
+        T_q0dp = self.T_q0dp
+        ratio = self.ratio
+
+        x0 = np.ones(self.initdim)
+        vt  = vm*np.cos(va) + 1j*vm*np.sin(va)
+        ig = (p - 1j*q)/np.conjugate(vt)
+        delta = np.angle(vt + (1j*x_q)*ig)
+
+        v_d = vm*np.sin(delta - va)
+        v_q = vm*np.cos(delta - va)
+        i_d = (p*v_d + q*v_q)/(v_d**2 + v_q**2)
+        i_q = (p*v_q - q*v_d)/(v_d**2 + v_q**2)
+
+        phi_d = v_q
+        phi_q = -v_d
+    
+        e_dp = (-x_qp)*i_q - phi_q
+        e_qp = x_dp*i_d + phi_d
+
+        phi_1d =  e_qp - (x_dp - xl)*i_d
+        phi_2q =  -e_dp - (x_qp - xl)*i_q
+    
+        e_fd = e_qp + (x_d - x_dp)*i_d
+        p_m = p
+
+        x0[0] = e_qp
+        x0[1] = e_dp
+        x0[2] = phi_1d
+        x0[3] = phi_2q
+        x0[4] = 0.0
+        x0[5] = delta
+        x0[6] = v_q
+        x0[7] = v_d
+        x0[8] = i_q
+        x0[9] = i_d
+        x0[10] = e_fd
+        x0[11] = p_m
+
+        # REFINEMENT
+        sol = optimize.root(
+            self.residualFinit,
+            x0,
+            args=(vm, va, p, q),
+            method='krylov',
+            options={
+                'xtol': 1e-8,
+                'disp': False
+            })
+
+        self.e_fd = sol.x[10]
+        self.p_m = sol.x[11]
+
+        self.set_efd_val(sol.x[10])
+        self.set_pm_val(sol.x[11])
+
+        if self.exciter: self.exciter.e_fd0 = sol.x[10]
+        if self.governor: self.governor.p_m0 = sol.x[11]
+
+        self.initialized = True
+        x[self.dif_ptr:self.dif_ptr + 6] = sol.x[0:6]
+        y[self.alg_ptr:self.alg_ptr + 4] = sol.x[6:10]
+
+        return None
+
+    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
+        resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection)
+
+    def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
+
+        dp = idxs[0]
+        ap = idxs[1]
+        v_q = z[ap]
+        v_d = z[ap + 1]
+        i_q = z[ap + 2]
+        i_d = z[ap + 3]
+
+        F[2*self.bus] += v_d*i_d + v_q*i_q
+        F[2*self.bus + 1] += v_q*i_d - v_d*i_q
+        return None
+    
+    def residual_cinj(self, F, z, v, theta, idxs, alpha=False):
+        cinj_genrou(F, z, v, theta, idxs)
+
+    def preallocate_jacobian(self, idxs, psys, power_injection):
+
+        coord = []
+
+        dp = idxs[0]
+        ap = idxs[1]
+        dev = idxs[2]
+
+        # these are INDEXES
+        e_qp = dp
+        e_dp = dp + 1
+        phi_1d = dp + 2
+        phi_2q = dp + 3
+        w = dp + 4
+        delta = dp + 5
+
+        v_q = ap
+        v_d = ap + 1
+        i_q = ap + 2
+        i_d = ap + 3
+
+        if power_injection:
+            vm = dev + 2*self.bus
+            va = dev + 2*self.bus + 1
+        else:
+            vr = dev + 2*self.bus
+            vi = dev + 2*self.bus + 1
+
+        # first row
+        row = dp
+        if self.exciter:
+            cols = [e_qp, phi_1d, self.efd_idx, i_d]
+        else:
+            cols = [e_qp, phi_1d, i_d]
+        coord.append([row, cols])
+
+        # second row
+        row = dp + 1
+        cols = [e_dp, phi_2q, i_q]
+        coord.append([row, cols])
+
+        # third row
+        row = dp + 2
+        cols = [e_qp, phi_1d, i_d]
+        coord.append([row, cols])
+
+        # fourth row
+        row = dp + 3
+        cols = [e_dp, phi_2q, i_q]
+        coord.append([row, cols])
+
+        # fifth row:
+        row = dp + 4
+        if self.governor:
+            cols = [e_qp, e_dp, phi_1d, phi_2q, self.pm_idx, i_q, i_d, w]
+        else:
+            cols = [e_qp, e_dp, phi_1d, phi_2q, i_q, i_d, w]
+
+        coord.append([row, cols])
+
+        row = dp + 5
+        cols = [w]
+        coord.append([row, cols])
+
+        # algebraic part:
+        row = ap
+        cols = [e_qp, phi_1d, v_q, i_d]
+        coord.append([row, cols])
+
+        row = ap + 1
+        cols = [e_dp, phi_2q, v_d, i_q]
+        coord.append([row, cols])
+        
+        if power_injection:
+            row = ap + 2
+            cols = [delta, v_d, vm, va]
+            coord.append([row, cols])
+
+            row = ap + 3
+            cols = [delta, v_q, vm, va]
+            coord.append([row, cols])
+
+            row = dev + 2*self.bus
+            cols = [v_q, v_d, i_q, i_d]
+            coord.append([row, cols])
+
+            row = dev + 2*self.bus + 1
+            cols = [v_q, v_d, i_q, i_d]
+            coord.append([row, cols])
+        else:
+            row = ap + 2
+            cols = [delta, v_d, vr, vi]
+            coord.append([row, cols])
+            
+            row = ap + 3
+            cols = [delta, v_q, vr, vi]
+            coord.append([row, cols])
+            
+            row = dev + 2*self.bus
+            cols = [delta, i_q, i_d]
+            coord.append([row, cols])
+
+            row = dev + 2*self.bus + 1
+            cols = [delta, i_q, i_d]
+            coord.append([row, cols])
+
+        return coord
+
+    def preallocate_hessian(self, h_nnz, idxs, psys):
+
+        coord = []
+
+        dp = idxs[0]
+        ap = idxs[1]
+        dev = idxs[2]
+
+        # these are INDEXES
+        e_qp = dp
+        e_dp = dp + 1
+        phi_1d = dp + 2
+        phi_2q = dp + 3
+        w = dp + 4
+        delta = dp + 5
+        p_m = self.pm_idx
+
+        v_q = ap
+        v_d = ap + 1
+        i_q = ap + 2
+        i_d = ap + 3
+
+        vm = dev + 2*self.bus
+        va = dev + 2*self.bus + 1
+
+        # Torque equation
+        h_nnz[w]['rows'].append(e_qp)
+        h_nnz[w]['cols'].append([i_q])
+
+        h_nnz[w]['rows'].append(e_dp)
+        h_nnz[w]['cols'].append([i_d])
+
+        h_nnz[w]['rows'].append(phi_1d)
+        h_nnz[w]['cols'].append([i_q])
+
+        h_nnz[w]['rows'].append(phi_2q)
+        h_nnz[w]['cols'].append([i_d])
+
+        if self.governor:
+            h_nnz[w]['rows'].append(w)
+            h_nnz[w]['cols'].append([w, p_m])
+
+            h_nnz[w]['rows'].append(p_m)
+            h_nnz[w]['cols'].append([w])
+        else:
+            h_nnz[w]['rows'].append(w)
+            h_nnz[w]['cols'].append([w])
+
+        h_nnz[w]['rows'].append(i_q)
+        h_nnz[w]['cols'].append([e_qp, phi_1d])
+
+        h_nnz[w]['rows'].append(i_d)
+        h_nnz[w]['cols'].append([e_dp, phi_2q])
+
+        # algebraic equations
+        h_nnz[ap + 2]['rows'].append(delta)
+        h_nnz[ap + 2]['cols'].append([delta, vm, va])
+        h_nnz[ap + 2]['rows'].append(vm)
+        h_nnz[ap + 2]['cols'].append([delta, va])
+        h_nnz[ap + 2]['rows'].append(va)
+        h_nnz[ap + 2]['cols'].append([delta, vm, va])
+
+        h_nnz[ap + 3]['rows'].append(delta)
+        h_nnz[ap + 3]['cols'].append([delta, vm, va])
+        h_nnz[ap + 3]['rows'].append(vm)
+        h_nnz[ap + 3]['cols'].append([delta, va])
+        h_nnz[ap + 3]['rows'].append(va)
+        h_nnz[ap + 3]['cols'].append([delta, vm, va])
+
+        # power injection
+        h_nnz[vm]['rows'].append(v_q)
+        h_nnz[vm]['cols'].append([i_q])
+        h_nnz[vm]['rows'].append(v_d)
+        h_nnz[vm]['cols'].append([i_d])
+        h_nnz[vm]['rows'].append(i_q)
+        h_nnz[vm]['cols'].append([v_q])
+        h_nnz[vm]['rows'].append(i_d)
+        h_nnz[vm]['cols'].append([v_d])
+
+        # (NOTE) This is wrong but it seems not to cause
+        # any problem...
+        h_nnz[vm]['rows'].append(v_q)
+        h_nnz[vm]['cols'].append([i_d])
+        h_nnz[vm]['rows'].append(v_d)
+        h_nnz[vm]['cols'].append([i_q])
+        h_nnz[vm]['rows'].append(i_q)
+        h_nnz[vm]['cols'].append([v_d])
+        h_nnz[vm]['rows'].append(i_d)
+        h_nnz[vm]['cols'].append([v_q])
+
+    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var,
+            power_injection):
+
+        jac_genrou(z, v, theta, idxs, ctrl_idx, ctrl_var, J.data, J.indptr,
+                   J.indices, power_injection)
+
+        return None
+
+    def residual_hess(self, HESS, z, v, theta, idxs, ctrl_idx, ctrl_var):
+
+        dp = idxs[0]
+        ap = idxs[1]
+        dev = idxs[2]
+        pp = idxs[3]
+        bus = idxs[4]
+
+        H1 = HESS[dp + 4]
+        H2 = HESS[ap + 2]
+        H3 = HESS[ap + 3]
+        H4 = HESS[dev + 2*bus]
+        H5 = HESS[dev + 2*bus + 1]
+
+        hes_genrou(z, v, theta, idxs, ctrl_idx, ctrl_var, H1.data, H1.indptr,
+                   H1.indices, H2.data, H2.indptr, H2.indices, H3.data,
+                   H3.indptr, H3.indices, H4.data, H4.indptr, H4.indices,
+                   H5.data, H5.indptr, H5.indices)
 
 @jit(nopython=True, cache=True)
 def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
