@@ -1,13 +1,8 @@
 import numpy as np
 from itertools import count
-import cmath
-from numpy.linalg import inv, det
-from scipy import optimize
-from scipy.sparse import csr_matrix
 from uqgrid.utils.tools import csr_add_row, csr_set_row
-import numba
-from numba import jit
 import networkx as nx
+import json
 
 # Import base classes from the new file
 from uqgrid.core.base_models import DeviceModel, DynamicGenerator, Exciter, Governor, Motor
@@ -679,6 +674,37 @@ class Psystem:
         for i in range(self.nloads):
             self.loads[i].set_alpha(par_vec[i])
 
+    def get_load_pq(self):
+        """Returns two numpy arrays containing the real and reactive power load values.
+        
+        Returns:
+            tuple: (p_load, q_load) where each is a numpy array of length nloads
+        """
+        import numpy as np
+        p_load = np.zeros(self.nloads)
+        q_load = np.zeros(self.nloads)
+        
+        for i, load in enumerate(self.loads):
+            p_load[i] = load.pload
+            q_load[i] = load.qload
+            
+        return p_load, q_load
+
+    def set_load_pq(self, p_load, q_load):
+        """Sets the real and reactive power load values.
+        
+        Args:
+            p_load (numpy.ndarray): Array of real power load values
+            q_load (numpy.ndarray): Array of reactive power load values
+        """
+        import numpy as np
+        assert len(p_load) == self.nloads, f"p_load length ({len(p_load)}) must match nloads ({self.nloads})"
+        assert len(q_load) == self.nloads, f"q_load length ({len(q_load)}) must match nloads ({self.nloads})"
+        
+        for i, load in enumerate(self.loads):
+            load.pload = p_load[i]
+            load.qload = q_load[i]
+
     def network_distance(self, bus_fr, bus_to, distance="shortest_path"):
 
         if distance == "shortest_path":
@@ -740,6 +766,24 @@ class Psystem:
                         "Index %g pertains to a %s in bus %d. Algebraic state number: %d."
                         % (idx_num, model.model_type, model.bus,
                            idx_num - dev_ptr))
+
+    def export_state_metadata(self, filename='state_metadata.json'):
+        metadata = {}
+        dif_size = self.num_dof_dif
+        alg_size = self.num_dof_alg
+        total_size = dif_size + alg_size + 2 * self.nbuses
+        
+        for idx in range(total_size):
+            if idx < dif_size:
+                state_type = 'Differential'
+            elif idx < dif_size + alg_size:
+                state_type = 'Algebraic'
+            else:
+                state_type = 'Network Voltage'
+            metadata[idx] = {'type': state_type, 'description': 'To be specified'}
+            
+        with open(filename, 'w') as f:
+            json.dump(metadata, f, indent=4)
 
     # network plot
 

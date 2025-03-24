@@ -1,0 +1,108 @@
+import itertools
+import numpy as np
+import uuid
+import json
+import os
+import copy
+
+def sample_scenarios(load_range, fault_locations, fault_impedances):
+    scenarios = list(itertools.product(load_range, fault_locations, fault_impedances))
+    return scenarios
+
+def generate_metadata(scenarios):
+    metadata = {}
+    for scenario in scenarios:
+        scenario_id = str(uuid.uuid4())
+        metadata[scenario_id] = {
+            'base_load': scenario[0],
+            'fault_location': scenario[1],
+            'fault_impedance': scenario[2]
+        }
+    with open('scenario_metadata.json', 'w') as f:
+        json.dump(metadata, f, indent=4)
+    return metadata
+
+import numpy as np
+from uqgrid.simulation.dynamics import integrate_system
+from uqgrid.simulation.config import IntegrationConfig
+from uqgrid.io.parse import load_psse, add_dyr
+
+def run_single_scenario(base_psys, scenario, scenario_id, base_p_load, base_q_load):
+    # Make a deep copy of the base system
+    psys = copy.deepcopy(base_psys)
+    
+    # Get the base load values and scale them according to scenario
+    p_load_scaled = base_p_load * scenario['base_load']
+    q_load_scaled = base_q_load * scenario['base_load']
+    
+    # Set the scaled loads
+    psys.set_load_pq(p_load_scaled, q_load_scaled)
+    
+    psys.add_busfault(scenario['fault_location'], scenario['fault_impedance'], 0.25)
+    psys.createYbusComplex()
+    
+    config = IntegrationConfig(
+        tend=10.0,
+        dt=1.0/120.0,
+        power_injection=False,
+        ton=0.25,
+        toff=0.4,
+        verbose=False
+    )
+
+    try:
+        results = integrate_system(psys, config)
+        divergence_flag = False
+    except Exception as e:
+        results = {'history': None, 'tvec': None}
+        divergence_flag = True
+
+    # Create simulation_data directory if it doesn't exist
+    os.makedirs('simulation_data', exist_ok=True)
+    
+    filename = f"simulation_data/scenario_{scenario_id}.npz"
+    np.savez_compressed(filename, history=results['history'], tvec=results['tvec'])
+    
+    return divergence_flag, filename
+
+def run_simulation_driver(raw, dyr, scenarios_metadata):
+    # Create base psys object once
+    base_psys = load_psse(raw)
+    add_dyr(base_psys, dyr)
+    base_psys.export_state_metadata()
+    
+    # Get the base load values
+    base_p_load, base_q_load = base_psys.get_load_pq()
+    
+    simulation_log = {}
+    for scenario_id, params in scenarios_metadata.items():
+        print(f"Running scenario {scenario_id}...")
+        divergence, filename = run_single_scenario(
+            base_psys, params, scenario_id, base_p_load, base_q_load
+        )
+        simulation_log[scenario_id] = {
+            'file': filename,
+            'diverged': divergence,
+            **params
+        }
+
+        # Save periodically if large dataset
+        with open('simulation_log.json', 'w') as f:
+            json.dump(simulation_log, f, indent=4)
+
+def main():
+    raw = "data/ieee9_v33.raw"
+    dyr = "data/ieee9bus.dyr"
+    
+    load_range = np.linspace(0.5, 1.5, 5)  # Example load scaling
+    fault_locations = [1, 2, 3, 4]         # Example bus indices
+    fault_impedances = [0.01, 0.05, 0.1]   # Example fault impedances
+    
+    scenarios = sample_scenarios(load_range, fault_locations, fault_impedances)
+    scenarios_metadata = generate_metadata(scenarios)
+
+    run_simulation_driver(raw, dyr, scenarios_metadata)
+
+
+if __name__ == "__main__":
+    main()
