@@ -4,6 +4,7 @@ import uuid
 import json
 import os
 import copy
+from joblib import Parallel, delayed
 
 def sample_scenarios(load_range, fault_locations, fault_impedances):
     scenarios = list(itertools.product(load_range, fault_locations, fault_impedances))
@@ -42,12 +43,13 @@ def run_single_scenario(base_psys, scenario, scenario_id, base_p_load, base_q_lo
     psys.createYbusComplex()
     
     config = IntegrationConfig(
-        tend=10.0,
+        tend=4.0,
         dt=1.0/120.0,
         power_injection=False,
         ton=0.25,
         toff=0.4,
-        verbose=False
+        verbose=False,
+        petsc=True
     )
 
     try:
@@ -90,9 +92,56 @@ def run_simulation_driver(raw, dyr, scenarios_metadata):
         with open('simulation_log.json', 'w') as f:
             json.dump(simulation_log, f, indent=4)
 
+def run_simulation_driver_batched(raw, dyr, scenarios_metadata, n_jobs=-1, batch_size=10):
+    """Run scenarios in parallel using joblib, with batching for memory management"""
+    scenario_ids = list(scenarios_metadata.keys())
+    num_scenarios = len(scenario_ids)
+    simulation_log = {}
+    
+    for i in range(0, num_scenarios, batch_size):
+        print(f"Processing batch {i//batch_size + 1} of {(num_scenarios + batch_size - 1)//batch_size}")
+        batch_ids = scenario_ids[i:i+batch_size]
+        
+        # Create fresh psys object for each batch
+        base_psys = load_psse(raw)
+        add_dyr(base_psys, dyr)
+        base_psys.export_state_metadata()
+        
+        # Get the base load values
+        base_p_load, base_q_load = base_psys.get_load_pq()
+        
+        # Prepare batch arguments
+        batch_args = [
+            (base_psys, scenarios_metadata[sid], sid, base_p_load, base_q_load)
+            for sid in batch_ids
+        ]
+        
+        # Run batch in parallel
+        batch_results = Parallel(n_jobs=n_jobs)(
+            delayed(run_single_scenario)(*args) for args in batch_args
+        )
+        
+        # Process batch results
+        for j, (divergence, filename) in enumerate(batch_results):
+            scenario_id = batch_ids[j]
+            simulation_log[scenario_id] = {
+                'file': filename,
+                'diverged': divergence,
+                **scenarios_metadata[scenario_id]
+            }
+            
+        # Save progress after each batch
+        with open('simulation_log.json', 'w') as f:
+            json.dump(simulation_log, f, indent=4)
+            
+        # Clean up memory
+        del base_psys
+        
+    return simulation_log
+
 def main():
     raw = "data/ieee9_v33.raw"
-    dyr = "data/ieee9bus.dyr"
+    dyr = "data/ieee9bus_gov.dyr"
     
     load_range = np.linspace(0.5, 1.5, 5)  # Example load scaling
     fault_locations = [1, 2, 3, 4]         # Example bus indices
@@ -101,7 +150,8 @@ def main():
     scenarios = sample_scenarios(load_range, fault_locations, fault_impedances)
     scenarios_metadata = generate_metadata(scenarios)
 
-    run_simulation_driver(raw, dyr, scenarios_metadata)
+    #run_simulation_driver(raw, dyr, scenarios_metadata)
+    run_simulation_driver_batched(raw, dyr, scenarios_metadata, n_jobs=5, batch_size=10)
 
 
 if __name__ == "__main__":

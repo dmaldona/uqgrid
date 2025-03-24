@@ -768,20 +768,83 @@ class Psystem:
                            idx_num - dev_ptr))
 
     def export_state_metadata(self, filename='state_metadata.json'):
+        import json
         metadata = {}
         dif_size = self.num_dof_dif
         alg_size = self.num_dof_alg
         total_size = dif_size + alg_size + 2 * self.nbuses
         
-        for idx in range(total_size):
-            if idx < dif_size:
-                state_type = 'Differential'
-            elif idx < dif_size + alg_size:
-                state_type = 'Algebraic'
-            else:
-                state_type = 'Network Voltage'
-            metadata[idx] = {'type': state_type, 'description': 'To be specified'}
+        # Track current index in state vector
+        state_idx = 0
+        
+        # Process differential states
+        for device in self.devices:
+            model_name = device.__class__.__name__
+            device_id = device.id_tag
             
+            # Handle differential states
+            for i in range(device.dif_dim):
+                # Get state name if available, otherwise use generic name
+                if hasattr(device, 'state_list') and i < len(device.state_list):
+                    state_name = device.state_list[i]
+                else:
+                    state_name = f"state_{i}"
+                    
+                metadata[str(state_idx)] = {
+                    'type': 'Differential',
+                    'model': model_name,
+                    'device_id': device_id,
+                    'state_name': state_name,
+                    'description': f"{model_name} {device_id} {state_name}"
+                }
+                state_idx += 1
+        
+        # Process algebraic states
+        for device in self.devices:
+            model_name = device.__class__.__name__
+            device_id = device.id_tag
+            
+            # Handle algebraic states
+            for i in range(device.alg_dim):
+                # Get state name if available, otherwise use generic name
+                if hasattr(device, 'state_list') and (i + device.dif_dim) < len(device.state_list):
+                    state_name = device.state_list[i + device.dif_dim]
+                else:
+                    state_name = f"alg_state_{i}"
+                    
+                metadata[str(state_idx)] = {
+                    'type': 'Algebraic',
+                    'model': model_name,
+                    'device_id': device_id,
+                    'state_name': state_name,
+                    'description': f"{model_name} {device_id} {state_name}"
+                }
+                state_idx += 1
+        
+        # Process network voltages - real and imaginary parts
+        for i, bus in enumerate(self.buses):
+            bus_num = bus.id  # Use the proper attribute (external ID)
+            
+            # Real part
+            metadata[str(state_idx)] = {
+                'type': 'Network Voltage',
+                'bus_num': bus_num,
+                'component': 'real',
+                'state_name': 'vr',
+                'description': f"Bus {bus_num} voltage real part"
+            }
+            state_idx += 1
+            
+            # Imaginary part
+            metadata[str(state_idx)] = {
+                'type': 'Network Voltage',
+                'bus_num': bus_num,
+                'component': 'imaginary',
+                'state_name': 'vi',
+                'description': f"Bus {bus_num} voltage imaginary part"
+            }
+            state_idx += 1
+        
         with open(filename, 'w') as f:
             json.dump(metadata, f, indent=4)
 
