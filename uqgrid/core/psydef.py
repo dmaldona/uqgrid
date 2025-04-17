@@ -795,7 +795,8 @@ class Psystem:
                     'model': model_name,
                     'device_id': device_id,
                     'state_name': state_name,
-                    'description': f"{model_name} {device_id} {state_name}"
+                    'description': f"{model_name} {device_id} {state_name}",
+                    'bus_num': self.buses[device.bus].id
                 }
                 state_idx += 1
         
