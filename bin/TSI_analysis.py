@@ -332,11 +332,27 @@ def ComputeTSI():
 
     try:
         import seaborn as sns
-        plt.figure()
+        plt.figure(figsize=(10,5))
+        plt.subplot(1,2,1)
         sns.histplot(tsi_all, bins=20, stat='density', kde=True)
-        plt.xlabel('TSI')
+        plt.axvline(0, color='k', ls='--', lw=1.5)  
+
+        plt.text(-1, plt.ylim()[1] * 0.95, 'unstable', ha='right', va='top', fontsize=10)
+        plt.text(1, plt.ylim()[1] * 0.95, 'stable', ha='left', va='top', fontsize=10)
+
+        plt.xlabel('TSI at all times')
         plt.ylabel('Density')
-        plt.title('TSI Histogram with fault_impedances = 0.0001')
+
+        plt.subplot(1,2,2)
+        sns.histplot(np.squeeze(tsi_all_time[:,-1]), bins=20, stat='density', kde=True)
+        plt.axvline(0, color='k', ls='--', lw=1.5)  
+
+        plt.text(-1, plt.ylim()[1] * 0.95, 'unstable', ha='right', va='top', fontsize=10)
+        plt.text(1, plt.ylim()[1] * 0.95, 'stable', ha='left', va='top', fontsize=10)
+        plt.xlabel('TSI at final time')
+        plt.ylabel('Density')
+
+        plt.tight_layout()
         plt.show()
     except ImportError:
         print("Seaborn is not installed. Please install it with `pip install seaborn`.")
