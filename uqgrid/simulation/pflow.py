@@ -2,7 +2,10 @@ import numpy as np
 from numba import jit
 from scipy.sparse import csr_matrix
 from scipy import optimize
-from scipy.optimize.nonlin import nonlin_solve
+try:
+    from scipy.optimize._nonlin import nonlin_solve # For newer SciPy
+except ImportError:
+    from scipy.optimize.nonlin import nonlin_solve # Fallback for older SciPy
 from uqgrid.core.psydef import Psystem
 
 @jit(nopython=True, cache=True)
