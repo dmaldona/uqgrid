@@ -31,7 +31,7 @@ from uqgrid.io.parse import load_psse, add_dyr
 def run_single_scenario(base_psys, scenario, scenario_id, base_p_load, base_q_load):
     # Make a deep copy of the base system
     psys = copy.deepcopy(base_psys)
-    
+    #TODO modify here to perturb P and Q separately 
     # Get the base load values and scale them according to scenario
     p_load_scaled = base_p_load * scenario['base_load']
     q_load_scaled = base_q_load * scenario['base_load']
@@ -43,7 +43,7 @@ def run_single_scenario(base_psys, scenario, scenario_id, base_p_load, base_q_lo
     psys.createYbusComplex()
     
     config = IntegrationConfig(
-        tend=4.0,
+        tend=10.0,
         dt=1.0/120.0,
         power_injection=False,
         ton=0.25,
@@ -143,9 +143,12 @@ def main():
     raw = "data/ieee9_v33.raw"
     dyr = "data/ieee9bus_gov.dyr"
     
-    load_range = np.linspace(0.5, 1.5, 5)  # Example load scaling
-    fault_locations = [1, 2, 3, 4]         # Example bus indices
-    fault_impedances = [0.01, 0.05, 0.1]   # Example fault impedances
+    #load_range = np.linspace(0.75, 1.25, 5)  # Example load scaling
+    #TODO add separrate P Q scaling
+    load_range = np.random.uniform(low=0.75, high=1.25, size=50)
+
+    fault_locations = [1, 2, 3, 4, 5, 6, 7, 8, 9]         # Example bus indices
+    fault_impedances = [0.0001]   # Example fault impedances
     
     scenarios = sample_scenarios(load_range, fault_locations, fault_impedances)
     scenarios_metadata = generate_metadata(scenarios)
