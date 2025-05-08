@@ -261,10 +261,7 @@ def ComputeTSI():
             state_name='delta',
             diverged=False
         )
-        
-        # convert every scenario’s values from pu to rad
-        for scen_id, rec in d.items():
-            rec['values'] = rec['values'] * (2*np.pi)
+
         delta_dicts[(bus_num, device_id)] = d
 
     if not delta_dicts:
