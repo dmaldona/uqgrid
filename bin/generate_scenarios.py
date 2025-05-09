@@ -140,15 +140,27 @@ def run_simulation_driver_batched(raw, dyr, scenarios_metadata, n_jobs=-1, batch
     return simulation_log
 
 def main():
-    raw = "data/ieee9_v33.raw"
-    dyr = "data/ieee9bus_gov.dyr"
     
-    #load_range = np.linspace(0.75, 1.25, 5)  # Example load scaling
-    #TODO add separrate P Q scaling
-    load_range = np.random.uniform(low=0.75, high=1.25, size=50)
+    PowerGridModel = 'IEEE-39'
 
-    fault_locations = [1, 2, 3, 4, 5, 6, 7, 8, 9]         # Example bus indices
-    fault_impedances = [0.0001]   # Example fault impedances
+
+    if(PowerGridModel == 'IEEE-9'):  # IEEE-9 bus model
+        raw = "data/ieee9_v33.raw"
+        dyr = "data/ieee9bus_gov.dyr"  
+        #load_range = np.linspace(0.75, 1.25, 5)  # Load scaling
+        #TODO add separrate P Q scaling
+        load_range = np.random.uniform(low=0.75, high=1.25, size=50)
+        fault_locations = [1, 2, 3, 4, 5, 6, 7, 8, 9]         # Example bus indices
+        fault_impedances = [0.0001]     # Fault impedances
+    elif(PowerGridModel == 'IEEE-39'):  # IEEE-39 bus model
+        raw = "data/IEEE39_v33.raw"
+        dyr = "data/IEEE39_gov.dyr"
+        load_range = np.random.uniform(low=0.75, high=1.25, size=50)
+        fault_locations = (np.arange(39).flatten()+1).tolist() # list(np.arange(9).flatten()+1) # Bus indices
+        fault_impedances = [0.0001]    # Fault impedances
+    else:
+        raise RuntimeError(f"{PowerGridModel} is an invalid model!")
+
     
     scenarios = sample_scenarios(load_range, fault_locations, fault_impedances)
     scenarios_metadata = generate_metadata(scenarios)

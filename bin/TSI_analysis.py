@@ -326,28 +326,25 @@ def ComputeTSI():
     print(f'TSI for all scenarios: {tsi_all.shape}')
     print(f'TSI for all time scenarios: {tsi_all_time.shape}')
 
-
+    # Plotting the TSI
     try:
         import seaborn as sns
         plt.figure(figsize=(10,5))
         plt.subplot(1,2,1)
         sns.histplot(tsi_all, bins=20, stat='density', kde=True)
-        plt.axvline(0, color='k', ls='--', lw=1.5)  
-
-        plt.text(-1, plt.ylim()[1] * 0.95, 'unstable', ha='right', va='top', fontsize=10)
-        plt.text(1, plt.ylim()[1] * 0.95, 'stable', ha='left', va='top', fontsize=10)
-
         plt.xlabel('TSI at all times')
         plt.ylabel('Density')
 
         plt.subplot(1,2,2)
         sns.histplot(np.squeeze(tsi_all_time[:,-1]), bins=20, stat='density', kde=True)
-        plt.axvline(0, color='k', ls='--', lw=1.5)  
-
-        plt.text(-1, plt.ylim()[1] * 0.95, 'unstable', ha='right', va='top', fontsize=10)
-        plt.text(1, plt.ylim()[1] * 0.95, 'stable', ha='left', va='top', fontsize=10)
         plt.xlabel('TSI at final time')
-        plt.ylabel('Density')
+
+        for i in range(2):
+            plt.subplot(1,2,i+1)
+            plt.axvline(0, color='k', ls='--', lw=1.5)  
+
+            plt.text(-1, plt.ylim()[1] * 0.95, 'unstable', ha='right', va='top', fontsize=10)
+            plt.text(1, plt.ylim()[1] * 0.95, 'stable', ha='left', va='top', fontsize=10)
 
         plt.tight_layout()
         plt.show()
