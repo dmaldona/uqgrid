@@ -5,46 +5,64 @@ import json
 import os
 import copy
 from joblib import Parallel, delayed
+
 from uqgrid.simulation.dynamics import integrate_system
 from uqgrid.simulation.config   import IntegrationConfig
 from uqgrid.io.parse            import load_psse, add_dyr
 
 
-def generate_load_perturbations(base_p, base_q, *, noise_type="normal", var=0.1, rng=None):
+def generate_load_perturbations(base_p, base_q,
+                                *,
+                                noise_type="normal", var=0.1,
+                                rng=None, return_noise=False):
     """
-    Return two arrays (p_noise, q_noise) with the same shapes as base_p / base_q
+    Apply per-bus noise -> return scaled loads.
+    If return_noise=True, also return (p_noise, q_noise)
 
-    The numbers represent *relative* perturbations, i.e. P -> P*(1+noise)
+        P_scaled = base_p * (1 + p_noise)
+        Q_scaled = base_q * (1 + q_noise)
+    TODO: may need to change it so it's more flexible.
     """
     rng = np.random.default_rng() if rng is None else rng
 
     if noise_type == "normal":
-        p_noise = rng.normal(loc=0.0, scale=var, size=base_p.shape)
-        q_noise = rng.normal(loc=0.0, scale=var, size=base_q.shape)
+        p_noise = rng.normal(0.0, var, size=base_p.shape)
+        q_noise = rng.normal(0.0, var, size=base_q.shape)
     elif noise_type == "uniform":
-        half_width = np.sqrt(3 * var)       # so that Var(U[-a,a]) = var
-        p_noise = rng.uniform(-half_width,  half_width, size=base_p.shape)
-        q_noise = rng.uniform(-half_width,  half_width, size=base_q.shape)
+        half = np.sqrt(3 * var)              # Var(U[-a,a]) = var
+        p_noise = rng.uniform(-half, half, size=base_p.shape)
+        q_noise = rng.uniform(-half, half, size=base_q.shape)
     elif noise_type == "none":
-        p_noise = np.zeros_like(base_p)
-        q_noise = np.zeros_like(base_q)
+        p_noise = q_noise = np.zeros_like(base_p)
     else:
-        raise ValueError(f"Unknown noise_type: {noise_type}")
+        raise ValueError(f"Unknown noise_type '{noise_type}'")
 
-    return p_noise, q_noise
-# ────────────────────────────────────────────────────────────────────────────────
+    p_scaled = base_p * (1.0 + p_noise)
+    q_scaled = base_q * (1.0 + q_noise)
+
+    #  Positive
+    eps = 1e-9
+    p_scaled = np.clip(p_scaled, a_min=eps, a_max=None)
+    q_scaled = np.clip(q_scaled, a_min=eps, a_max=None)
+
+    if return_noise:
+        return p_scaled, q_scaled, p_noise, q_noise
+    return p_scaled, q_scaled
 
 
-def sample_scenarios(load_range, fault_locations, fault_impedances):
-    return list(itertools.product(load_range, fault_locations, fault_impedances))
+def sample_scenarios(n_samples, fault_locations, fault_impedances):
+    return list(itertools.product(range(n_samples), fault_locations, fault_impedances))
 
 
 def generate_metadata(scenarios):
+    """
+    Creates one UUID per scenario.  Metadata no longer contains 'base_load'.
+    """
     metadata = {}
-    for load_scale, floc, fz in scenarios:
+    for sample_idx, floc, fz in scenarios:
         sid = str(uuid.uuid4())
         metadata[sid] = {
-            "base_load"      : load_scale,
+            "sample_idx"     : sample_idx,
             "fault_location" : floc,
             "fault_impedance": fz,
         }
@@ -60,15 +78,16 @@ def run_single_scenario(
 
     psys = copy.deepcopy(base_psys)
 
-    p_noise, q_noise = generate_load_perturbations(
-        base_p_load, base_q_load, noise_type=noise_type, var=noise_var)
+    #  Draw noise and obtain positive, scaled loads
+    p_scaled, q_scaled, p_noise, q_noise = generate_load_perturbations(
+        base_p_load, base_q_load,
+        noise_type=noise_type, var=noise_var,
+        return_noise=True)
 
+    psys.set_load_pq(p_scaled, q_scaled)
 
-    p_load_scaled = base_p_load * scenario["base_load"] * (1.0 + p_noise)
-    q_load_scaled = base_q_load * scenario["base_load"] * (1.0 + q_noise)
-    psys.set_load_pq(p_load_scaled, q_load_scaled)
-
-    psys.add_busfault(scenario["fault_location"], scenario["fault_impedance"], 0.25)
+    psys.add_busfault(scenario["fault_location"],
+                      scenario["fault_impedance"], 0.25)
     psys.createYbusComplex()
 
     cfg = IntegrationConfig(
@@ -77,22 +96,22 @@ def run_single_scenario(
     )
 
     try:
-        sim = integrate_system(psys, cfg)
-        diverged = False
+        sim       = integrate_system(psys, cfg)
+        diverged  = False
     except Exception:
-        sim      = {"history": None, "tvec": None}
-        diverged = True
+        sim       = {"history": None, "tvec": None}
+        diverged  = True
 
     os.makedirs("simulation_data", exist_ok=True)
     fn = f"simulation_data/scenario_{scenario_id}.npz"
-    np.savez_compressed(fn, history=sim["history"], tvec=sim["tvec"])
-
-    return {
-        "file"     : fn,
-        "diverged" : diverged,
-        "p_noise"  : p_noise.tolist(),
-        "q_noise"  : q_noise.tolist(),
-    }
+    np.savez_compressed(
+        fn,
+        history=sim["history"],
+        tvec=sim["tvec"],
+        p_noise=p_noise,
+        q_noise=q_noise
+    )
+    return {"file": fn, "diverged": diverged}
 
 
 def run_simulation_driver_batched(
@@ -129,13 +148,12 @@ def run_simulation_driver_batched(
         with open("simulation_log.json", "w") as f:
             json.dump(simulation_log, f, indent=4)
 
-        del base_psys     
+        del base_psys
 
     return simulation_log
 
-
 def main():
-    PowerGridModel = "IEEE-9"           # or "IEEE-9"
+    PowerGridModel = "IEEE-9"
     if PowerGridModel == "IEEE-9":
         raw = "data/ieee9_v33.raw"
         dyr = "data/ieee9bus_gov.dyr"
@@ -147,15 +165,17 @@ def main():
     else:
         raise RuntimeError(f"{PowerGridModel} is an invalid model!")
 
-    load_range       = np.random.uniform(0.75, 1.25, size=50)
-    fault_locations  = list(range(1, n_bus + 1))
-    fault_impedances = [0.0001]
-    scenarios        = sample_scenarios(load_range, fault_locations, fault_impedances)
-    metadata         = generate_metadata(scenarios)
+    number_of_samples = 50             
+    fault_locations   = list(range(1, n_bus + 1))
+    fault_impedances  = [0.0001]
 
-    # noise settings 
-    noise_type = "normal"   # "normal", "uniform", "none", …
-    noise_var  = 0.10       # variance of the chosen distribution
+    scenarios = sample_scenarios(
+        number_of_samples, fault_locations, fault_impedances)
+    metadata  = generate_metadata(scenarios)
+
+    # noise settings
+    noise_type = "normal"   # "normal", "uniform", "none", 
+    noise_var  = 0.10       # variance of the chosen distribution TODO: need to change this to be more flexible
 
     run_simulation_driver_batched(
         raw, dyr, metadata,
