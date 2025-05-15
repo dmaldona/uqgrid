@@ -108,6 +108,8 @@ def run_single_scenario(
         fn,
         history=sim["history"],
         tvec=sim["tvec"],
+        p_scaled=p_scaled,
+        q_scaled=q_scaled,
         p_noise=p_noise,
         q_noise=q_noise
     )

@@ -325,9 +325,9 @@ def ComputeTSI():
 
     print(f'TSI for all scenarios: {tsi_all.shape}')
     print(f'TSI for all time scenarios: {tsi_all_time.shape}')
-
-    # Plotting the TSI
+    
     try:
+        # Plotting the TSI
         import seaborn as sns
         plt.figure(figsize=(10,5))
         plt.subplot(1,2,1)
@@ -349,7 +349,7 @@ def ComputeTSI():
         plt.tight_layout()
         plt.show()
     except ImportError:
-        print("Seaborn is not installed. Please install it with `pip install seaborn`.")
+        print("Seaborn is not installed. Please install it if you want to see cool stuff with `pip install seaborn`.")
         
     return post_data
 
