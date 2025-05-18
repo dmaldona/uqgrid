@@ -965,7 +965,7 @@ def integrate(zold,
     return z, uold, vold, mold
 
 
-def initialize_system(vold, p_inj, psys):
+def initialize_system(psys):
     """ Based on system parameters, creates the
 
         Input: v - voltage vector
@@ -989,9 +989,6 @@ def initialize_system(vold, p_inj, psys):
     psys.initialize()
 
     assert psys.init_flag == True
-    assert len(p_inj) == psys.nbuses*2
-
-    p_load = psys.get_loadvec()
 
     v = np.zeros(2*psys.nbuses, dtype=np.float64)
     for i in range(psys.nbuses):
@@ -1400,8 +1397,9 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
     psys.power_injection=power_injection
 
     # retrieve parameters
-    volt, Pinj = runpf(psys, verbose=False)
-    z0, theta = initialize_system(volt, Pinj, psys)
+    if solve_power_flow:
+        runpf(psys, verbose=False)
+    z0, theta = initialize_system(psys)
     system_size = z0.shape[0]
     J = preallocate_jacobian(psys)
     F = np.zeros(system_size)
