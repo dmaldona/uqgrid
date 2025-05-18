@@ -91,7 +91,7 @@ class DynamicGenerator(DeviceModel):
         self.state_list = state_list
         DeviceModel.__init__(self, ddim, adim, pdim, id_tag, 'generator')
         self.initialized = False
-
+        self.static_gen_idx = -1  # index of static generator in the bus
         # attached devices
         self.exciter = False
         self.governor = False
@@ -102,6 +102,10 @@ class DynamicGenerator(DeviceModel):
 
         self.ctrl_idx = np.array([-1, -1], dtype=np.int32)
         self.ctrl_var = np.array([0.0, 0.0])
+
+    def set_static_gen_idx(self, idx):
+        assert idx >= 0
+        self.static_gen_idx = idx
 
     def set_pm_idx(self, idx):
         assert idx >= 0

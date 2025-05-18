@@ -965,7 +965,7 @@ def integrate(zold,
     return z, uold, vold, mold
 
 
-def initialize_system(v, p_inj, psys):
+def initialize_system(vold, p_inj, psys):
     """ Based on system parameters, creates the
 
         Input: v - voltage vector
@@ -989,21 +989,37 @@ def initialize_system(v, p_inj, psys):
     psys.initialize()
 
     assert psys.init_flag == True
-    assert len(v) == psys.nbuses*2
     assert len(p_inj) == psys.nbuses*2
 
     p_load = psys.get_loadvec()
+
+    v = np.zeros(2*psys.nbuses, dtype=np.float64)
+    for i in range(psys.nbuses):
+        v[2*i] = psys.buses[i].v0m
+        v[2*i + 1] = psys.buses[i].v0a
 
     for device in psys.devices:
         vm = v[2*device.bus]
         va = v[2*device.bus + 1]
 
-        if device.model_type == "generator":
-            pi = p_inj[2*device.bus] - p_load[2*device.bus]
-            qi = p_inj[2*device.bus + 1] - p_load[2*device.bus + 1]
+        if device.model_type  == "generator":
+            # retrieve static gen id
+            gen_static_id = device.static_gen_idx
+            pi = psys.gens[gen_static_id].psch
+            qi = psys.gens[gen_static_id].qsch
+
+        elif device.model_type == "ZIPLoad":
+            pi = -device.pload
+            qi = device.qload
+        elif device.model_type in ["governor", "exciter"]:
+            # here we dont need pi and qi we just need to pass something
+            # because we have the same signature for all the initialization
+            pi = 0.0
+            qi = 0.0
         else:
-            pi = p_load[2*device.bus]
-            qi = p_load[2*device.bus + 1]
+            #unknown device
+            raise NameError("Unknown device type: %s" % device.model_type)
+
         device.initialize(vm, va, pi, qi, x, y, psys)
 
     sysvec[:dif_size] = x
@@ -1378,6 +1394,7 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
     toff = config.toff
     petsc = config.petsc
     power_injection = config.power_injection
+    solve_power_flow = config.solve_powerflow_dynamics
 
     results = {}
     psys.power_injection=power_injection
