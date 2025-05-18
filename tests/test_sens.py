@@ -81,7 +81,8 @@ def test_forward_sensitivities(data_dir):
         fsolve=False,
         petsc=False,
         ton=0.25,
-        toff=0.4
+        toff=0.4,
+        solve_powerflow_dynamics=False,
     )
 
     # TEST FIRST-ORDER SENSITIVITIES
