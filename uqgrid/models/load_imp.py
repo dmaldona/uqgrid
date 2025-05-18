@@ -39,11 +39,11 @@ def cinj_load(F, z, v, theta, idxs):
 def jac_load(z, v, theta, idxs,
         ctrl_idx, ctrl_var, J_data, J_ptr, J_idx, power_injection):
 
-    dp = idxs[0]
-    ap = idxs[1]
-    dev = idxs[2]
-    pp = idxs[3]
-    bus = idxs[4]
+    dp = idxs[0]  # Differential pointer
+    ap = idxs[1]  # Algebraic pointer (raw, not offset)
+    pp = idxs[2]  # Parameter pointer
+    bus = idxs[3] # Bus number
+    dev = idxs[4]  # System offset
 
     vr = v[2*bus]
     vi = v[2*bus + 1]

@@ -37,6 +37,11 @@ class GenGENROU(DynamicGenerator):
 
         DynamicGenerator.__init__(self, id_tag, 12, 6, 4, len(par_list),
                                   state_list)
+        
+        # expose pure jit functions
+        self.residual_diff_jit = resdiff_genrou
+        self.residual_cinj_jit = cinj_genrou
+        self.residual_jac_jit = jac_genrou
 
     def set_ratio(self, ratio):
         """ Modify machine parameters for a given MBASE/SBASE ratio"""
@@ -350,9 +355,11 @@ class GenGENROU(DynamicGenerator):
 
         coord = []
 
-        dp = idxs[0]
-        ap = idxs[1]
-        dev = idxs[2]
+        dp = idxs[0]  # Differential pointer
+        ap = idxs[1]  # Algebraic pointer (raw, not offset)
+        pp = idxs[2]  # Parameter pointer
+        bus = idxs[3] # Bus number
+        dev = idxs[4]  # System offset
 
         # these are INDEXES
         e_qp = dp
@@ -575,11 +582,11 @@ def cinj_genrou(F, z, v, theta, idxs):
 def jac_genrou(z, v, theta, idxs,
         ctrl_idx, ctrl_var, J_data, J_ptr, J_idx, power_injection):
 
-    dp = idxs[0]
-    ap = idxs[1]
-    dev = idxs[2]
-    pp = idxs[3]
-    bus = idxs[4]
+    dp = idxs[0]  # Differential pointer
+    ap = idxs[1]  # Algebraic pointer (raw, not offset)
+    pp = idxs[2]  # Parameter pointer
+    bus = idxs[3] # Bus number
+    dev = idxs[4]  # System offset
 
     # parameters
     x_d = theta[pp]
@@ -868,11 +875,11 @@ def hes_genrou(z, v, theta, idxs,
             H4_data, H4_indptr, H4_indices,
             H5_data, H5_indptr, H5_indices):
 
-    dp = idxs[0]
-    ap = idxs[1]
-    dev = idxs[2]
-    pp = idxs[3]
-    bus = idxs[4]
+    dp = idxs[0]  # Differential pointer
+    ap = idxs[1]  # Algebraic pointer (raw, not offset)
+    pp = idxs[2]  # Parameter pointer
+    bus = idxs[3] # Bus number
+    dev = idxs[4]  # System offset
 
     # parameters
     x_d = theta[pp]

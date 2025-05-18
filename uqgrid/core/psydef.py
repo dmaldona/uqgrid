@@ -89,6 +89,16 @@ class Load(DeviceModel):
         # theta = [pload, qload, alpha, weight]
         self.initialized = False
 
+        # add jit function reference
+        self.residual_cinj_jit = cinj_load
+        self.residual_jac_jit = jac_load
+
+        # TODO: WARNING: HACK
+        # Temporaryly create dummy control vectors
+        self.ctrl_idx = np.array([-1, -1], dtype=np.int32)
+        self.ctrl_var = np.array([0.0, 0.0])
+
+
     def set_alpha(self, alpha):
         assert alpha <= 1.0
         assert alpha >= 0.0

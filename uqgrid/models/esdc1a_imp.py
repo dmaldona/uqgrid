@@ -125,9 +125,11 @@ class ExcESDC1A(Exciter):
 
         coord = []
 
-        dp = idxs[0]
-        ap = idxs[1]
-        dev = idxs[2]
+        dp = idxs[0]  # Differential pointer
+        ap = idxs[1]  # Algebraic pointer (raw, not offset)
+        pp = idxs[2]  # Parameter pointer
+        bus = idxs[3] # Bus number
+        dev = idxs[4]  # System offset
 
         # these are INDEXES
         vr1 = dp
@@ -155,9 +157,11 @@ class ExcESDC1A(Exciter):
         return coord
 
     def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var):
-        dp = idxs[0]
-        ap = idxs[1]
-        dev = idxs[2]
+        dp = idxs[0]  # Differential pointer
+        ap = idxs[1]  # Algebraic pointer (raw, not offset)
+        pp = idxs[2]  # Parameter pointer
+        bus = idxs[3] # Bus number
+        dev = idxs[4]  # System offset
 
         # parameters
         Ka = self.Ka
@@ -223,9 +227,11 @@ class ExcESDC1A(Exciter):
 
     def preallocate_hessian(self, h_nnz, idxs, psys):
 
-        dp = idxs[0]
-        ap = idxs[1]
-        dev = idxs[2]
+        dp = idxs[0]  # Differential pointer
+        ap = idxs[1]  # Algebraic pointer (raw, not offset)
+        pp = idxs[2]  # Parameter pointer
+        bus = idxs[3] # Bus number
+        dev = idxs[4]  # System offset
 
         # these are INDEXES
         vr1 = dp
@@ -244,11 +250,11 @@ class ExcESDC1A(Exciter):
 
     def residual_hess(self, HESS, z, v, theta, idxs, ctrl_idx, ctrl_var):
 
-        dp = idxs[0]
-        ap = idxs[1]
-        dev = idxs[2]
-        pp = idxs[3]
-        bus = idxs[4]
+        dp = idxs[0]  # Differential pointer
+        ap = idxs[1]  # Algebraic pointer (raw, not offset)
+        pp = idxs[2]  # Parameter pointer
+        bus = idxs[3] # Bus number
+        dev = idxs[4]  # System offset
 
         H0 = HESS[dp]
         H1 = HESS[dp + 1]

@@ -6,6 +6,8 @@ from scipy import optimize
 import numdifftools as nd
 from numpy import linalg as LA
 from numba import jit
+from numba import types, njit, boolean, float64, prange
+from numba.typed import List as TypedList
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve, factorized
 from scipy.sparse._sparsetools import csr_matvec
@@ -33,6 +35,9 @@ from uqgrid.utils.tools import (
     csr_add_row,
     csr_set_row,
     csr_to_zeros,
+)
+from uqgrid.models.noop_imp import (
+    resdiff_void, pinj_void, cinj_void, jac_void
 )
 # supress annoying LAPACK warning on MACOS
 import warnings
@@ -145,7 +150,7 @@ def gradient_pp(psys, z, theta, idx_a=0, idx_b=0):
 
     return G
 
-def residual_function(F, z, theta, psys):
+def residual_function_OLD(F, z, theta, psys):
 
     F.fill(0.0)
     # Lock system vector
@@ -201,6 +206,68 @@ def residual_function(F, z, theta, psys):
     z.flags.writeable = True
     return None
 
+@njit(cache=True)
+def _device_loop_diff(
+    F, z, v, theta, idxs_arr, ctrl_idx_arr, ctrl_var_arr, power_inj,
+    rhs_funcs, cinj_funcs,
+    alg_size, dif_size
+):
+    n = idxs_arr.shape[0]
+    for i in range(n):
+        idxs = idxs_arr[i]
+        cidx = ctrl_idx_arr[i]
+        cvar = ctrl_var_arr[i]
+        # differential residual
+        rhs_funcs[i](F, z, v, theta, idxs, cidx, cvar, power_inj)
+        # algebraic residual - pass the slice
+        cinj_funcs[i](F[alg_size + dif_size:], z, v, theta, idxs)
+
+def residual_function(F, z, theta, psys):
+
+    F.fill(0.0)
+
+    alg_size = psys.num_dof_alg
+    dif_size = psys.num_dof_dif
+    pow_size = 2*psys.nbuses  # power balance equations
+    sys_size = alg_size + dif_size + 2*psys.nbuses
+
+    # Assign vectors
+    x = z[:dif_size]
+    y = z[dif_size:dif_size + alg_size]
+    v = z[dif_size + alg_size:]
+
+    # Network equations
+    if psys.power_injection:
+        compute_pinj_alt(v, F[alg_size + dif_size:], psys.ybus_mat, psys.graph_mat,
+                     psys.nbuses)
+    else:
+        csr_matvec(psys.rybus.shape[0],psys.rybus.shape[1],psys.rybus.indptr,
+                psys.rybus.indices, psys.rybus.data, v, F[alg_size + dif_size:])
+    F[alg_size + dif_size:] = -1.0*F[alg_size + dif_size:]
+
+    idxs = np.zeros(4, dtype=np.int64)
+
+    # Call the device loop with the missing parameters
+    _device_loop_diff(
+        F,               # the flat residual vector
+        z, v, theta,
+        psys._idxs_arr,
+        psys._ctrl_idx_arr,
+        psys._ctrl_var_arr,
+        psys.power_injection,
+        psys._rhs_funcs,
+        psys._cinj_funcs,
+        alg_size, dif_size  # Add these missing parameters
+    )
+
+    for fault in psys.fault_events:
+        if fault.active:
+            if psys.power_injection:
+                fault.residual_pinj(F[alg_size + dif_size:], v)
+            else:
+                fault.residual_cinj(F[alg_size + dif_size:], v)
+
+    return None
 
 @jit(nopython=True, cache=True)
 def power_flow_jacobian(ybus_data, ybus_ptr, ybus_idx, J_data, J_ptr, J_idx,
@@ -299,7 +366,7 @@ def current_injection_jacobian(ybus_data, ybus_ptr, ybus_idx,
         jac_data, jac_ptr, jac_idx, dev):
     
     # TODO: This needs to come from the maximum interconnected nodes
-    col = np.zeros(100, dtype=np.int32)
+    col = np.zeros(100, dtype=np.int64)
     val = np.zeros(100, dtype=np.double)
 
     row_ptr = 0
@@ -328,7 +395,7 @@ def _jacobian_diagonal_zeros(J_data, J_ptr, J_idx, ndim, NDIFFEQ):
         col[0] = i
         csr_set_row(J_data, J_ptr, J_idx, 1, i, col, data)
 
-def residual_jacobian(J, z, theta, psys):
+def residual_jacobian_OLD(J, z, theta, psys):
 
     # Lock system vector
     z.flags.writeable = False
@@ -357,16 +424,6 @@ def residual_jacobian(J, z, theta, psys):
         current_injection_jacobian(psys.rybus.data, psys.rybus.indptr,
                                    psys.rybus.indices, J.data, J.indptr,
                                    J.indices, dev)
-        #for row_idx in range(len(psys.rybus.indptr) - 1):
-        #    row_ptr = psys.rybus.indptr[row_idx]
-        #    row_ptr_end = psys.rybus.indptr[row_idx + 1]
-        #    nvals = row_ptr_end - row_ptr
-        #    row = row_idx + dev
-        #    col = psys.rybus.indices[row_ptr:row_ptr_end] + dev
-        #    val = -psys.rybus.data[row_ptr:row_ptr_end]
-
-        #    csr_set_row(J.data, J.indptr, J.indices, nvals, row, col, val)
-
     # DEVICES
     idxs = np.zeros(5, dtype=np.int64)
 
@@ -390,6 +447,71 @@ def residual_jacobian(J, z, theta, psys):
 
     # Restore write access to system vector
     z.flags.writeable = True
+
+    return None
+
+@njit(cache=True)
+def _device_loop_jac(
+    z, v, theta,
+    idxs_arr, ctrl_idx_arr, ctrl_var_arr,
+    J_data, J_ptr, J_idx,
+    power_inj,
+    jac_funcs
+):
+    n = idxs_arr.shape[0]
+    # Replace range with prange
+    for i in range(n):
+        idxs = idxs_arr[i]
+        cidx = ctrl_idx_arr[i]
+        cvar = ctrl_var_arr[i]
+        
+        jac_funcs[i](
+            z, v, theta,
+            idxs, cidx, cvar,
+            J_data, J_ptr, J_idx,
+            power_inj
+        )
+
+def residual_jacobian(J, z, theta, psys):
+
+    alg_size = psys.num_dof_alg
+    dif_size = psys.num_dof_dif
+    pow_size = 2*psys.nbuses  # power balance equations
+    sys_size = alg_size + dif_size + 2*psys.nbuses
+
+    # Initialize Jacobian matrix to 0s
+    #J.data.fill(0.0)
+    _jacobian_diagonal_zeros(J.data, J.indptr, J.indices, J.shape[0], dif_size)
+
+    # Assign vectors
+    x = z[:dif_size]
+    y = z[dif_size:dif_size + alg_size]
+    v = z[dif_size + alg_size:]
+
+    dev = alg_size + dif_size
+    
+    if psys.power_injection:
+        power_flow_jacobian(psys.ybus_spa.data, psys.ybus_spa.indptr,
+                            psys.ybus_spa.indices, J.data, J.indptr, J.indices,
+                            dev, v, psys.nbuses)
+    else:
+        current_injection_jacobian(psys.rybus.data, psys.rybus.indptr,
+                                   psys.rybus.indices, J.data, J.indptr,
+                                   J.indices, dev)
+    # DEVICES
+    _device_loop_jac(
+        z, v, theta,  # State variables first
+        psys._idxs_arr,
+        psys._ctrl_idx_arr,
+        psys._ctrl_var_arr,
+        J.data, J.indptr, J.indices,  # Jacobian components
+        psys.power_injection,
+        psys._jac_funcs
+    )
+
+    for fault in psys.fault_events:
+        if fault.active:
+            fault.residual_jac(J, z, v, theta, dev, psys.power_injection)
 
     return None
 
@@ -979,7 +1101,6 @@ def initialize_system(v, p_inj, psys):
 
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
-    pow_size = 2*psys.nbuses  # power balance equations
     sys_size = alg_size + dif_size + 2*psys.nbuses
 
     sysvec = np.zeros(sys_size, dtype=np.float64)
@@ -1027,6 +1148,89 @@ def initialize_system(v, p_inj, psys):
     theta = np.zeros(psys.num_pars)
     for i in range(psys.num_devices):
         psys.devices[i].initialize_theta(theta)
+
+    # build device
+    ndev = psys.num_devices
+    alg_size = psys.num_dof_alg
+    dif_size = psys.num_dof_dif
+    dev_size = alg_size + dif_size
+
+    # Pack each device’s 4‐entry idxs into a (ndev×4) array
+    idxs_arr     = np.empty((ndev, 5), dtype=np.int64)
+    # assume all devices use same ctrl_idx length k
+    k = len(psys.devices[0].ctrl_idx)
+    ctrl_idx_arr = np.empty((ndev, k), dtype=np.int64)
+    ctrl_var_arr = np.empty((ndev, k), dtype=np.float64)
+
+    sig_diff = types.FunctionType(
+        types.void(
+            types.float64[:],   # F
+            types.float64[:],   # z
+            types.float64[:],   # v
+            types.float64[:],   # theta
+            types.int64[:],     # idxs
+            types.int64[:],     # ctrl_idx
+            types.float64[:],   # ctrl_var
+            types.boolean       # power_injection
+        )
+    )
+    sig_pinj = types.FunctionType(
+        types.void(
+            types.float64[:],   # F
+            types.float64[:],   # z
+            types.float64[:],   # v
+            types.float64[:],   # theta
+            types.int64[:]      # idxs
+        )
+    )
+    sig_cinj = sig_pinj
+    sig_jac = types.FunctionType(
+        types.void(
+            types.float64[:],   # z
+            types.float64[:],   # v
+            types.float64[:],   # theta
+            types.int64[:],     # idxs
+            types.int64[:],     # ctrl_idx
+            types.float64[:],   # ctrl_var
+            types.float64[:],   # J_data
+            types.int32[:],     # J_ptr
+            types.int32[:],     # J_idx
+            types.boolean       # power_injection
+        )
+    )
+
+    rhs_funcs  = TypedList.empty_list(sig_diff)
+    cinj_funcs = TypedList.empty_list(sig_cinj)
+    jac_funcs  = TypedList.empty_list(sig_jac)
+
+    for i, dev in enumerate(psys.devices):
+        idxs_arr[i, 0] = dev.dif_ptr
+        idxs_arr[i, 1] = dif_size + dev.alg_ptr
+        idxs_arr[i, 2] = dev.par_ptr
+        idxs_arr[i, 3] = dev.bus
+        idxs_arr[i, 4] = dev_size
+
+        ctrl_idx_arr[i, :] = dev.ctrl_idx
+        ctrl_var_arr[i, :] = dev.ctrl_var
+
+        # ensure that the device has a jit function
+        dev.residual_diff_jit = getattr(dev, 'residual_diff_jit', resdiff_void)
+        dev.residual_pinj_jit = getattr(dev, 'residual_pinj_jit', pinj_void)
+        dev.residual_cinj_jit = getattr(dev, 'residual_cinj_jit', cinj_void)
+        dev.residual_jac_jit  = getattr(dev, 'residual_jac_jit', jac_void)
+
+        # pull in the four jit entrypoints we just exposed
+        rhs_funcs .append(dev.residual_diff_jit)
+        cinj_funcs.append(dev.residual_cinj_jit)
+        jac_funcs .append(dev.residual_jac_jit)
+
+    # stash on psys for residual_function & residual_jacobian to use
+    psys._idxs_arr       = idxs_arr
+    psys._ctrl_idx_arr   = ctrl_idx_arr
+    psys._ctrl_var_arr   = ctrl_var_arr
+    psys._rhs_funcs      = rhs_funcs
+    psys._cinj_funcs     = cinj_funcs
+    psys._jac_funcs      = jac_funcs
 
     return sysvec, theta
 
@@ -1378,7 +1582,8 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
     toff = config.toff
     petsc = config.petsc
     power_injection = config.power_injection
-
+    # from now on only power_injection=False is supported. use assert
+    assert power_injection == False, "Power injection is not supported yet."
     results = {}
     psys.power_injection=power_injection
 
