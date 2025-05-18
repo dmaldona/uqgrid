@@ -11,6 +11,7 @@ class IntegrationConfig(BaseModel):
     ton: float = Field(0.25, description="Fault activation time.")
     toff: float = Field(0.4, description="Fault deactivation time.")
     petsc: bool = Field(False, description="Enable PETSc integration.")
+    solve_powerflow_dynamics: bool = Field(True, description="Solve power flow before dynamics.")
 
     @field_validator('tend', 'dt', 'ton', 'toff', mode='after')
     def positive_values(cls, v, info):
