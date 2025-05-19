@@ -224,15 +224,24 @@ class Load(DeviceModel):
         GX[vm_idx + 1, vm_idx] = 2.0*Ql*(vm/v0)**2.0/vm
 
 class Generator(object):
-    def __init__(self, bus, psch, qsch, basemva, mbase):
+    def __init__(self, bus, idx_name, psch, qsch, basemva, internal_id, mbase):
         self.bus = bus
+        self.idx = idx_name
         self.psch = psch/basemva
         self.qsch = qsch/basemva
+        self.has_dynamic_model = False
+        self.internal_id = internal_id
 
         if mbase > 0:
             self.mbase = mbase
         else:
             self.mbase = -1
+
+    def set_dynamic_true(self):
+        self.has_dynamic_model = True
+
+    def set_dynamic_false(self):
+        self.has_dynamic_model = False
 
 class Shunt(object):
     def __init__(self, bus, gsh, bsh, basemva):
@@ -408,11 +417,6 @@ class Psystem:
         # perhaps this should not be here?
         self.first_jacobian_evaluation = True
 
-        # Store direct function references to avoid method lookups
-        self.rhs_funcs = []  # Will hold direct references to residual_* functions
-        self.jac_funcs = []  # Will hold direct references to jac_* functions
-        self.cinj_funcs = []  # Will hold direct references to cinj_* functions
-
     def __str__(self):
         return (
             "Power system instance composed of:\n" +
@@ -470,8 +474,8 @@ class Psystem:
         self.branches.append(Branch(i, j, r, x, sh=sh, tap=tap, shift=shift))
         self.nbranches += 1
 
-    def add_gen(self, bus, psch, qsch, mbase=-1):
-        self.gens.append(Generator(bus, psch, qsch, self.basemva, mbase=mbase))
+    def add_gen(self, bus, idx_name, psch, qsch, mbase=-1):
+        self.gens.append(Generator(bus, idx_name, psch, qsch, self.basemva, self.ngens, mbase=mbase))
         self.ngens += 1
 
     def add_busfault(self, bus, rfault, time):
@@ -486,6 +490,8 @@ class Psystem:
         if gen.mbase > 0:
             ratio = gen.mbase/self.basemva
             gendynamics.set_ratio(ratio)
+        # pair gen dynamics with static generator
+        gendynamics.set_static_gen_idx(gen.internal_id)
 
     def add_load_dynamics(self, load, loaddynamics):
         assert isinstance(load, Load)
@@ -655,6 +661,22 @@ class Psystem:
             print("Model %d. Bus: %d. Type: %s. diff_ptr: %d. alg_ptr: %d" %
                   (model.ndev, model.bus, model.model_type, model.dif_ptr,
                    model.alg_ptr))
+            
+    def create_bus_to_gen_map(self):
+        """
+        Creates a mapping from bus numbers to generator indices.
+        
+        Returns:
+            list of lists: bus_to_gen[bus_idx] contains the indices of generators connected to bus_idx.
+                           For example, if bus_to_gen[3] = [10, 20], it means generators at 
+                           indices 10 and 20 in self.gens are connected to bus 3.
+        """
+        bus_to_gen = [[] for _ in range(self.nbuses)]
+        
+        for gen_idx, gen in enumerate(self.gens):
+            bus_to_gen[gen.bus].append(gen_idx)
+        
+        return bus_to_gen
 
     def add_ext2int(self, dictionary):
         assert len(dictionary) == self.nbuses

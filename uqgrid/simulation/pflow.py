@@ -2,7 +2,10 @@ import numpy as np
 from numba import jit
 from scipy.sparse import csr_matrix
 from scipy import optimize
-from scipy.optimize.nonlin import nonlin_solve
+try:
+    from scipy.optimize._nonlin import nonlin_solve # For newer SciPy
+except ImportError:
+    from scipy.optimize.nonlin import nonlin_solve # Fallback for older SciPy
 from uqgrid.core.psydef import Psystem
 
 @jit(nopython=True, cache=True)
@@ -343,9 +346,43 @@ def runpf(psys, verbose=False):
 
     # we will return a vector v and pinj such that
     # v = [vmag1, vang1, vmag2, vang2, ...]
-    # Sinj = [pinj1, qinj, pinj2, qinj2, ...]
+    # sinj = [pinj1, qinj, pinj2, qinj2, ...]
     v = np.array([vmag, vang]).T.flatten()
-    Sinj = np.zeros(len(v))
-    compute_pinj_alt(v, Sinj, psys.ybus_mat, psys.graph_mat, psys.nbuses)
+    sinj = np.zeros(len(v))
+    compute_pinj_alt(v, sinj, psys.ybus_mat, psys.graph_mat, psys.nbuses)
 
-    return v, Sinj
+    # now we need to update the psys object with the new values
+    # First, we need to find out which generatos are connected to each bus
+    bus_to_gen = psys.create_bus_to_gen_map()
+
+    # now we compute a vector of generations by substracting the load to sinj
+    sgen = np.zeros(2*psys.nbuses)
+    sgen = np.copy(sinj)
+    for load in psys.loads:
+        sgen[2*load.bus] -= load.pload
+        sgen[2*load.bus + 1] -= load.qload
+    
+    for (idx, bus) in enumerate(psys.buses):
+        bus.v0m = v[2*idx]
+        bus.v0a = v[2*idx + 1]
+
+        # for all the PV and slack buses, we distibute the
+        # reactive power generation to the generators evenly
+        ngen = len(bus_to_gen[idx])
+        if bus.type == 2:
+            if ngen == 0:
+                raise ValueError("PV bus with no generator")
+            for gen_idx in bus_to_gen[idx]:
+                gen = psys.gens[gen_idx]
+                gen.qsch = sgen[2*idx + 1] / ngen
+        # for the slack bus, we need to distribute the active power generation
+        elif bus.type == 3:
+            if ngen == 0:
+                raise ValueError("PV bus with no generator")
+            for gen_idx in bus_to_gen[idx]:
+
+                gen = psys.gens[gen_idx]
+                gen.psch = sgen[2*idx] / ngen
+                gen.qsch = sgen[2*idx + 1] / ngen
+
+    return v, sinj

@@ -166,7 +166,7 @@ def load_psse(raw_filename):
     # add generators
     for gen in case.gens:
         bus = psse_to_int[int(gen.busn)]
-        psys.add_gen(bus, gen.pg, gen.qg, mbase=gen.mbase)
+        psys.add_gen(bus, gen.name, gen.pg, gen.qg, mbase=gen.mbase)
 
     # add loads
     for i in range(nloads):
@@ -227,7 +227,7 @@ def load_matpower(mat_file):
 
     for i in range(ngens):
         bus = mat_to_int[int(mat_gens[i, 0])]
-        psys.add_gen(bus, mat_gens[i, 1], mat_gens[i, 2])
+        psys.add_gen(bus, "id", mat_gens[i, 1], mat_gens[i, 2])
 
     for i in range(nbranch):
         fr_internal = mat_to_int[int(mat_branches[i, 0])]
@@ -280,8 +280,6 @@ def add_dyr(psys, dyr_filename, verbose=False):
     for device in devices:
 
         if 'GENROU' in device[1]:
-            if verbose:
-                print("Adding GENROU at bus %d." % (int(device[0])))
             bus = psys.ext2int[int(device[0])]
             idx = str(device[2])
             T_d0p = float(device[3])
@@ -299,12 +297,26 @@ def add_dyr(psys, dyr_filename, verbose=False):
             S1 = float(device[15])
             S2 = float(device[16])
 
+            # print data
+            found_match = False
+
             for i in range(len(psys.gens)):
-                if psys.gens[i].bus == bus:
+                static_bus = psys.gens[i].bus
+                static_idx = (psys.gens[i].idx).strip().replace("'", "")
+
+                if static_bus == bus and static_idx.strip() == idx.strip():
                     psys.add_gen_dynamics(psys.gens[i],
                         GenGENROU(idx, x_d, x_q, x_dp, x_qp, x_ddp,
                         xl, H, D, T_d0p, T_q0p, T_d0dp, T_q0dp))
+                    found_match = True
+                    psys.gens[i].set_dynamic_true()
+                    if verbose:
+                        print("Adding GENROU at bus %d. GENID %s." % (int(device[0]), idx))
                     break
+
+            if not found_match:
+                print("Cannot pair GENROU with bus %d and idx %s" % (bus, idx))
+                assert False
 
         if 'IEESGO' in device[1]:
             bus = psys.ext2int[int(device[0])]
@@ -390,6 +402,28 @@ def add_dyr(psys, dyr_filename, verbose=False):
                     psys.add_load_dynamics(load, MotCIM5(load_id, ra, xa, xm, r1,
                         x1, Hin, Damp))
                     break
+
+    # check if at the end of loading the dyr any static generator does not have a dynamic model
+    # for now we will create dummy GENROUs with large inertias.
+
+    k = 0
+    TAG_DUMMY = "DUMMY"
+    for i, gen in enumerate(psys.gens):
+        if gen.has_dynamic_model is False:
+            id_tag = TAG_DUMMY + str(k)
+            # we use the parameters of the last generator except for the inertia and damping
+            # VERY HACKY
+            H = 100.0
+            D = 1.0
+            # add dummy generator
+            psys.add_gen_dynamics(psys.gens[i],
+                    GenGENROU(id_tag, x_d, x_q, x_dp, x_qp, x_ddp,
+                    xl, H, D, T_d0p, T_q0p, T_d0dp, T_q0dp))
+            psys.gens[i].set_dynamic_true()
+            k += 1
+
+    if k > 0:
+        print("We added %d dummy GENROU models to the system." % k)
 
 def load_gic(psys, gis_filename):
 
