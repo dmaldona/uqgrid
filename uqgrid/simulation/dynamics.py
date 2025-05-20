@@ -201,6 +201,151 @@ def residual_function(F, z, theta, psys):
     z.flags.writeable = True
     return None
 
+##############################################
+# Parametric jacobian w.r.t load parameters  #
+##############################################
+
+def preallocate_jacobian_parameters(psys):
+    """Preallocates the Jacobian matrix with respect to load parameters (pl, ql).
+    
+    Args:
+        psys: Power system object
+        
+    Returns:
+        csr_matrix: Sparse Jacobian matrix structure
+    """
+    alg_size = psys.num_dof_alg
+    dif_size = psys.num_dof_dif
+    sys_size = alg_size + dif_size + 2*psys.nbuses
+    
+    # Number of parameters (pl, ql for each load)
+    nparam = 2 * psys.nloads
+    
+    # Lists to build the sparse matrix
+    row = []
+    col = []
+    
+    # For each load, add the derivatives at the corresponding bus
+    dev = alg_size + dif_size
+    for i, load in enumerate(psys.loads):
+        bus = load.bus
+        # Each load affects only its bus equations in the power balance
+        row.extend([dev + 2*bus, dev + 2*bus + 1])  # Real and reactive power equations
+        col.extend([2*i, 2*i])  # pl parameter index
+        
+        row.extend([dev + 2*bus, dev + 2*bus + 1])  # Real and reactive power equations
+        col.extend([2*i + 1, 2*i + 1])  # ql parameter index
+    
+    data = np.zeros(len(row))
+    Jsparse = csr_matrix((data, (row, col)), shape=(sys_size, nparam))
+    
+    return Jsparse
+
+
+@jit(nopython=True, cache=True)
+def jac_load_params(z, v, theta, idxs, J_data, J_ptr, J_idx, load_idx):
+    """
+    Compute the Jacobian of the load model with respect to parameters pl and ql.
+    
+    Args:
+        z: State vector
+        v: Voltage vector
+        theta: Parameter vector
+        idxs: Array of indices [dp, ap, pp, bus]
+        J_data, J_ptr, J_idx: CSR format arrays for the Jacobian matrix
+        load_idx: Index of the load in the system
+    """
+    pp = idxs[2]
+    bus = idxs[3]
+    
+    vr = v[2*bus]
+    vi = v[2*bus + 1]
+    
+    alpha = theta[pp + 2]  # Using actual alpha value (though task specified alpha=0)
+    
+    vm2 = vr*vr + vi*vi
+    vm2_tld = 0.2  # Voltage threshold for model switching
+    
+    col = np.zeros(2)
+    val = np.zeros(2)
+    
+    # Derivatives for real power balance equation
+    row = 2*bus
+    
+    # Derivative with respect to pl
+    col[0] = 2*load_idx
+    if vm2 > vm2_tld:
+        val[0] = -(1-alpha)*vr/vm2
+    else:
+        val[0] = -(1-alpha)*vr/vm2_tld
+    
+    # Derivative with respect to ql
+    col[1] = 2*load_idx + 1
+    if vm2 > vm2_tld:
+        val[1] = (1-alpha)*vi/vm2
+    else:
+        val[1] = (1-alpha)*vi/vm2_tld
+    
+    csr_set_row(J_data, J_ptr, J_idx, 2, row, col, val)
+    
+    # Derivatives for reactive power balance equation
+    row = 2*bus + 1
+    
+    # Derivative with respect to pl
+    col[0] = 2*load_idx
+    if vm2 > vm2_tld:
+        val[0] = -(1-alpha)*vi/vm2
+    else:
+        val[0] = -(1-alpha)*vi/vm2_tld
+    
+    # Derivative with respect to ql
+    col[1] = 2*load_idx + 1
+    if vm2 > vm2_tld:
+        val[1] = -(1-alpha)*vr/vm2
+    else:
+        val[1] = -(1-alpha)*vr/vm2_tld
+    
+    csr_set_row(J_data, J_ptr, J_idx, 2, row, col, val)
+
+
+def residual_jacobian_parameters(Jp, z, theta, psys):
+    """
+    Compute the Jacobian of the residual function with respect to parameters pl and ql.
+    
+    Args:
+        Jp: Sparse Jacobian matrix to be filled
+        z: State vector
+        theta: Parameter vector
+        psys: Power system object
+    """
+    # Lock system vector
+    z.flags.writeable = False
+    
+    alg_size = psys.num_dof_alg
+    dif_size = psys.num_dof_dif
+    
+    # Clear the Jacobian
+    Jp.data.fill(0.0)
+    
+    # Get voltage vector
+    v = z[dif_size + alg_size:]
+    
+    # Compute Jacobian with respect to load parameters
+    idxs = np.zeros(4, dtype=np.int64)
+    
+    for i, load in enumerate(psys.loads):
+        idxs[0] = load.dif_ptr
+        idxs[1] = dif_size + load.alg_ptr
+        idxs[2] = load.par_ptr
+        idxs[3] = load.bus
+        
+        jac_load_params(z, v, theta, idxs, Jp.data, Jp.indptr, Jp.indices, i)
+    
+    # Restore write access to system vector
+    z.flags.writeable = True
+    
+    return None
+
 
 @jit(nopython=True, cache=True)
 def power_flow_jacobian(ybus_data, ybus_ptr, ybus_idx, J_data, J_ptr, J_idx,
