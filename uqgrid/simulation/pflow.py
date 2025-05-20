@@ -359,7 +359,7 @@ def runpf(psys, verbose=False):
     sgen = np.zeros(2*psys.nbuses)
     sgen = np.copy(sinj)
     for load in psys.loads:
-        sgen[2*load.bus] -= load.pload
+        sgen[2*load.bus] += load.pload
         sgen[2*load.bus + 1] -= load.qload
     
     for (idx, bus) in enumerate(psys.buses):
