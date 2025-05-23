@@ -277,7 +277,7 @@ def ComputeTSI():
     first_key      = next(iter(delta_dicts))                # t(bus_num, device_id)
     first_scenario = next(iter(delta_dicts[first_key]))     # scenario_id string
 
-    # get tvec safely (it failed before)
+    # get tvec safely
     tvec = delta_dicts[first_key][first_scenario]['tvec']
     T    = len(tvec)
     G    = len(delta_dicts)
