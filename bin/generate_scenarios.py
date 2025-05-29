@@ -40,11 +40,6 @@ def generate_load_perturbations(base_p, base_q,
     p_scaled = base_p * (1.0 + p_noise)
     q_scaled = base_q * (1.0 + q_noise)
 
-    #  Positive
-    eps = 1e-9
-    p_scaled = np.clip(p_scaled, a_min=eps, a_max=None)
-    q_scaled = np.clip(q_scaled, a_min=eps, a_max=None)
-
     if return_noise:
         return p_scaled, q_scaled, p_noise, q_noise
     return p_scaled, q_scaled
