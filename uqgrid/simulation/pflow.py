@@ -8,6 +8,29 @@ except ImportError:
     from scipy.optimize.nonlin import nonlin_solve # Fallback for older SciPy
 from uqgrid.core.psydef import Psystem
 
+class PowerFlowSolution:
+    def __init__(self, num_buses, num_gens):
+        # Voltages
+        self.v_magnitudes = np.zeros(num_buses)
+        self.v_angles = np.zeros(num_buses) # in radians
+
+        # Original flat voltage vector (Vm, Va, Vm, Va, ...)
+        self.v_vector = np.zeros(2 * num_buses)
+        # Original power injection vector (P, Q, P, Q, ...)
+        self.s_inj_vector = np.zeros(2 * num_buses)
+
+        # Updated generator setpoints (for slack and PV buses)
+        # Store as dictionaries mapping generator original index to value
+        self.gen_psch = np.zeros(num_gens)
+        self.gen_qsch = np.zeros(num_gens)
+
+    def __str__(self):
+        return (f"PowerFlowSolution:\n"
+                f"  V_magnitudes: {self.v_magnitudes[:3]}... ({len(self.v_magnitudes)} buses)\n"
+                f"  V_angles: {self.v_angles[:3]}... ({len(self.v_angles)} buses)\n"
+                f"  Gen Ps Psch entries: {len(self.gen_psch)}\n"
+                f"  Gen Qs Qsch entries: {len(self.gen_qsch)}")
+
 @jit(nopython=True, cache=True)
 def resfun(F, x, vmag, vang, Pinj, Qinj, ybus_mat,
            bus_type, PQ_idx, PQV_idx, graph_mat):
@@ -335,6 +358,9 @@ def runpf(psys, verbose=False):
     else:
         print(info["message"])
         raise Exception("Power flow solution did not converge")
+    
+    # Create PowerFlowSolution object to store results
+    pf_solution = PowerFlowSolution(psys.nbuses, psys.ngens)
 
     # retrieve voltage magnitudes and angles
     for i in range(psys.nbuses):
@@ -344,45 +370,51 @@ def runpf(psys, verbose=False):
         if PQV_idx[i] >= 0:
             vang[i] = sol[nPQ + PQV_idx[i]]
 
-    # we will return a vector v and pinj such that
-    # v = [vmag1, vang1, vmag2, vang2, ...]
-    # sinj = [pinj1, qinj, pinj2, qinj2, ...]
-    v = np.array([vmag, vang]).T.flatten()
-    sinj = np.zeros(len(v))
-    compute_pinj_alt(v, sinj, psys.ybus_mat, psys.graph_mat, psys.nbuses)
+    pf_solution.v_magnitudes = np.copy(vmag)
+    pf_solution.v_angles = np.copy(vang)
 
-    # now we need to update the psys object with the new values
-    # First, we need to find out which generatos are connected to each bus
+    # Populate the flat v_vector in pf_solution
+    pf_solution.v_vector = np.array([pf_solution.v_magnitudes, pf_solution.v_angles]).T.flatten()
+
+    # Compute power injections (sinj_solved) based on the solved voltages
+    sinj_solved = np.zeros(len(pf_solution.v_vector))
+    compute_pinj_alt(pf_solution.v_vector, sinj_solved, psys.ybus_mat, psys.graph_mat, psys.nbuses)
+    pf_solution.s_inj_vector = sinj_solved
+
     bus_to_gen = psys.create_bus_to_gen_map()
 
     # now we compute a vector of generations by substracting the load to sinj
-    sgen = np.zeros(2*psys.nbuses)
-    sgen = np.copy(sinj)
+    sgen_dispatch = np.copy(sinj_solved)
+
     for load in psys.loads:
-        sgen[2*load.bus] += load.pload
-        sgen[2*load.bus + 1] -= load.qload
+        sgen_dispatch[2*load.bus] += load.pload
+        sgen_dispatch[2*load.bus + 1] -= load.qload
     
-    for (idx, bus) in enumerate(psys.buses):
-        bus.v0m = v[2*idx]
-        bus.v0a = v[2*idx + 1]
+    for (bus_idx_internal, bus_obj) in enumerate(psys.buses):
+        # For all generators, copy their original Psch unless they are on a slack bus
+        # For all generators, copy their original Qsch unless they are on a slack or PV bus
+        # This ensures gens on PQ buses retain their input Psch/Qsch.
+        for gen_orig_idx in bus_to_gen[bus_idx_internal]:
+            # Start by assuming original values from psys.gens
+            # The psys.gens objects are read-only in this function's context.
+            pf_solution.gen_psch[gen_orig_idx] = psys.gens[gen_orig_idx].psch
+            pf_solution.gen_qsch[gen_orig_idx] = psys.gens[gen_orig_idx].qsch
 
-        # for all the PV and slack buses, we distibute the
-        # reactive power generation to the generators evenly
-        ngen = len(bus_to_gen[idx])
-        if bus.type == 2:
-            if ngen == 0:
-                raise ValueError("PV bus with no generator")
-            for gen_idx in bus_to_gen[idx]:
-                gen = psys.gens[gen_idx]
-                gen.qsch = sgen[2*idx + 1] / ngen
-        # for the slack bus, we need to distribute the active power generation
-        elif bus.type == 3:
-            if ngen == 0:
-                raise ValueError("PV bus with no generator")
-            for gen_idx in bus_to_gen[idx]:
+        ngen_on_bus = len(bus_to_gen[bus_idx_internal]) #
+        if bus_obj.type == 2: # PV bus
+            if ngen_on_bus == 0: #
+                raise ValueError(f"PV bus {bus_obj.id} with no generator")
+            q_to_dispatch = sgen_dispatch[2*bus_idx_internal + 1] / ngen_on_bus
+            for gen_orig_idx in bus_to_gen[bus_idx_internal]:
+                # Psch is fixed from input for PV bus gens (already set above)
+                pf_solution.gen_qsch[gen_orig_idx] = q_to_dispatch
+        elif bus_obj.type == 3: # Slack bus
+            if ngen_on_bus == 0:
+                raise ValueError(f"Slack bus {bus_obj.id} with no generator")
+            p_to_dispatch = sgen_dispatch[2*bus_idx_internal] / ngen_on_bus
+            q_to_dispatch = sgen_dispatch[2*bus_idx_internal + 1] / ngen_on_bus
+            for gen_orig_idx in bus_to_gen[bus_idx_internal]:
+                pf_solution.gen_psch[gen_orig_idx] = p_to_dispatch
+                pf_solution.gen_qsch[gen_orig_idx] = q_to_dispatch
 
-                gen = psys.gens[gen_idx]
-                gen.psch = sgen[2*idx] / ngen
-                gen.qsch = sgen[2*idx + 1] / ngen
-
-    return v, sinj
+    return pf_solution

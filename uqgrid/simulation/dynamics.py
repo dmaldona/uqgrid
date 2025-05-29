@@ -27,7 +27,7 @@ except ImportError:
 
 from uqgrid.simulation.config import IntegrationConfig
 from uqgrid.core import Psystem
-from uqgrid.simulation.pflow import runpf, compute_pinj_alt
+from uqgrid.simulation.pflow import runpf, compute_pinj_alt, PowerFlowSolution
 from uqgrid.utils.tools import (
     matprint,
     csr_mult_row,
@@ -1184,16 +1184,9 @@ def integrate(zold,
     return z, uold, vold, mold
 
 
-def initialize_system(psys):
-    """ Based on system parameters, creates the
-
-        Input: v - voltage vector
-               p - power flow vector
-               psys - power system data structure.
-
-        Output:
-               initialized sytem vector
-
+def initialize_system(psys: Psystem, pf_solution: PowerFlowSolution):
+    """ Based on system parameters and power flow solution, creates the
+        initialized system vector and theta.
     """
 
     alg_size = psys.num_dof_alg
@@ -1211,18 +1204,18 @@ def initialize_system(psys):
 
     v = np.zeros(2*psys.nbuses, dtype=np.float64)
     for i in range(psys.nbuses):
-        v[2*i] = psys.buses[i].v0m
-        v[2*i + 1] = psys.buses[i].v0a
+        v[2*i] = pf_solution.v_magnitudes[i]
+        v[2*i + 1] = pf_solution.v_angles[i]
 
     for device in psys.devices:
-        vm = v[2*device.bus]
-        va = v[2*device.bus + 1]
+        vm = pf_solution.v_magnitudes[device.bus]
+        va = pf_solution.v_angles[device.bus]
 
         if device.model_type  == "generator":
             # retrieve static gen id
             gen_static_id = device.static_gen_idx
-            pi = psys.gens[gen_static_id].psch
-            qi = psys.gens[gen_static_id].qsch
+            pi = pf_solution.gen_psch[gen_static_id]
+            qi = pf_solution.gen_qsch[gen_static_id]
 
         elif device.model_type == "ZIPLoad":
             pi = -device.pload
@@ -1514,7 +1507,7 @@ if petsc4py:
             Jp_temp = preallocate_jacobian_parameters(self.psys)
             residual_jacobian_parameters(Jp_temp, xx, self.theta, self.psys)
             
-            P.setValuesCSR(Jp_temp.indptr, Jp_temp.indices, Jp_temp.data)
+            P.setValuesCSR(Jp_temp.indptr, Jp_temp.indices, -Jp_temp.data)
             P.assemble()
             return True
 
@@ -1606,8 +1599,8 @@ def _eval_adjoint_z0_product(params_flat, psys_template, lambda_adjoint):
     psys.set_load_pq(p_loads, q_loads)
     
     # Solve and initialize (using functions from same module)
-    runpf(psys, verbose=False)
-    z0, _ = initialize_system(psys)
+    pf_sol = runpf(psys, verbose=False)
+    z0, _ = initialize_system(psys, pf_sol)
     
     return np.dot(lambda_adjoint, z0)
 
@@ -1627,7 +1620,7 @@ def compute_initial_state_sensitivity(psys, lambda_adjoint, nominal_params, eps=
     """
     n_params = len(nominal_params)
     sensitivity = np.zeros(n_params)
-    
+
     # Centered differences: (f(x+h) - f(x-h)) / (2h)
     for j in range(n_params):
         # Forward perturbation
@@ -1671,9 +1664,8 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
     psys.power_injection=power_injection
 
     # retrieve parameters
-    if solve_power_flow:
-        runpf(psys, verbose=False)
-    z0, theta = initialize_system(psys)
+    pf_solution = runpf(psys, verbose=False)
+    z0, theta = initialize_system(psys, pf_solution)
     system_size = z0.shape[0]
     J = preallocate_jacobian(psys)
     F = np.zeros(system_size)
@@ -1838,13 +1830,12 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
             )
             
             # Complete gradient = μᵢ + λᵢ(∂y₀/∂p)
-            complete_gradient = mu_trajectory - dy0_dp
-
-            print(complete_gradient)
+            complete_gradient = mu_trajectory + dy0_dp
             
             results["adjoint_cost"] = float(cost_value[0])
             results["adjoint_gradient_trajectory"] = mu_trajectory  # Just μᵢ
-            results["adjoint_gradient_initial"] = dy0_dp           # λᵢ(∂y₀/∂p)  
+            results["adjoint_gradient_initial"] = dy0_dp           # λᵢ(∂y₀/∂p)
+            results["lambda_final"] = lambda_final
             results["adjoint_gradient_complete"] = complete_gradient # Total
 
 
