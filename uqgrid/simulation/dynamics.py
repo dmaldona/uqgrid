@@ -25,7 +25,7 @@ except ImportError:
     petsc4py = None
     logger.warning("PETSc4py not available. Some functionality will not be available.")
 
-from uqgrid.simulation.config import IntegrationConfig
+from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 from uqgrid.core import Psystem
 from uqgrid.simulation.pflow import runpf, compute_pinj_alt, PowerFlowSolution
 from uqgrid.utils.tools import (
@@ -1538,7 +1538,7 @@ if petsc4py:
             # jacobian to 0 and adding 1 to the diagonal hence keeping the differential
             # part constant (projection to manifold)
             jacobian_beuler(self.J, NDIFFEQ, 0.0)
-            P.setValuesCSR(self.J.indptr, self.J.indices, -self.J.data)
+            P.setValuesCSR(self.J.indptr, self.J.indices, self.J.data)
             P.assemble()
 
             if J != P: J.assemble()
@@ -1638,7 +1638,7 @@ def compute_initial_state_sensitivity(psys, lambda_adjoint, nominal_params, eps=
     
     return sensitivity
 
-def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
+def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationCtx = None) -> dict:
     """Integrate power system dynamics
 
     Args:
@@ -1660,15 +1660,32 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
     power_injection = config.power_injection
     solve_power_flow = config.solve_powerflow_dynamics
 
+
     results = {}
     psys.power_injection=power_injection
 
     # retrieve parameters
     pf_solution = runpf(psys, verbose=False)
     z0, theta = initialize_system(psys, pf_solution)
+
+    # Use context if provided, otherwise fallback to config attributes
+    z0_user = ctx.z0_user if ctx is not None else getattr(config, 'z0_user', None)
+    theta_user = ctx.theta_user if ctx is not None else getattr(config, 'theta_user', None)
+
+    if z0_user is not None:
+        if z0_user.shape[0] != z0.shape[0]:
+            raise ValueError("Provided initial state does not match system size.")
+        z0 = z0_user
+
+    if theta_user is not None:
+        if theta_user.shape[0] != theta.shape[0]:
+            raise ValueError("Provided theta does not match system parameters.")
+        theta = theta_user
+
     system_size = z0.shape[0]
     J = preallocate_jacobian(psys)
     F = np.zeros(system_size)
+
     # calculate nsteps
     h = dt
     if steps > 0:
