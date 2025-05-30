@@ -3,6 +3,7 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Optional, Union, Any
+import scipy.io as scio
 
 def load_simulation_log(file_path: str = 'simulation_log.json') -> Dict:
     """Load the simulation log containing metadata about all scenarios."""
@@ -78,7 +79,10 @@ def load_scenario_data(scenario_id: str, simulation_log: Dict) -> Dict:
     return {
         'history': data['history'],
         'tvec': data['tvec'],
-        'metadata': simulation_log[scenario_id]
+        'metadata': simulation_log[scenario_id],
+        'p_gen_scaled': data['p_gen_scaled'],
+        'p_load_scaled': data['p_load_scaled'],
+        'q_load_scaled': data['q_load_scaled'],
     }
 
 def get_state_timeseries(
@@ -289,7 +293,18 @@ def ComputeTSI():
         for s_idx, scen in enumerate(common_scenarios):
             delta_arr[g_idx, :, s_idx] = delta_dicts[key][scen]['values']
 
-
+     # sampled pg, pl, ql for each scenario 
+    pg_per_scenario = {}
+    pl_per_scenario = {}
+    ql_per_scenario = {}
+    for s_idx, scenario_id in enumerate(common_scenarios):
+        try:
+            scenario_data = load_scenario_data(scenario_id, simulation_log)
+            pg_per_scenario[scenario_id] = scenario_data['p_gen_scaled']
+            pl_per_scenario[scenario_id] = scenario_data['p_load_scaled']
+            ql_per_scenario[scenario_id] = scenario_data['q_load_scaled']
+        except Exception as e:
+            print(f"Error loading scenario {scenario_id}: {e}")
 
     # TSI (scalar) for each scenario 
     tsi_per_scenario = {}
@@ -322,6 +337,9 @@ def ComputeTSI():
     post_data['tsi_ts_per_scenario']=tsi_ts_per_scenario
     post_data['tsi_all']=tsi_all
     post_data['tsi_all_time']=tsi_all_time
+    post_data['pg_per_scenario']=pg_per_scenario
+    post_data['pl_per_scenario']=pl_per_scenario
+    post_data['ql_per_scenario']=ql_per_scenario
 
     print(f'TSI for all scenarios: {tsi_all.shape}')
     print(f'TSI for all time scenarios: {tsi_all_time.shape}')
@@ -353,8 +371,33 @@ def ComputeTSI():
         
     return post_data
 
+def create_training_samples(post_data: Dict):
+    tsi_dict = post_data['tsi_per_scenario']
+    pg_dict  = post_data['pg_per_scenario']
+    pl_dict  = post_data['pl_per_scenario']
+    ql_dict  = post_data['ql_per_scenario']
+
+    scenario_ids = sorted(tsi_dict.keys())
+
+    rows = []
+    for sid in scenario_ids:
+        pg = pg_dict[sid]
+        pl = pl_dict[sid]
+        ql = ql_dict[sid]
+        tsi = np.array([tsi_dict[sid]])
+    
+        row = np.hstack((pg, pl, ql, tsi))
+        rows.append(row)
+
+    Data = np.vstack(rows)
+
+    # save to .mat file
+    print("Save samples to data_record.mat")
+    scio.savemat('data_record.mat', {'Data': Data})
+
 if __name__ == "__main__":
     # (original) compute generator speeds (ω)
     #example_gen1_speed_deviation()
 
-    ComputeTSI()
+    post_data = ComputeTSI()
+    create_training_samples(post_data)
