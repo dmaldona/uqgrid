@@ -11,7 +11,7 @@ from uqgrid.simulation.config   import IntegrationConfig
 from uqgrid.io.parse            import load_psse, add_dyr
 
 
-def generate_load_perturbations(base_p, base_q,
+def generate_perturbations(base_p, base_q,
                                 *,
                                 noise_type="normal", var=0.1,
                                 rng=None, return_noise=False):
@@ -69,17 +69,34 @@ def generate_metadata(scenarios):
 def run_single_scenario(
         base_psys, scenario, scenario_id,
         base_p_load, base_q_load,
-        noise_type="normal", noise_var=0.1):
+        base_p_gen,  base_q_gen,
+        noise_type="normal", noise_var=0.1,
+        balance_generation=False):
 
     psys = copy.deepcopy(base_psys)
 
     #  Draw noise and obtain positive, scaled loads
-    p_scaled, q_scaled, p_noise, q_noise = generate_load_perturbations(
+    pL_scaled, qL_scaled, pL_noise, qL_noise = generate_perturbations(
         base_p_load, base_q_load,
         noise_type=noise_type, var=noise_var,
         return_noise=True)
 
-    psys.set_load_pq(p_scaled, q_scaled)
+    pG_scaled, qG_scaled, pG_noise, qG_noise = generate_perturbations(
+        base_p_gen, base_q_gen,
+        noise_type=noise_type, var=noise_var,
+        return_noise=True)
+
+    if balance_generation:
+        sum_pL = np.sum(pL_scaled)
+        sum_qL = np.sum(qL_scaled)
+        sum_pG = np.sum(pG_scaled)
+        sum_qG = np.sum(qG_scaled)
+
+        if sum_pG != 0: pG_scaled *= (sum_pL / sum_pG)
+        if sum_qG != 0: qG_scaled *= (sum_qL / sum_qG)
+
+    psys.set_load_pq(pL_scaled, qL_scaled)
+    psys.set_gen_pq(pG_scaled, qG_scaled)
 
     psys.add_busfault(scenario["fault_location"],
                       scenario["fault_impedance"], 0.25)
@@ -103,10 +120,12 @@ def run_single_scenario(
         fn,
         history=sim["history"],
         tvec=sim["tvec"],
-        p_scaled=p_scaled,
-        q_scaled=q_scaled,
-        p_noise=p_noise,
-        q_noise=q_noise
+        #  loads
+        p_load_scaled=pL_scaled, q_load_scaled=qL_scaled,
+        p_load_noise =pL_noise,  q_load_noise =qL_noise,
+        #  generators
+        p_gen_scaled =pG_scaled, q_gen_scaled =qG_scaled,
+        p_gen_noise  =pG_noise,  q_gen_noise  =qG_noise,
     )
     return {"file": fn, "diverged": diverged}
 
@@ -114,6 +133,7 @@ def run_single_scenario(
 def run_simulation_driver_batched(
         raw, dyr, scenarios_metadata,
         *, noise_type="normal", noise_var=0.1,
+        balance_generation=True, 
         n_jobs=-1, batch_size=10):
 
     scenario_ids   = list(scenarios_metadata.keys())
@@ -129,10 +149,12 @@ def run_simulation_driver_batched(
         base_psys.export_state_metadata()
 
         base_p, base_q = base_psys.get_load_pq()
+        base_pG, base_qG = base_psys.get_gen_pq()
 
         batch_args = [
             (base_psys, scenarios_metadata[sid], sid,
-             base_p, base_q, noise_type, noise_var)
+             base_p, base_q, base_pG, base_qG, noise_type, noise_var, 
+             balance_generation)
             for sid in batch_ids
         ]
 
@@ -171,12 +193,16 @@ def main():
     metadata  = generate_metadata(scenarios)
 
     # noise settings
+    #TODO Separate the noise in two parts, one for generators and one for loads
     noise_type = "normal"   # "normal", "uniform", "none", 
     noise_var  = 0.10       # variance of the chosen distribution TODO: need to change this to be more flexible
+
+    balance_generation = False
 
     run_simulation_driver_batched(
         raw, dyr, metadata,
         noise_type=noise_type, noise_var=noise_var,
+        balance_generation=balance_generation,
         n_jobs=5, batch_size=10)
 
 

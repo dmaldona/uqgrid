@@ -727,6 +727,38 @@ class Psystem:
             load.pload = p_load[i]
             load.qload = q_load[i]
 
+
+    def get_gen_pq(self):
+        """Returns two numpy arrays containing the real and reactive power generator values.
+        
+        Returns:
+            tuple: (p_gen, q_gen) where each is a numpy array of length ngens
+        """
+        import numpy as np
+        p_gen = np.zeros(self.ngens)
+        q_gen = np.zeros(self.ngens)
+        
+        for i, gen in enumerate(self.gens):
+            p_gen[i] = gen.psch
+            q_gen[i] = gen.qsch
+            
+        return p_gen, q_gen
+
+    def set_gen_pq(self, p_gen, q_gen):
+        """Sets the real and reactive power generator values.
+        
+        Args:
+            p_gen (numpy.ndarray): Array of real power generator values (in per unit)
+            q_gen (numpy.ndarray): Array of reactive power generator values (in per unit)
+        """
+        import numpy as np
+        assert len(p_gen) == self.ngens, f"p_gen length ({len(p_gen)}) must match ngens ({self.ngens})"
+        assert len(q_gen) == self.ngens, f"q_gen length ({len(q_gen)}) must match ngens ({self.ngens})"
+        
+        for i, gen in enumerate(self.gens):
+            gen.psch = p_gen[i]
+            gen.qsch = q_gen[i]
+
     def network_distance(self, bus_fr, bus_to, distance="shortest_path"):
 
         if distance == "shortest_path":
