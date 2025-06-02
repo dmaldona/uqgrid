@@ -1699,28 +1699,12 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
 
     # Integration of D.A.E
     z = z0
+
     # Sensitivity parameters
     nparam = psys.nloads # For now, we only suport sensitivities of loads
-    nmixed = int((nparam**2 - nparam)/2)
-    
-    # sensitivity variables
-    if comp_sens:
-        history_u = np.zeros((system_size, nparam, nsteps))
-        history_v = np.zeros((system_size, nparam, nsteps))
-        history_m = np.zeros((system_size, nmixed, nsteps))
-        u = np.zeros((system_size, nparam))
-        v = np.zeros((system_size, nparam))
-        m = np.zeros((system_size, nmixed))
-        Hess = preallocate_hessian(psys)
-        #initialize_sensitivities(volt, Pinj, psys, z, u, v)
-    else:
-        history_u = None
-        history_v = None
-        history_m = None
-        u = None
-        v = None
-        m = None
-        Hess = None
+
+    if comp_sens and not petsc:
+        raise ValueError("Sensitivities can only be computed with PETSc.")
 
     if petsc4py and petsc:
         if verbose: print("Convert objects to PETSc format")
@@ -1733,7 +1717,6 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
         Jp.setPreallocationCSR(csr)
         Jp.assemblyBegin()
         Jp.assemblyEnd()
-
 
         nparam = 2 * psys.nloads
         Jp_struct = preallocate_jacobian_parameters(psys)
@@ -1842,9 +1825,11 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
             nominal_params = np.zeros(2 * psys.nloads)
             nominal_params[::2] = p_loads   # P values at even indices
             nominal_params[1::2] = q_loads  # Q values at odd indices
+            print("We got here")
             dy0_dp = compute_initial_state_sensitivity(
             psys, lambda_final, nominal_params
             )
+            print("but not here")
             
             # Complete gradient = μᵢ + λᵢ(∂y₀/∂p)
             complete_gradient = mu_trajectory + dy0_dp
@@ -1854,8 +1839,6 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
             results["adjoint_gradient_initial"] = dy0_dp           # λᵢ(∂y₀/∂p)
             results["lambda_final"] = lambda_final
             results["adjoint_gradient_complete"] = complete_gradient # Total
-
-
 
         # Cast history to numpy arrays
         history = np.transpose(np.array(historyp))
@@ -1872,12 +1855,12 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
                                 psys,
                                 F,
                                 J,
-                                Hess,
+                                None,
                                 verbose=verbose,
                                 fsolve=fsolve,
-                                uold=u,
-                                vold=v,
-                                mold=m)
+                                uold=None,
+                                vold=None,
+                                mold=None)
             history[:, i] = np.copy(z)
 
             if i == step_on:
@@ -1890,7 +1873,7 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
                                     psys,
                                     F,
                                     J,
-                                    Hess,
+                                    None,
                                     verbose=verbose,
                                     fsolve=True,
                                     uold=None,
@@ -1906,17 +1889,12 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
                                     psys,
                                     F,
                                     J,
-                                    Hess,
+                                    None,
                                     verbose=verbose,
                                     fsolve=True,
                                     uold=None,
                                     vold=None,
                                     mold=None)
-
-            if comp_sens:
-                history_u[:, :, i] = np.copy(u)
-                history_v[:, :, i] = np.copy(v)
-                history_m[:, :, i] = np.copy(m)
 
         # if tend < toff we remove fault before exiting
         if i < step_off:
@@ -1925,8 +1903,5 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
     # pack results into dict
     results["tvec"] = tvec
     results["history"] = history
-    results["history_u"] = history_u
-    results["history_v"] = history_v
-    results["history_m"] = history_m
 
     return results
