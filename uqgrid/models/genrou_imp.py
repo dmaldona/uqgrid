@@ -26,16 +26,27 @@ class GenGENROU(DynamicGenerator):
         self.ratio = 1.0
 
         state_list = [
-            'e_qp', 'e_dp', 'phi_1d', 'phi_2q', 'w', 'delta', 'v_q', 'v_d',
-            'i_q', 'i_d'
+            'e_qp',
+            'e_dp',
+            'phi_1d',
+            'phi_2q',
+            'w',
+            'delta',
+
+            'v_q',
+            'v_d',
+            'i_q',
+            'i_d'
         ]
 
         par_list = [
             'x_d', 'x_q', 'x_dp', 'x_qp', 'x_ddp', 'x_qdp', 'xl', 'H', 'D',
             'T_d0p', 'T_q0p', 'T_d0dp', 'T_q0dp'
         ]
-
-        DynamicGenerator.__init__(self, id_tag, 12, 6, 4, len(par_list),
+        INIT_DIM = 12
+        DYN_DIM = 8
+        ALG_DIM = 4
+        DynamicGenerator.__init__(self, id_tag, INIT_DIM, DYN_DIM, ALG_DIM, len(par_list),
                                   state_list)
 
     def set_ratio(self, ratio):
@@ -213,9 +224,10 @@ class GenGENROU(DynamicGenerator):
         if self.exciter: self.exciter.e_fd0 = sol.x[10]
         if self.governor: self.governor.p_m0 = sol.x[11]
 
-        self.initialized = True
         x[self.dif_ptr:self.dif_ptr + 6] = sol.x[0:6]
+        x[self.dif_ptr + 6:self.dif_ptr + 8] = sol.x[10:12]
         y[self.alg_ptr:self.alg_ptr + 4] = sol.x[6:10]
+        self.initialized = True
 
         return None
 
@@ -512,8 +524,8 @@ def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
     pm_idx = ctrl_idx[0]
     efd_idx = ctrl_idx[1]
     
-    p_m = ctrl_var[0]
-    e_fd = ctrl_var[1]
+    e_fd = z[dp + 6]
+    p_m = z[dp + 7]
 
     if efd_idx >= 0:
         e_fd = z[efd_idx]
