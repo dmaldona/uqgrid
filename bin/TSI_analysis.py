@@ -379,6 +379,18 @@ def create_training_samples(post_data: Dict):
 
     scenario_ids = sorted(tsi_dict.keys())
 
+    first_sid = scenario_ids[0]
+    pg_len = len(pg_dict[first_sid])
+    pl_len = len(pl_dict[first_sid])
+    ql_len = len(ql_dict[first_sid])
+
+    col_name = (
+        [f'pg_{i+1}' for i in range(pg_len)] +
+        [f'pl_{i+1}' for i in range(pl_len)] +
+        [f'ql_{i+1}' for i in range(ql_len)] +
+        ['tsi']
+    )
+
     rows = []
     for sid in scenario_ids:
         pg = pg_dict[sid]
@@ -393,7 +405,7 @@ def create_training_samples(post_data: Dict):
 
     # save to .mat file
     print("Save samples to data_record.mat")
-    scio.savemat('data_record.mat', {'Data': Data})
+    scio.savemat('data_record.mat', {'Data': Data, 'col_name': col_name})
 
 if __name__ == "__main__":
     # (original) compute generator speeds (ω)
