@@ -1825,11 +1825,9 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
             nominal_params = np.zeros(2 * psys.nloads)
             nominal_params[::2] = p_loads   # P values at even indices
             nominal_params[1::2] = q_loads  # Q values at odd indices
-            print("We got here")
             dy0_dp = compute_initial_state_sensitivity(
             psys, lambda_final, nominal_params
             )
-            print("but not here")
             
             # Complete gradient = μᵢ + λᵢ(∂y₀/∂p)
             complete_gradient = mu_trajectory + dy0_dp
