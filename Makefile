@@ -13,20 +13,20 @@ help:
 
 # Installation
 install:
-	python -m pip install -e .
+	python3 -m pip install -e .
 
 install-dev:
-	python -m pip install -e ".[dev]"
+	python3 -m pip install -e ".[dev]"
 
 install-petsc:
-	python -m pip install -e ".[petsc]"
+	python3 -m pip install -e ".[petsc]"
 
 # Testing
 test:
-	python -m pytest
+	python3 -m pytest
 
 test-fast:
-	python -m pytest -m "not adjoint"
+	python3 -m pytest -m "not adjoint"
 
 # Clean up
 clean:
