@@ -17,7 +17,7 @@ def load_state_metadata(file_path: str = 'state_metadata.json') -> Dict:
 
 def filter_scenarios(
     simulation_log: Dict, 
-    base_load: Optional[float] = None, 
+    sample_idx: Optional[int] = None,
     fault_location: Optional[int] = None,
     fault_impedance: Optional[float] = None,
     diverged: Optional[bool] = None
@@ -28,7 +28,7 @@ def filter_scenarios(
     for scenario_id, data in simulation_log.items():
         match = True
         
-        if base_load is not None and data['base_load'] != base_load:
+        if sample_idx is not None and data.get('sample_idx') != sample_idx:
             match = False
         if fault_location is not None and data['fault_location'] != fault_location:
             match = False
@@ -45,7 +45,7 @@ def filter_scenarios(
 def find_state_index(
     state_metadata: Dict, 
     model: Optional[str] = None, 
-    device_id: Optional[str] = None,
+    device_number: Optional[str] = None,
     bus_num: Optional[int] = None,
     state_name: Optional[str] = None
 ) -> List[int]:
@@ -57,7 +57,7 @@ def find_state_index(
         
         if model is not None and data.get('model') != model:
             match = False
-        if device_id is not None and str(data.get('device_id')) != str(device_id):
+        if device_number is not None and str(data.get('device_number')) != str(device_number):
             match = False
         if bus_num is not None and data.get('bus_num') != bus_num:
             match = False
@@ -103,10 +103,10 @@ def get_state_timeseries_all(
     simulation_log: Dict,
     state_metadata: Dict,
     model: Optional[str] = None,
-    device_id: Optional[str] = None,
+    device_number: Optional[str] = None,
     bus_num: Optional[int] = None,
     state_name: Optional[str] = None,
-    base_load: Optional[float] = None,
+    sample_idx: Optional[int] = None,
     fault_location: Optional[int] = None,
     fault_impedance: Optional[float] = None,
     diverged: Optional[bool] = False
@@ -115,7 +115,7 @@ def get_state_timeseries_all(
     # Filter scenarios
     filtered_scenarios = filter_scenarios(
         simulation_log, 
-        base_load, 
+        sample_idx,
         fault_location,
         fault_impedance,
         diverged
@@ -125,13 +125,13 @@ def get_state_timeseries_all(
     state_indices = find_state_index(
         state_metadata, 
         model, 
-        device_id, 
+        device_number, 
         bus_num,
         state_name
     )
     
     if not state_indices:
-        raise ValueError(f"No states found matching criteria: model={model}, device_id={device_id}, state_name={state_name}")
+        raise ValueError(f"No states found matching criteria: model={model}, device_number={device_number}, state_name={state_name}")
     
     state_idx = state_indices[0]  # Take the first match if multiple
     
@@ -157,7 +157,7 @@ def plot_state_comparison(
     title: str = None,
     xlabel: str = 'Time (s)',
     ylabel: str = None,
-    legend_key: str = 'base_load'
+    legend_key: str = 'fault_location'
 ):
     """Plot comparison of state variables from multiple scenarios."""
     plt.figure(figsize=(10, 6))
@@ -194,7 +194,7 @@ def example_gen1_speed_deviation():
         simulation_log,
         state_metadata,
         model='GenGENROU',
-        device_id='1',
+        device_number='1',
         state_name='w',
         diverged=False
     )
@@ -216,23 +216,23 @@ def example_gen1_speed_deviation():
         simulation_log,
         state_metadata,
         model='GenGENROU',
-        device_id='1',
+        device_number='1',
         state_name='w',
-        base_load=1.0,
+        sample_idx=1,
         diverged=False
     )
     
     plt = plot_state_comparison(
         results_filtered,
-        title='Generator 1 Speed Deviation (Load Level = 1.0)',
+        title='Generator 1 Speed Deviation (Sample Index = 1)',
         ylabel='Speed Deviation (pu)',
         legend_key='fault_location'
     )
     
-    plt.savefig('gen1_speed_comparison_load1.png')
+    plt.savefig('gen1_speed_comparison_sample1.png')
     
     print(f"Found {len(results)} non-diverged scenarios")
-    print(f"Found {len(results_filtered)} non-diverged scenarios at base_load=1.0")
+    print(f"Found {len(results_filtered)} non-diverged scenarios at sample_idx=1")
     
     return results
 
@@ -241,9 +241,9 @@ def ComputeTSI():
     simulation_log = load_simulation_log()
     state_metadata = load_state_metadata()
     
-    # 1) find all (device_id, bus_num) pairs for GenGENROU δ-states
+    # 1) find all (device_number, bus_num) pairs for GenGENROU δ-states
     gen_pairs = {
-        (str(data['device_id']), data['bus_num'])
+        (str(data['device_number']), data['bus_num'])  # Note: device_number should work with new metadata
         for data in state_metadata.values()
         if data.get('model')     == 'GenGENROU'
         and data.get('state_name') == 'delta'
@@ -254,19 +254,19 @@ def ComputeTSI():
 
     # 2) pull the raw dict for each generator
     delta_dicts = {}
-    for device_id, bus_num in gen_list:
-        print(f"⟳ loading δ for GenGENROU device {device_id} on bus {bus_num}")
+    for device_number, bus_num in gen_list:
+        print(f"⟳ loading δ for GenGENROU device {device_number} on bus {bus_num}")
         d = get_state_timeseries_all(
             simulation_log,
             state_metadata,
             model='GenGENROU',
-            device_id=device_id,
+            device_number=device_number,
             bus_num=bus_num,
             state_name='delta',
             diverged=False
         )
 
-        delta_dicts[(bus_num, device_id)] = d
+        delta_dicts[(bus_num, device_number)] = d
 
     if not delta_dicts:
         raise RuntimeError("No generator deltas were loaded!")
@@ -278,7 +278,7 @@ def ComputeTSI():
         raise RuntimeError("No scenario is common to all generators!")
 
     # pick one generator‐key and one scenario 
-    first_key      = next(iter(delta_dicts))                # t(bus_num, device_id)
+    first_key      = next(iter(delta_dicts))                # t(bus_num, device_number)
     first_scenario = next(iter(delta_dicts[first_key]))     # scenario_id string
 
     # get tvec safely
