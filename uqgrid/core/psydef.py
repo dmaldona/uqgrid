@@ -834,7 +834,8 @@ class Psystem:
         # Process differential states
         for device in self.devices:
             model_name = device.__class__.__name__
-            device_id = device.id_tag
+            device_number = device.ndev
+            bus = self.buses[device.bus].id
             
             # Handle differential states
             for i in range(device.dif_dim):
@@ -847,17 +848,18 @@ class Psystem:
                 metadata[str(state_idx)] = {
                     'type': 'Differential',
                     'model': model_name,
-                    'device_id': device_id,
+                    'device_number': device_number,
+                    'bus_num': self.buses[device.bus].id,
                     'state_name': state_name,
-                    'description': f"{model_name} {device_id} {state_name}",
-                    'bus_num': self.buses[device.bus].id
+                    'description': f"{model_name} {device_number} {state_name}"
                 }
                 state_idx += 1
         
         # Process algebraic states
         for device in self.devices:
             model_name = device.__class__.__name__
-            device_id = device.id_tag
+            device_number = device.ndev
+            bus = self.buses[device.bus].id
             
             # Handle algebraic states
             for i in range(device.alg_dim):
@@ -870,9 +872,10 @@ class Psystem:
                 metadata[str(state_idx)] = {
                     'type': 'Algebraic',
                     'model': model_name,
-                    'device_id': device_id,
+                    'device_number': device_number,
+                    'bus_num': bus,
                     'state_name': state_name,
-                    'description': f"{model_name} {device_id} {state_name}"
+                    'description': f"{model_name} {device_number} {state_name}"
                 }
                 state_idx += 1
         
