@@ -175,7 +175,7 @@ def main():
     PowerGridModel = "IEEE-9" #"ACTIVSg200" #  "IEEE-39" #  "ACTIVSg500" #
 
     # Scenario sampling configuration
-    SAMPLES_PER_FAULT_LOCATION = 3     # Samples per fault location
+    SAMPLES_PER_FAULT_LOCATION = 10     # Samples per fault location
     FAULT_IMPEDANCES = [0.0001]         # Fault impedance values [p.u]
     N_JOBS = 10
     BATCH_SIZE = 10

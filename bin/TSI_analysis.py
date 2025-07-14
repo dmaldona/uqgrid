@@ -75,7 +75,7 @@ def load_scenario_data(scenario_id: str, simulation_log: Dict) -> Dict:
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Scenario data file not found: {file_path}")
     
-    data = np.load(file_path)
+    data = np.load(file_path, mmap_mode='r')
     return {
         'history': data['history'],
         'tvec': data['tvec'],
@@ -96,7 +96,7 @@ def get_state_timeseries(
     if history is None:
         return np.array([]), np.array([])
     
-    state_values = history[state_idx, :]
+    state_values = history[state_idx, :].copy()
     return tvec, state_values
 
 def get_state_timeseries_all(
