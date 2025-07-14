@@ -172,10 +172,10 @@ def run_simulation_driver_batched(
     return simulation_log
 
 def main():
-    PowerGridModel = "IEEE-9"
+    PowerGridModel = "IEEE-9" #"ACTIVSg200" #  "IEEE-39" #  "ACTIVSg500" #
 
     # Scenario sampling configuration
-    SAMPLES_PER_FAULT_LOCATION = 10     # Samples per fault location
+    SAMPLES_PER_FAULT_LOCATION = 3     # Samples per fault location
     FAULT_IMPEDANCES = [0.0001]         # Fault impedance values [p.u]
     N_JOBS = 10
     BATCH_SIZE = 10
@@ -188,6 +188,14 @@ def main():
         raw = "data/IEEE39_v33.raw"
         dyr = "data/IEEE39_gov.dyr"
         n_bus = 39
+    elif PowerGridModel == "ACTIVSg200":
+        raw = "data/ACTIVSg200.raw"
+        dyr = "data/ACTIVSg200.dyr"
+        n_bus = 49
+    elif PowerGridModel == "ACTIVSg500":
+        raw = "data/ACTIVSg500.raw"
+        dyr = "data/ACTIVSg500.dyr"
+        n_bus = 90
     else:
         raise RuntimeError(f"{PowerGridModel} is an invalid model!")
 
