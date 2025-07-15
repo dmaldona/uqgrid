@@ -17,7 +17,7 @@ def load_state_metadata(file_path: str = 'state_metadata.json') -> Dict:
 
 def filter_scenarios(
     simulation_log: Dict, 
-    base_load: Optional[float] = None, 
+    sample_idx: Optional[int] = None,
     fault_location: Optional[int] = None,
     fault_impedance: Optional[float] = None,
     diverged: Optional[bool] = None
@@ -28,7 +28,7 @@ def filter_scenarios(
     for scenario_id, data in simulation_log.items():
         match = True
         
-        if base_load is not None and data['base_load'] != base_load:
+        if sample_idx is not None and data.get('sample_idx') != sample_idx:
             match = False
         if fault_location is not None and data['fault_location'] != fault_location:
             match = False
@@ -45,7 +45,7 @@ def filter_scenarios(
 def find_state_index(
     state_metadata: Dict, 
     model: Optional[str] = None, 
-    device_id: Optional[str] = None,
+    device_number: Optional[str] = None,
     bus_num: Optional[int] = None,
     state_name: Optional[str] = None
 ) -> List[int]:
@@ -57,7 +57,7 @@ def find_state_index(
         
         if model is not None and data.get('model') != model:
             match = False
-        if device_id is not None and str(data.get('device_id')) != str(device_id):
+        if device_number is not None and str(data.get('device_number')) != str(device_number):
             match = False
         if bus_num is not None and data.get('bus_num') != bus_num:
             match = False
@@ -75,7 +75,7 @@ def load_scenario_data(scenario_id: str, simulation_log: Dict) -> Dict:
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Scenario data file not found: {file_path}")
     
-    data = np.load(file_path)
+    data = np.load(file_path, mmap_mode='r')
     return {
         'history': data['history'],
         'tvec': data['tvec'],
@@ -96,17 +96,17 @@ def get_state_timeseries(
     if history is None:
         return np.array([]), np.array([])
     
-    state_values = history[state_idx, :]
+    state_values = history[state_idx, :].copy()
     return tvec, state_values
 
 def get_state_timeseries_all(
     simulation_log: Dict,
     state_metadata: Dict,
     model: Optional[str] = None,
-    device_id: Optional[str] = None,
+    device_number: Optional[str] = None,
     bus_num: Optional[int] = None,
     state_name: Optional[str] = None,
-    base_load: Optional[float] = None,
+    sample_idx: Optional[int] = None,
     fault_location: Optional[int] = None,
     fault_impedance: Optional[float] = None,
     diverged: Optional[bool] = False
@@ -115,7 +115,7 @@ def get_state_timeseries_all(
     # Filter scenarios
     filtered_scenarios = filter_scenarios(
         simulation_log, 
-        base_load, 
+        sample_idx,
         fault_location,
         fault_impedance,
         diverged
@@ -125,13 +125,13 @@ def get_state_timeseries_all(
     state_indices = find_state_index(
         state_metadata, 
         model, 
-        device_id, 
+        device_number, 
         bus_num,
         state_name
     )
     
     if not state_indices:
-        raise ValueError(f"No states found matching criteria: model={model}, device_id={device_id}, state_name={state_name}")
+        raise ValueError(f"No states found matching criteria: model={model}, device_number={device_number}, state_name={state_name}")
     
     state_idx = state_indices[0]  # Take the first match if multiple
     
@@ -157,7 +157,7 @@ def plot_state_comparison(
     title: str = None,
     xlabel: str = 'Time (s)',
     ylabel: str = None,
-    legend_key: str = 'base_load'
+    legend_key: str = 'fault_location'
 ):
     """Plot comparison of state variables from multiple scenarios."""
     plt.figure(figsize=(10, 6))
@@ -194,7 +194,7 @@ def example_gen1_speed_deviation():
         simulation_log,
         state_metadata,
         model='GenGENROU',
-        device_id='1',
+        device_number='1',
         state_name='w',
         diverged=False
     )
@@ -216,23 +216,23 @@ def example_gen1_speed_deviation():
         simulation_log,
         state_metadata,
         model='GenGENROU',
-        device_id='1',
+        device_number='1',
         state_name='w',
-        base_load=1.0,
+        sample_idx=1,
         diverged=False
     )
     
     plt = plot_state_comparison(
         results_filtered,
-        title='Generator 1 Speed Deviation (Load Level = 1.0)',
+        title='Generator 1 Speed Deviation (Sample Index = 1)',
         ylabel='Speed Deviation (pu)',
         legend_key='fault_location'
     )
     
-    plt.savefig('gen1_speed_comparison_load1.png')
+    plt.savefig('gen1_speed_comparison_sample1.png')
     
     print(f"Found {len(results)} non-diverged scenarios")
-    print(f"Found {len(results_filtered)} non-diverged scenarios at base_load=1.0")
+    print(f"Found {len(results_filtered)} non-diverged scenarios at sample_idx=1")
     
     return results
 
@@ -241,111 +241,114 @@ def ComputeTSI():
     simulation_log = load_simulation_log()
     state_metadata = load_state_metadata()
     
-    # 1) find all (device_id, bus_num) pairs for GenGENROU δ-states
+    # 1) find all (device_number, bus_num) pairs for GenGENROU δ-states
     gen_pairs = {
-        (str(data['device_id']), data['bus_num'])
+        (str(data['device_number']), data['bus_num'])
         for data in state_metadata.values()
-        if data.get('model')     == 'GenGENROU'
+        if data.get('model') == 'GenGENROU'
         and data.get('state_name') == 'delta'
     }
 
     # sort so results are deterministic
-    gen_list = sorted(gen_pairs, key=lambda x: (x[1], x[0]))  # sort by bus, then device
+    gen_list = sorted(gen_pairs, key=lambda x: (x[1], x[0]))
 
-    # 2) pull the raw dict for each generator
+    # 2) Load each generator's data ONCE (like original), but don't store all in 3D array
+    print("⟳ Loading generator delta data...")
     delta_dicts = {}
-    for device_id, bus_num in gen_list:
-        print(f"⟳ loading δ for GenGENROU device {device_id} on bus {bus_num}")
+    for device_number, bus_num in gen_list:
+        print(f"⟳ loading δ for GenGENROU device {device_number} on bus {bus_num}")
         d = get_state_timeseries_all(
             simulation_log,
             state_metadata,
             model='GenGENROU',
-            device_id=device_id,
+            device_number=device_number,
             bus_num=bus_num,
             state_name='delta',
             diverged=False
         )
-
-        delta_dicts[(bus_num, device_id)] = d
+        delta_dicts[(bus_num, device_number)] = d
 
     if not delta_dicts:
         raise RuntimeError("No generator deltas were loaded!")
 
     # find common scenarios
-    scenario_sets    = [ set(d.keys()) for d in delta_dicts.values() ]
+    scenario_sets = [set(d.keys()) for d in delta_dicts.values()]
     common_scenarios = sorted(set.intersection(*scenario_sets))
     if not common_scenarios:
         raise RuntimeError("No scenario is common to all generators!")
 
-    # pick one generator‐key and one scenario 
-    first_key      = next(iter(delta_dicts))                # t(bus_num, device_id)
-    first_scenario = next(iter(delta_dicts[first_key]))     # scenario_id string
+    print(f"Found {len(common_scenarios)} common scenarios")
 
-    # get tvec safely
+    # Get dimensions
+    first_key = next(iter(delta_dicts))
+    first_scenario = next(iter(delta_dicts[first_key]))
     tvec = delta_dicts[first_key][first_scenario]['tvec']
-    T    = len(tvec)
-    G    = len(delta_dicts)
-    S    = len(common_scenarios)
+    T = len(tvec)
+    G = len(delta_dicts)
 
-    # build 3D δ-array
-    delta_arr = np.zeros((G, T, S))
-    for g_idx, key in enumerate(delta_dicts):
-        for s_idx, scen in enumerate(common_scenarios):
-            delta_arr[g_idx, :, s_idx] = delta_dicts[key][scen]['values']
-
-     # sampled pg, pl, ql for each scenario 
+    # Initialize result dictionaries
+    tsi_per_scenario = {}
+    tsi_ts_per_scenario = {}
     pg_per_scenario = {}
     pl_per_scenario = {}
     ql_per_scenario = {}
+
+    # 3) Process scenarios one by one (memory efficient)
+    print("⟳ Processing scenarios...")
     for s_idx, scenario_id in enumerate(common_scenarios):
+        if s_idx % 100 == 0:  # Progress indicator
+            print(f"   Processing scenario {s_idx + 1}/{len(common_scenarios)}")
+        
+        # Load scenario data once for pg, pl, ql
         try:
             scenario_data = load_scenario_data(scenario_id, simulation_log)
             pg_per_scenario[scenario_id] = scenario_data['p_gen_scaled']
             pl_per_scenario[scenario_id] = scenario_data['p_load_scaled']
             ql_per_scenario[scenario_id] = scenario_data['q_load_scaled']
+            del scenario_data  # Free immediately
         except Exception as e:
             print(f"Error loading scenario {scenario_id}: {e}")
+            continue
 
-    # TSI (scalar) for each scenario 
-    tsi_per_scenario = {}
-    for s_idx, scen in enumerate(common_scenarios):
-        spread_ts   = delta_arr[:, :, s_idx].max(axis=0) - delta_arr[:, :, s_idx].min(axis=0)
-        Delta_max       = spread_ts.max()                      # maximum spread (radians) over time
-        tsi_scalar  = (2*np.pi - Delta_max) / (2*np.pi + Delta_max) * 100
-        tsi_per_scenario[scen] = tsi_scalar
+        # Extract delta values for this scenario from pre-loaded data
+        delta_values = np.zeros((G, T))
+        for g_idx, key in enumerate(delta_dicts):
+            delta_values[g_idx, :] = delta_dicts[key][scenario_id]['values']
 
-    # TSI time-series for each scenario 
-    tsi_ts_per_scenario = {}
-    for s_idx, scen in enumerate(common_scenarios):
-        spread_ts = delta_arr[:, :, s_idx].max(axis=0) - delta_arr[:, :, s_idx].min(axis=0)
-        tsi_ts    = (2*np.pi - spread_ts) / (2*np.pi + spread_ts) * 100  # shape (T,)
-        tsi_ts_per_scenario[scen] = tsi_ts
+        # Compute TSI for this scenario only
+        spread_ts = delta_values.max(axis=0) - delta_values.min(axis=0)
+        Delta_max = spread_ts.max()
+        tsi_scalar = (2*np.pi - Delta_max) / (2*np.pi + Delta_max) * 100
+        tsi_ts = (2*np.pi - spread_ts) / (2*np.pi + spread_ts) * 100
 
-    # TSI for all scenarios (scalar array) 
-    tsi_all        = np.array([tsi_per_scenario[sc] for sc in common_scenarios])  # shape (S,) in the same order
+        tsi_per_scenario[scenario_id] = tsi_scalar
+        tsi_ts_per_scenario[scenario_id] = tsi_ts
 
-    # TSI time-series for all scenarios (2D array)
-    # shape (S, T), row s is the time-series for scenario common_scenarios
-    tsi_all_time   = np.vstack([tsi_ts_per_scenario[sc] for sc in common_scenarios])
+        # Free memory for this scenario
+        del delta_values, spread_ts, tsi_ts
 
-    #  tsi_per_scenario    : dict { scenario_id -> scalar TSI }
-    #  tsi_ts_per_scenario : dict { scenario_id -> array of TSI over time }
-    #  tsi_all             : np.ndarray, shape (S,), all scalar TSI in order
-    #  tsi_all_time        : np.ndarray, shape (S, T), all TSI time-series in order   
-    post_data={}
-    post_data['tsi_per_scenario']=tsi_per_scenario
-    post_data['tsi_ts_per_scenario']=tsi_ts_per_scenario
-    post_data['tsi_all']=tsi_all
-    post_data['tsi_all_time']=tsi_all_time
-    post_data['pg_per_scenario']=pg_per_scenario
-    post_data['pl_per_scenario']=pl_per_scenario
-    post_data['ql_per_scenario']=ql_per_scenario
+    # Clear the delta_dicts to free memory before creating final arrays
+    del delta_dicts
+
+    # 4) Create final arrays  
+    tsi_all = np.array([tsi_per_scenario[sc] for sc in common_scenarios])
+    tsi_all_time = np.vstack([tsi_ts_per_scenario[sc] for sc in common_scenarios])
+
+    # Package results
+    post_data = {}
+    post_data['tsi_per_scenario'] = tsi_per_scenario
+    post_data['tsi_ts_per_scenario'] = tsi_ts_per_scenario
+    post_data['tsi_all'] = tsi_all
+    post_data['tsi_all_time'] = tsi_all_time
+    post_data['pg_per_scenario'] = pg_per_scenario
+    post_data['pl_per_scenario'] = pl_per_scenario
+    post_data['ql_per_scenario'] = ql_per_scenario
 
     print(f'TSI for all scenarios: {tsi_all.shape}')
     print(f'TSI for all time scenarios: {tsi_all_time.shape}')
     
+    # Plotting code (unchanged)
     try:
-        # Plotting the TSI
         import seaborn as sns
         plt.figure(figsize=(10,5))
         plt.subplot(1,2,1)
@@ -360,7 +363,6 @@ def ComputeTSI():
         for i in range(2):
             plt.subplot(1,2,i+1)
             plt.axvline(0, color='k', ls='--', lw=1.5)  
-
             plt.text(-1, plt.ylim()[1] * 0.95, 'unstable', ha='right', va='top', fontsize=10)
             plt.text(1, plt.ylim()[1] * 0.95, 'stable', ha='left', va='top', fontsize=10)
 

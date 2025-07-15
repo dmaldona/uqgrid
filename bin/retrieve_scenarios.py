@@ -16,9 +16,9 @@ def load_state_metadata(file_path: str = 'state_metadata.json') -> Dict:
 
 def filter_scenarios(
     simulation_log: Dict, 
-    base_load: Optional[float] = None, 
     fault_location: Optional[int] = None,
     fault_impedance: Optional[float] = None,
+    sample_idx: Optional[int] = None,
     diverged: Optional[bool] = None
 ) -> Dict:
     """Filter scenarios based on criteria."""
@@ -27,11 +27,11 @@ def filter_scenarios(
     for scenario_id, data in simulation_log.items():
         match = True
         
-        if base_load is not None and data['base_load'] != base_load:
-            match = False
         if fault_location is not None and data['fault_location'] != fault_location:
             match = False
         if fault_impedance is not None and data['fault_impedance'] != fault_impedance:
+            match = False
+        if sample_idx is not None and data['sample_idx'] != sample_idx:
             match = False
         if diverged is not None and data['diverged'] != diverged:
             match = False
@@ -44,7 +44,7 @@ def filter_scenarios(
 def find_state_index(
     state_metadata: Dict, 
     model: Optional[str] = None, 
-    device_id: Optional[str] = None,
+    device_number: Optional[str] = None,
     state_name: Optional[str] = None,
     bus_num: Optional[int] = None
 ) -> List[int]:
@@ -56,7 +56,7 @@ def find_state_index(
         
         if model is not None and data.get('model') != model:
             match = False
-        if device_id is not None and str(data.get('device_id')) != str(device_id):
+        if device_number is not None and str(data.get('device_number')) != str(device_number):
             match = False
         if state_name is not None and data.get('state_name') != state_name:
             match = False
@@ -99,21 +99,21 @@ def get_state_timeseries_all(
     simulation_log: Dict,
     state_metadata: Dict,
     model: Optional[str] = None,
-    device_id: Optional[str] = None,
+    device_number: Optional[str] = None,
     state_name: Optional[str] = None,
     bus_num: Optional[int] = None,
-    base_load: Optional[float] = None,
     fault_location: Optional[int] = None,
     fault_impedance: Optional[float] = None,
+    sample_idx: Optional[int] = None,
     diverged: Optional[bool] = False
 ) -> Dict[str, Dict[str, Union[np.ndarray, Any]]]:
     """Extract a state variable from multiple scenarios with filtering."""
     # Filter scenarios
     filtered_scenarios = filter_scenarios(
         simulation_log, 
-        base_load, 
         fault_location,
         fault_impedance,
+        sample_idx,
         diverged
     )
     
@@ -121,7 +121,7 @@ def get_state_timeseries_all(
     state_indices = find_state_index(
         state_metadata, 
         model, 
-        device_id, 
+        device_number, 
         state_name,
         bus_num
     )
@@ -129,7 +129,7 @@ def get_state_timeseries_all(
     if not state_indices:
         criteria = {k: v for k, v in {
             "model": model, 
-            "device_id": device_id, 
+            "device_number": device_number, 
             "state_name": state_name,
             "bus_num": bus_num
         }.items() if v is not None}
@@ -160,7 +160,7 @@ def plot_state_comparison(
     title: str = None,
     xlabel: str = 'Time (s)',
     ylabel: str = None,
-    legend_key: str = 'base_load'
+    legend_key: str = 'fault_location'  # Changed from 'base_load' to 'fault_location'
 ):
     """Plot comparison of state variables from multiple scenarios."""
     plt.figure(figsize=(10, 6))
@@ -245,112 +245,101 @@ def get_states_by_bus(
     
     return results
 
-# Example usage
-def example_gen1_speed_deviation():
-    """Example that extracts generator 1 speed deviation for all scenarios."""
-    # Load metadata
+def example_all_generator_speeds():
+    """Example that plots speed deviations for all generators."""
     simulation_log = load_simulation_log()
     state_metadata = load_state_metadata()
     
-    # Get all generator 1 speed deviations from non-diverged simulations
+    # Get speed deviations for all generators from non-diverged simulations
     results = get_state_timeseries_all(
         simulation_log,
         state_metadata,
         model='GenGENROU',
-        device_id='1',
         state_name='w',
-        diverged=False
-    )
-    
-    # Plot results grouped by base load
-    plt = plot_state_comparison(
-        results,
-        title='Generator 1 Speed Deviation',
-        ylabel='Speed Deviation (pu)',
-        legend_key='base_load'
-    )
-    
-    # Save figure
-    plt.savefig('gen1_speed_comparison.png')
-    plt.close()
-    
-    # Now filter by fault location and show for a specific load level
-    results_filtered = get_state_timeseries_all(
-        simulation_log,
-        state_metadata,
-        model='GenGENROU',
-        device_id='1',
-        state_name='w',
-        base_load=1.0,
         diverged=False
     )
     
     plt = plot_state_comparison(
-        results_filtered,
-        title='Generator 1 Speed Deviation (Load Level = 1.0)',
+        results,
+        title='All Generator Speed Deviations',
         ylabel='Speed Deviation (pu)',
         legend_key='fault_location'
     )
     
-    plt.savefig('gen1_speed_comparison_load1.png')
+    plt.savefig('all_generator_speeds.png')
+    plt.close()
     
-    print(f"Found {len(results)} non-diverged scenarios")
-    print(f"Found {len(results_filtered)} non-diverged scenarios at base_load=1.0")
-    
+    print(f"Found {len(results)} non-diverged scenarios with generator speed data")
     return results
 
-def example_bus_analysis():
-    """Plot generator speed deviations at bus 2."""
+def example_generator4_states():
+    """Example that plots speed and angle for generator with device ID 4."""
     simulation_log = load_simulation_log()
     state_metadata = load_state_metadata()
-
-    # Find all generator speed deviation states at bus 2
-    speed_states = {}
-    for state_idx, data in state_metadata.items():
-        # Ensure bus_num is an int and matches 2
-        try:
-            bus_match = int(data.get('bus_num', -1)) == 2
-        except Exception:
-            bus_match = False
-
-        # Flexible generator and speed state matching
-        is_generator = 'model' in data and 'gen' in data['model'].lower()
-        is_speed = 'state_name' in data and any(
-            key in data['state_name'].lower() for key in ['w', 'omega', 'speed', 'dw', 'delta_omega']
-        )
-
-        if bus_match and is_generator and is_speed:
-            speed_states[state_idx] = data
-
-    if not speed_states:
-        print("No speed deviation states found for generators at bus 2")
-        return
-
-    # Use the first non-diverged scenario
-    filtered_scenarios = filter_scenarios(simulation_log, diverged=False)
-    if not filtered_scenarios:
-        print("No suitable scenarios found")
-        return
-
-    import matplotlib.pyplot as plt
-    plt.figure(figsize=(10, 6))
-
-    for scenario_id in filtered_scenarios:
-        scenario_data = load_scenario_data(scenario_id, simulation_log)
-        for state_idx, state_info in speed_states.items():
-            tvec, values = get_state_timeseries(scenario_data, int(state_idx))
-            label = f"{state_info.get('model', 'Unknown')} {state_info.get('device_id', 'Unknown')} ({state_info.get('state_name', 'Unknown')}) | Scenario {scenario_id}"
-            plt.plot(tvec, values, label=label, alpha=0.5, color='gray')
-
-    plt.title("Generator Speed Deviations at Bus 2 (All Scenarios)")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Speed Deviation")
-    plt.grid(True)
+    
+    # Get speed (w) and angle (delta) for generator 4
+    speed_results = get_state_timeseries_all(
+        simulation_log,
+        state_metadata,
+        model='GenGENROU',
+        device_number='4',
+        state_name='w',
+        diverged=False
+    )
+    
+    angle_results = get_state_timeseries_all(
+        simulation_log,
+        state_metadata,
+        model='GenGENROU',
+        device_number='4',
+        state_name='delta',
+        diverged=False
+    )
+    
+    # Create subplot figure
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    
+    # Plot speed deviations
+    plt.sca(ax1)
+    for scenario_id, data in speed_results.items():
+        tvec = data['tvec']
+        values = data['values']
+        if len(tvec) > 0 and len(values) > 0:
+            ax1.plot(tvec, values, color='blue', alpha=0.3)
+    
+    ax1.set_title('Generator 4 Speed Deviation')
+    ax1.set_ylabel('Speed Deviation (pu)')
+    ax1.grid(True)
+    
+    # Plot rotor angles
+    plt.sca(ax2)
+    for scenario_id, data in angle_results.items():
+        tvec = data['tvec']
+        values = data['values']
+        if len(tvec) > 0 and len(values) > 0:
+            ax2.plot(tvec, values, color='red', alpha=0.3)
+    
+    ax2.set_title('Generator 4 Rotor Angle')
+    ax2.set_xlabel('Time (s)')
+    ax2.set_ylabel('Rotor Angle (rad)')
+    ax2.grid(True)
+    
     plt.tight_layout()
-    plt.savefig('bus2_speed_deviations_all_scenarios.png')
-    print(f"Plotted speed deviations for {len(filtered_scenarios)} scenarios and {len(speed_states)} states.")
-    return speed_states
+    plt.savefig('generator4_speed_angle.png')
+    plt.close()
+    
+    print(f"Found {len(speed_results)} scenarios with Generator 4 speed data")
+    print(f"Found {len(angle_results)} scenarios with Generator 4 angle data")
+    
+    return speed_results, angle_results
 
 if __name__ == "__main__":
-    example_gen1_speed_deviation()
-    example_bus_analysis()
+    print("Running generator analysis examples...")
+    
+    print("1. All generator speed deviations")
+    example_all_generator_speeds()
+    
+    print("2. Generator 4 speed and angle analysis")
+    example_generator4_states()
+    
+    print("Analysis complete! Check the generated PNG files.")

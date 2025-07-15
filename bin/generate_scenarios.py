@@ -172,7 +172,14 @@ def run_simulation_driver_batched(
     return simulation_log
 
 def main():
-    PowerGridModel = "IEEE-9"
+    PowerGridModel = "IEEE-9" #"ACTIVSg200" #  "IEEE-39" #  "ACTIVSg500" #
+
+    # Scenario sampling configuration
+    SAMPLES_PER_FAULT_LOCATION = 10     # Samples per fault location
+    FAULT_IMPEDANCES = [0.0001]         # Fault impedance values [p.u]
+    N_JOBS = 10
+    BATCH_SIZE = 10
+
     if PowerGridModel == "IEEE-9":
         raw = "data/ieee9_v33.raw"
         dyr = "data/ieee9bus_gov.dyr"
@@ -181,15 +188,28 @@ def main():
         raw = "data/IEEE39_v33.raw"
         dyr = "data/IEEE39_gov.dyr"
         n_bus = 39
+    elif PowerGridModel == "ACTIVSg200":
+        raw = "data/ACTIVSg200.raw"
+        dyr = "data/ACTIVSg200.dyr"
+        n_bus = 49
+    elif PowerGridModel == "ACTIVSg500":
+        raw = "data/ACTIVSg500.raw"
+        dyr = "data/ACTIVSg500.dyr"
+        n_bus = 90
     else:
         raise RuntimeError(f"{PowerGridModel} is an invalid model!")
 
-    number_of_samples = 50             
     fault_locations   = list(range(1, n_bus + 1))
-    fault_impedances  = [0.0001]
+
+    # Calculate total scenarios
+    total_scenarios = SAMPLES_PER_FAULT_LOCATION * len(fault_locations) * len(FAULT_IMPEDANCES)
+    print(f"Configuration: {total_scenarios} total scenarios")
+    print(f"  - {SAMPLES_PER_FAULT_LOCATION} noise samples per fault location")
+    print(f"  - {len(fault_locations)} fault locations.")
+    print(f"  - {len(FAULT_IMPEDANCES)} fault impedances: {FAULT_IMPEDANCES}")
 
     scenarios = sample_scenarios(
-        number_of_samples, fault_locations, fault_impedances)
+        SAMPLES_PER_FAULT_LOCATION, fault_locations, FAULT_IMPEDANCES)
     metadata  = generate_metadata(scenarios)
 
     # noise settings
@@ -203,8 +223,7 @@ def main():
         raw, dyr, metadata,
         noise_type=noise_type, noise_var=noise_var,
         balance_generation=balance_generation,
-        n_jobs=5, batch_size=10)
-
+        n_jobs=N_JOBS, batch_size=BATCH_SIZE)
 
 if __name__ == "__main__":
     main()
