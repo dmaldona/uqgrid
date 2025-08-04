@@ -96,7 +96,7 @@ MIT License - see LICENSE file for details.
 ## Contact
 
 **Author**: D. Adrian Maldonado  
-**Email**: maldonadod@anl.gov  
+**Email**: maldonadod AT anl.gov
 **Institution**: Argonne National Laboratory
 
 ## Acknowledgements
