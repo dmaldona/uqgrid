@@ -92,14 +92,14 @@ def main():
     # Run integration
     results = integrate_system(psys, config)
 
-    # Further processing or plotting can be done here
-    # Example:
-    # plt.plot(results["tvec"], results["values"])
-    # plt.xlabel('Time (s)')
-    # plt.ylabel('Sensitivity Value')
-    # plt.title('Load Sensitivities Over Time')
-    # plt.legend(['Parameter 1', 'Parameter 2', ...])
-    # plt.show()
+    # plot generator speeds
+    bus_idx = psys.genspeed_idx_set()
+
+    for bus in bus_idx:
+        label = "generator at bus %d" % (bus)
+        plt.plot(results["tvec"], results["history"][bus,:], label=label)
+    plt.legend()
+    plt.show()
 
 if __name__ == "__main__":
     main()

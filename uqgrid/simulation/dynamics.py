@@ -10,6 +10,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve, factorized
 from scipy.sparse._sparsetools import csr_matvec
 import math
+import copy
 
 import logging
 logger = logging.getLogger(__name__)
@@ -24,9 +25,9 @@ except ImportError:
     petsc4py = None
     logger.warning("PETSc4py not available. Some functionality will not be available.")
 
-from uqgrid.simulation.config import IntegrationConfig
+from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 from uqgrid.core import Psystem
-from uqgrid.simulation.pflow import runpf, compute_pinj_alt
+from uqgrid.simulation.pflow import runpf, compute_pinj_alt, PowerFlowSolution
 from uqgrid.utils.tools import (
     matprint,
     csr_mult_row,
@@ -630,7 +631,225 @@ def residual_hessian(H, z, theta, psys):
     z.flags.writeable = True
 
     return None
+###################################
+#### Parametric jacobian (loads) ##
+###################################
 
+def preallocate_jacobian_parameters(psys):
+    """Preallocates the Jacobian matrix with respect to load parameters (pl, ql).
+    
+    Args:
+        psys: Power system object
+        
+    Returns:
+        csr_matrix: Sparse Jacobian matrix structure
+    """
+    alg_size = psys.num_dof_alg
+    dif_size = psys.num_dof_dif
+    sys_size = alg_size + dif_size + 2*psys.nbuses
+    
+    # Number of parameters (pl, ql for each load)
+    nparam = 2 * psys.nloads
+    
+    # Lists to build the sparse matrix
+    row = []
+    col = []
+    
+    # For each load, add the derivatives at the corresponding bus
+    dev = alg_size + dif_size
+    for i, load in enumerate(psys.loads):
+        bus = load.bus
+        # Each load affects only its bus equations in the power balance
+        row.extend([dev + 2*bus, dev + 2*bus + 1])  # Real and reactive power equations
+        col.extend([2*i, 2*i])  # pl parameter index
+        
+        row.extend([dev + 2*bus, dev + 2*bus + 1])  # Real and reactive power equations
+        col.extend([2*i + 1, 2*i + 1])  # ql parameter index
+    
+    data = np.zeros(len(row))
+    Jsparse = csr_matrix((data, (row, col)), shape=(sys_size, nparam))
+    
+    return Jsparse
+
+
+@jit(nopython=True, cache=True)
+def jac_load_params(z, v, theta, idxs, J_data, J_ptr, J_idx, load_idx):
+    """
+    Compute the Jacobian of the load model with respect to parameters pl and ql.
+    
+    Args:
+        z: State vector
+        v: Voltage vector
+        theta: Parameter vector
+        idxs: Array of indices [dp, ap, pp, bus]
+        J_data, J_ptr, J_idx: CSR format arrays for the Jacobian matrix
+        load_idx: Index of the load in the system
+    """
+    dev = idxs[2]
+    pp = idxs[3]
+    bus = idxs[4]
+
+    vr = v[2*bus]
+    vi = v[2*bus + 1]
+    
+    alpha = theta[pp + 2]
+    
+    vm2 = vr*vr + vi*vi
+    vm2_tld = 0.2  # Voltage threshold for model switching
+    
+    col = np.zeros(2, dtype=np.int64)
+    val = np.zeros(2, dtype=np.double)
+    
+    # Derivatives for real power balance equation
+    row = dev + 2*bus
+    
+    # Derivative with respect to pl
+    col[0] = 2*load_idx
+    if vm2 > vm2_tld:
+        val[0] = -(1-alpha)*vr/vm2
+    else:
+        val[0] = -(1-alpha)*vr/vm2_tld
+    
+    # Derivative with respect to ql
+    col[1] = 2*load_idx + 1
+    if vm2 > vm2_tld:
+        val[1] = (1-alpha)*vi/vm2
+    else:
+        val[1] = (1-alpha)*vi/vm2_tld
+    
+    csr_add_row(J_data, J_ptr, J_idx, 2, row, col, val)
+
+    # Derivatives for reactive power balance equation
+    row = dev + 2*bus + 1
+    
+    # Derivative with respect to pl
+    col[0] = 2*load_idx
+    if vm2 > vm2_tld:
+        val[0] = -(1-alpha)*vi/vm2
+    else:
+        val[0] = -(1-alpha)*vi/vm2_tld
+    
+    # Derivative with respect to ql
+    col[1] = 2*load_idx + 1
+    if vm2 > vm2_tld:
+        val[1] = -(1-alpha)*vr/vm2
+    else:
+        val[1] = -(1-alpha)*vr/vm2_tld
+    
+    csr_add_row(J_data, J_ptr, J_idx, 2, row, col, val)
+
+
+def residual_jacobian_parameters(Jp, z, theta, psys):
+    """
+    Compute the Jacobian of the residual function with respect to parameters pl and ql.
+    
+    Args:
+        Jp: Sparse Jacobian matrix to be filled
+        z: State vector
+        theta: Parameter vector
+        psys: Power system object
+    """
+    # Lock system vector
+    z.flags.writeable = False
+    
+    alg_size = psys.num_dof_alg
+    dif_size = psys.num_dof_dif
+    dev = alg_size + dif_size
+    
+    # Clear the Jacobian
+    Jp.data.fill(0.0)
+    
+    # Get voltage vector
+    v = z[dif_size + alg_size:]
+    
+    # Compute Jacobian with respect to load parameters
+    idxs = np.zeros(5, dtype=np.int64)
+    
+    for i, load in enumerate(psys.loads):
+        idxs[0] = load.dif_ptr
+        idxs[1] = dif_size + load.alg_ptr
+        idxs[2] = alg_size + dif_size
+        idxs[3] = load.par_ptr
+        idxs[4] = load.bus
+
+        jac_load_params(z, v, theta, idxs, Jp.data, Jp.indptr, Jp.indices, i)
+    
+    # Restore write access to system vector
+    z.flags.writeable = True
+    
+    return None
+
+def test_jacobian_parameters(psys, z, theta):
+    """
+    Test the implementation of the Jacobian with respect to parameters using
+    finite difference approximation.
+    
+    Args:
+        psys: Power system object
+        z: State vector
+        theta: Parameter vector
+        
+    Returns:
+        tuple: (Jp_analytical, Jp_finite_diff) - the analytical and finite difference Jacobians
+    """
+    # Preallocate the Jacobian with respect to parameters
+    Jp = preallocate_jacobian_parameters(psys)
+    
+    # Compute the Jacobian
+    residual_jacobian_parameters(Jp, z, theta, psys)
+    
+    # Compute the Jacobian using finite differences
+    alg_size = psys.num_dof_alg
+    dif_size = psys.num_dof_dif
+    sys_size = alg_size + dif_size + 2*psys.nbuses
+    nparam = 2 * psys.nloads
+    
+    Jp_fd = np.zeros((sys_size, nparam))
+    F1 = np.zeros(sys_size)
+    F2 = np.zeros(sys_size)
+    
+    eps = 1e-6
+    
+    for i, load in enumerate(psys.loads):
+        # Derivative with respect to pl
+        theta_p = theta.copy()
+        theta_m = theta.copy()
+        
+        theta_p[load.par_ptr] += eps
+        theta_m[load.par_ptr] -= eps
+        
+        residual_function(F1, z, theta_p, psys)
+        residual_function(F2, z, theta_m, psys)
+        
+        Jp_fd[:, 2*i] = (F1 - F2) / (2*eps)
+        
+        # Derivative with respect to ql
+        theta_p = theta.copy()
+        theta_m = theta.copy()
+        
+        theta_p[load.par_ptr + 1] += eps
+        theta_m[load.par_ptr + 1] -= eps
+        
+        residual_function(F1, z, theta_p, psys)
+        residual_function(F2, z, theta_m, psys)
+        
+        Jp_fd[:, 2*i + 1] = (F1 - F2) / (2*eps)
+    
+    # Compare the results
+    Jp_dense = Jp.todense()
+    
+    if np.allclose(Jp_dense, Jp_fd, rtol=1e-3, atol=1e-3):
+        print("Jacobian with respect to parameters test passed!")
+    else:
+        print("Jacobian with respect to parameters test failed!")
+        print("Maximum difference:", np.max(np.abs(Jp_dense - Jp_fd)))
+        
+        # Optionally show where the differences are
+        diff = np.abs(Jp_dense - Jp_fd)
+        idx = np.unravel_index(np.argmax(diff), diff.shape)
+        print(f"Max difference at {idx}: {Jp_dense[idx]} vs {Jp_fd[idx]}")
+    
+    return Jp_dense, Jp_fd
 
 ###################################
 #### Integration              #####
@@ -965,16 +1184,9 @@ def integrate(zold,
     return z, uold, vold, mold
 
 
-def initialize_system(psys):
-    """ Based on system parameters, creates the
-
-        Input: v - voltage vector
-               p - power flow vector
-               psys - power system data structure.
-
-        Output:
-               initialized sytem vector
-
+def initialize_system(psys: Psystem, pf_solution: PowerFlowSolution):
+    """ Based on system parameters and power flow solution, creates the
+        initialized system vector and theta.
     """
 
     alg_size = psys.num_dof_alg
@@ -992,18 +1204,18 @@ def initialize_system(psys):
 
     v = np.zeros(2*psys.nbuses, dtype=np.float64)
     for i in range(psys.nbuses):
-        v[2*i] = psys.buses[i].v0m
-        v[2*i + 1] = psys.buses[i].v0a
+        v[2*i] = pf_solution.v_magnitudes[i]
+        v[2*i + 1] = pf_solution.v_angles[i]
 
     for device in psys.devices:
-        vm = v[2*device.bus]
-        va = v[2*device.bus + 1]
+        vm = pf_solution.v_magnitudes[device.bus]
+        va = pf_solution.v_angles[device.bus]
 
         if device.model_type  == "generator":
             # retrieve static gen id
             gen_static_id = device.static_gen_idx
-            pi = psys.gens[gen_static_id].psch
-            qi = psys.gens[gen_static_id].qsch
+            pi = pf_solution.gen_psch[gen_static_id]
+            qi = pf_solution.gen_qsch[gen_static_id]
 
         elif device.model_type == "ZIPLoad":
             pi = -device.pload
@@ -1290,13 +1502,14 @@ if petsc4py:
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
             xx = np.array(x[start:end])
-            # Placeholder. Need to work on preallocating and obtaining J_p.
-            mat_temp = csr_matrix(np.ones([len(xx), self.psys.nloads]))
-            for i in range(self.psys.nloads):
-                mat_temp[:, i] = gradient_p(self.psys, xx, self.theta, load_idx=i)
-            P.setValuesCSR(mat_temp.indptr, mat_temp.indices, -mat_temp.data)
+            
+            # Compute proper parameter Jacobian
+            Jp_temp = preallocate_jacobian_parameters(self.psys)
+            residual_jacobian_parameters(Jp_temp, xx, self.theta, self.psys)
+            
+            P.setValuesCSR(Jp_temp.indptr, Jp_temp.indices, -Jp_temp.data)
             P.assemble()
-            return True # same nonzero pattern
+            return True
 
     class ALG_petsc(object):
         n = 1
@@ -1325,7 +1538,7 @@ if petsc4py:
             # jacobian to 0 and adding 1 to the diagonal hence keeping the differential
             # part constant (projection to manifold)
             jacobian_beuler(self.J, NDIFFEQ, 0.0)
-            P.setValuesCSR(self.J.indptr, self.J.indices, -self.J.data)
+            P.setValuesCSR(self.J.indptr, self.J.indices, self.J.data)
             P.assemble()
 
             if J != P: J.assemble()
@@ -1339,23 +1552,26 @@ if petsc4py:
             self.theta = theta
         
         def evalCostIntegrand(self, ts, t, x, r):
-            """ We will just compute the integral of the speed deviation for each generator """
-            bus_idx = self.psys.genspeed_idx_set()
+            """Cost: integral of generator speed deviations squared"""
+            speed_indices = self.psys.genspeed_idx_set()
             cost = 0.0
-            for idx in bus_idx:
-                cost += x[idx]*x[idx]
+            for idx in speed_indices:
+                cost += x[idx] * x[idx]
             r[0] = cost
             r.assemble()
         
         def evalJacobian(self, ts, t, x, A, B):
-            bus_idx = self.psys.genspeed_idx_set()
-            for idx in bus_idx:
-                A[idx, 0] = 2*x[idx]
+            """Gradient of cost w.r.t state: ∂g/∂x = 2*ω"""
+            speed_indices = self.psys.genspeed_idx_set()
+            A.zeroEntries()
+            for idx in speed_indices:
+                A[idx, 0] = 2.0 * x[idx]
             A.assemble()
             return True
         
         def evalJacobianP(self, ts, t, x, A):
-            #A[:,:] = 0.0
+            """Gradient of cost w.r.t parameters: ∂g/∂p = 0"""
+            A.zeroEntries()
             A.assemble()
             return True
 
@@ -1371,7 +1587,58 @@ def compute_rhs_jacobian(psys, z, theta, power_injection=True):
     residual_jacobian(J, z, theta, psys)
     return J
 
-def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
+def _eval_adjoint_z0_product(params_flat, psys_template, lambda_adjoint):
+    """Evaluate λ^T * z0(p) for given load parameters."""
+    psys = copy.deepcopy(psys_template)
+    
+    # Convert flat params to P, Q arrays
+    p_loads = params_flat[::2]  # Even indices: P values
+    q_loads = params_flat[1::2]  # Odd indices: Q values
+    
+    # Use existing psys method
+    psys.set_load_pq(p_loads, q_loads)
+    
+    # Solve and initialize (using functions from same module)
+    pf_sol = runpf(psys, verbose=False)
+    z0, _ = initialize_system(psys, pf_sol)
+    
+    return np.dot(lambda_adjoint, z0)
+
+
+def compute_initial_state_sensitivity(psys, lambda_adjoint, nominal_params, eps=1e-7):
+    """
+    Compute sensitivity A^T * λ where A = ∂z0/∂p_loads using centered differences.
+    
+    Args:
+        psys: Power system object (template, will be copied)
+        lambda_adjoint: Adjoint vector λ from DAE solution
+        nominal_params: Flat array [P0, Q0, P1, Q1, ...] of nominal load parameters
+        eps: Finite difference step size
+        
+    Returns:
+        numpy.ndarray: Sensitivity vector A^T * λ
+    """
+    n_params = len(nominal_params)
+    sensitivity = np.zeros(n_params)
+
+    # Centered differences: (f(x+h) - f(x-h)) / (2h)
+    for j in range(n_params):
+        # Forward perturbation
+        params_plus = nominal_params.copy()
+        params_plus[j] += eps
+        f_plus = _eval_adjoint_z0_product(params_plus, psys, lambda_adjoint)
+        
+        # Backward perturbation  
+        params_minus = nominal_params.copy()
+        params_minus[j] -= eps
+        f_minus = _eval_adjoint_z0_product(params_minus, psys, lambda_adjoint)
+        
+        # Centered difference
+        sensitivity[j] = (f_plus - f_minus) / (2 * eps)
+    
+    return sensitivity
+
+def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationCtx = None) -> dict:
     """Integrate power system dynamics
 
     Args:
@@ -1393,16 +1660,32 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
     power_injection = config.power_injection
     solve_power_flow = config.solve_powerflow_dynamics
 
+
     results = {}
     psys.power_injection=power_injection
 
     # retrieve parameters
-    if solve_power_flow:
-        runpf(psys, verbose=False)
-    z0, theta = initialize_system(psys)
+    pf_solution = runpf(psys, verbose=False)
+    z0, theta = initialize_system(psys, pf_solution)
+
+    # Use context if provided, otherwise fallback to config attributes
+    z0_user = ctx.z0_user if ctx is not None else getattr(config, 'z0_user', None)
+    theta_user = ctx.theta_user if ctx is not None else getattr(config, 'theta_user', None)
+
+    if z0_user is not None:
+        if z0_user.shape[0] != z0.shape[0]:
+            raise ValueError("Provided initial state does not match system size.")
+        z0 = z0_user
+
+    if theta_user is not None:
+        if theta_user.shape[0] != theta.shape[0]:
+            raise ValueError("Provided theta does not match system parameters.")
+        theta = theta_user
+
     system_size = z0.shape[0]
     J = preallocate_jacobian(psys)
     F = np.zeros(system_size)
+
     # calculate nsteps
     h = dt
     if steps > 0:
@@ -1416,28 +1699,12 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
 
     # Integration of D.A.E
     z = z0
+
     # Sensitivity parameters
     nparam = psys.nloads # For now, we only suport sensitivities of loads
-    nmixed = int((nparam**2 - nparam)/2)
-    
-    # sensitivity variables
-    if comp_sens:
-        history_u = np.zeros((system_size, nparam, nsteps))
-        history_v = np.zeros((system_size, nparam, nsteps))
-        history_m = np.zeros((system_size, nmixed, nsteps))
-        u = np.zeros((system_size, nparam))
-        v = np.zeros((system_size, nparam))
-        m = np.zeros((system_size, nmixed))
-        Hess = preallocate_hessian(psys)
-        #initialize_sensitivities(volt, Pinj, psys, z, u, v)
-    else:
-        history_u = None
-        history_v = None
-        history_m = None
-        u = None
-        v = None
-        m = None
-        Hess = None
+
+    if comp_sens and not petsc:
+        raise ValueError("Sensitivities can only be computed with PETSc.")
 
     if petsc4py and petsc:
         if verbose: print("Convert objects to PETSc format")
@@ -1451,13 +1718,13 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
         Jp.assemblyBegin()
         Jp.assemblyEnd()
 
+        nparam = 2 * psys.nloads
+        Jp_struct = preallocate_jacobian_parameters(psys)
         Jtheta = PETSc.Mat()
         Jtheta.create(PETSc.COMM_WORLD)
         Jtheta.setSizes([nsize, nparam])
         Jtheta.setType('seqaij')
-        # as a placeholder, we make this matrix dense
-        mat_temp = csr_matrix(np.ones([nsize, nparam]))
-        csr = [mat_temp.indptr, mat_temp.indices, mat_temp.data]
+        csr = [Jp_struct.indptr, Jp_struct.indices, Jp_struct.data]
         Jtheta.setPreallocationCSR(csr)
         Jtheta.assemblyBegin()
         Jtheta.assemblyEnd()
@@ -1542,13 +1809,34 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
 
         # adjoint computation
         if comp_sens:
+            if verbose: print("Solving adjoint problem...")
             ts.adjointSolve()
+
+            # extract results
             cst = ts.getCostIntegral()
             
-            results["cost"] = np.array(cst)
-            results["v_mu"] = np.array(v_mu)
-
-
+            # Get the trajectory contribution
+            cost_value = ts.getCostIntegral()
+            mu_trajectory = np.array(v_mu[:])      # μᵢ term
+            lambda_final = np.array(v_lambda[:])   # λᵢ term
+            
+            # Compute initial condition sensitivity ∂y₀/∂p
+            p_loads, q_loads = psys.get_load_pq()
+            nominal_params = np.zeros(2 * psys.nloads)
+            nominal_params[::2] = p_loads   # P values at even indices
+            nominal_params[1::2] = q_loads  # Q values at odd indices
+            dy0_dp = compute_initial_state_sensitivity(
+            psys, lambda_final, nominal_params
+            )
+            
+            # Complete gradient = μᵢ + λᵢ(∂y₀/∂p)
+            complete_gradient = mu_trajectory + dy0_dp
+            
+            results["adjoint_cost"] = float(cost_value[0])
+            results["adjoint_gradient_trajectory"] = mu_trajectory  # Just μᵢ
+            results["adjoint_gradient_initial"] = dy0_dp           # λᵢ(∂y₀/∂p)
+            results["lambda_final"] = lambda_final
+            results["adjoint_gradient_complete"] = complete_gradient # Total
 
         # Cast history to numpy arrays
         history = np.transpose(np.array(historyp))
@@ -1565,12 +1853,12 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
                                 psys,
                                 F,
                                 J,
-                                Hess,
+                                None,
                                 verbose=verbose,
                                 fsolve=fsolve,
-                                uold=u,
-                                vold=v,
-                                mold=m)
+                                uold=None,
+                                vold=None,
+                                mold=None)
             history[:, i] = np.copy(z)
 
             if i == step_on:
@@ -1583,7 +1871,7 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
                                     psys,
                                     F,
                                     J,
-                                    Hess,
+                                    None,
                                     verbose=verbose,
                                     fsolve=True,
                                     uold=None,
@@ -1599,17 +1887,12 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
                                     psys,
                                     F,
                                     J,
-                                    Hess,
+                                    None,
                                     verbose=verbose,
                                     fsolve=True,
                                     uold=None,
                                     vold=None,
                                     mold=None)
-
-            if comp_sens:
-                history_u[:, :, i] = np.copy(u)
-                history_v[:, :, i] = np.copy(v)
-                history_m[:, :, i] = np.copy(m)
 
         # if tend < toff we remove fault before exiting
         if i < step_off:
@@ -1618,8 +1901,5 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
     # pack results into dict
     results["tvec"] = tvec
     results["history"] = history
-    results["history_u"] = history_u
-    results["history_v"] = history_v
-    results["history_m"] = history_m
 
     return results

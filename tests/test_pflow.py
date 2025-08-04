@@ -38,7 +38,9 @@ def test_power_flow_from_matpower(case, mat_file, sbus_file, volt_file, data_dir
     psys.createYbusComplex()
 
     # Run power flow
-    v, Sinj = runpf(psys, verbose=True)
+    res = runpf(psys, verbose=True)
+    v = res.v_vector
+    Sinj = res.s_inj_vector
 
     # Load expected results
     Sbus_expected = sio.loadmat(sbus_file_path)['Sbus']
@@ -68,7 +70,9 @@ def test_power_flow_from_psse(data_dir):
     psys.createYbusComplex()
 
     # Run power flow
-    v, Sinj = runpf(psys, verbose=True)
+    res = runpf(psys, verbose=True)
+    v = res.v_vector
+    Sinj = res.s_inj_vector
 
     # Expected voltage angles in degrees
     expected_vangles = {

@@ -1,0 +1,32 @@
+
+# Include the license file
+include LICENSE
+
+# Include the readme
+include README.md
+
+# Include all data files in the data directory (if any)
+recursive-include data *.raw *.dyr *.mat *.csv *.json
+
+# Include configuration files
+include pyproject.toml
+
+# Exclude cache and build files
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.orig
+global-exclude *.rej
+global-exclude .git*
+global-exclude .coverage
+global-exclude .DS_Store
+
+# Exclude test files from installation
+recursive-exclude tests *
+exclude tests
+
+# Exclude development and build directories
+prune build
+prune dist
+prune .tox
+prune .pytest_cache
+prune __pycache__

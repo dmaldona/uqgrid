@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uqgrid"
+version = "0.1.0"
+description = "Uncertainty quantification for the electrical grid"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE"}
+authors = [
+    {name = "D. Adrian Maldonado", email = "maldonadod@anl.gov"}
+]
+
+# Core dependencies only
+dependencies = [
+    "numpy>=1.20.0",
+    "scipy>=1.7.0",
+    "numba>=0.56.0",
+    "matplotlib>=3.5.0",
+    "networkx>=2.6.0",
+    "pydantic>=1.8.0",
+]
+
+[project.optional-dependencies]
+# PETSc support (optional)
+petsc = [
+    "petsc4py>=3.16.0",
+]
+
+# Development dependencies (basic)
+dev = [
+    "pytest>=6.0.0",
+    "black>=22.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/dmaldona/uqgrid"
+Repository = "https://github.com/dmaldona/uqgrid"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["uqgrid*"]
+exclude = ["tests*"]
+
+# Basic pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "adjoint: marks tests as adjoint validation tests (slow)",
+]

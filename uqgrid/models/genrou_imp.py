@@ -26,16 +26,27 @@ class GenGENROU(DynamicGenerator):
         self.ratio = 1.0
 
         state_list = [
-            'e_qp', 'e_dp', 'phi_1d', 'phi_2q', 'w', 'delta', 'v_q', 'v_d',
-            'i_q', 'i_d'
+            'e_qp',
+            'e_dp',
+            'phi_1d',
+            'phi_2q',
+            'w',
+            'delta',
+
+            'v_q',
+            'v_d',
+            'i_q',
+            'i_d'
         ]
 
         par_list = [
             'x_d', 'x_q', 'x_dp', 'x_qp', 'x_ddp', 'x_qdp', 'xl', 'H', 'D',
             'T_d0p', 'T_q0p', 'T_d0dp', 'T_q0dp'
         ]
-
-        DynamicGenerator.__init__(self, id_tag, 12, 6, 4, len(par_list),
+        INIT_DIM = 12
+        DYN_DIM = 8
+        ALG_DIM = 4
+        DynamicGenerator.__init__(self, id_tag, INIT_DIM, DYN_DIM, ALG_DIM, len(par_list),
                                   state_list)
 
     def set_ratio(self, ratio):
@@ -213,9 +224,10 @@ class GenGENROU(DynamicGenerator):
         if self.exciter: self.exciter.e_fd0 = sol.x[10]
         if self.governor: self.governor.p_m0 = sol.x[11]
 
-        self.initialized = True
         x[self.dif_ptr:self.dif_ptr + 6] = sol.x[0:6]
+        x[self.dif_ptr + 6:self.dif_ptr + 8] = sol.x[10:12]
         y[self.alg_ptr:self.alg_ptr + 4] = sol.x[6:10]
+        self.initialized = True
 
         return None
 
@@ -253,6 +265,8 @@ class GenGENROU(DynamicGenerator):
         phi_2q = dp + 3
         w = dp + 4
         delta = dp + 5
+        efd = dp + 6
+        pm = dp + 7
 
         v_q = ap
         v_d = ap + 1
@@ -271,7 +285,7 @@ class GenGENROU(DynamicGenerator):
         if self.exciter:
             cols = [e_qp, phi_1d, self.efd_idx, i_d]
         else:
-            cols = [e_qp, phi_1d, i_d]
+            cols = [e_qp, phi_1d, efd, i_d]
         coord.append([row, cols])
 
         # second row
@@ -294,7 +308,7 @@ class GenGENROU(DynamicGenerator):
         if self.governor:
             cols = [e_qp, e_dp, phi_1d, phi_2q, self.pm_idx, i_q, i_d, w]
         else:
-            cols = [e_qp, e_dp, phi_1d, phi_2q, i_q, i_d, w]
+            cols = [e_qp, e_dp, phi_1d, phi_2q, pm, i_q, i_d, w]
 
         coord.append([row, cols])
 
@@ -512,8 +526,8 @@ def resdiff_genrou(F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
     pm_idx = ctrl_idx[0]
     efd_idx = ctrl_idx[1]
     
-    p_m = ctrl_var[0]
-    e_fd = ctrl_var[1]
+    e_fd = z[dp + 6]
+    p_m = z[dp + 7]
 
     if efd_idx >= 0:
         e_fd = z[efd_idx]
@@ -617,17 +631,21 @@ def jac_genrou(z, v, theta, idxs,
         vi = v[2*bus + 1]
 
     # control
-    pm_idx = ctrl_idx[0]
-    efd_idx = ctrl_idx[1]
+    pm_idx_ctrl = ctrl_idx[0]
+    efd_idx_ctrl = ctrl_idx[1]
     
     p_m = ctrl_var[0]
     e_fd = ctrl_var[1]
 
-    if efd_idx >= 0:
-        e_fd = z[efd_idx]
+    if efd_idx_ctrl >= 0:
+        e_fd = z[efd_idx_ctrl]
+    else:
+        e_fd = z[dp + 6]
 
-    if pm_idx >= 0:
-        p_m = z[pm_idx]
+    if pm_idx_ctrl >= 0:
+        p_m = z[pm_idx_ctrl]
+    else:
+        p_m = z[dp + 7]
 
     # indexes
     e_qp_idx = dp
@@ -636,6 +654,8 @@ def jac_genrou(z, v, theta, idxs,
     phi_2q_idx = dp + 3
     w_idx = dp + 4
     delta_idx = dp + 5
+    efd_idx = dp + 6 if efd_idx_ctrl < 0 else efd_idx_ctrl
+    pm_idx = dp + 7 if pm_idx_ctrl < 0 else pm_idx_ctrl
     v_q_idx = ap
     v_d_idx = ap + 1
     i_q_idx = ap + 2
@@ -666,16 +686,12 @@ def jac_genrou(z, v, theta, idxs,
     val[0] = (-(x_d - x_dp)*(-x_ddp + x_dp)*(x_dp - xl)**(-2.0) - 1)/T_d0p
     col[1] = phi_1d_idx
     val[1] = (x_d - x_dp)*(-x_ddp + x_dp)*(x_dp - xl)**(-2.0)/T_d0p
-    if efd_idx >= 0:
-        col[2] = efd_idx
-        val[2] = 1/T_d0p
-        col[3] = i_d_idx
-        val[3] = -(x_d - x_dp)*(-(-x_ddp + x_dp)*(x_dp - xl)**(-1.0) + 1)/T_d0p
-        csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
-    else:
-        col[2] = i_d_idx
-        val[2] = -(x_d - x_dp)*(-(-x_ddp + x_dp)*(x_dp - xl)**(-1.0) + 1)/T_d0p
-        csr_set_row(J_data, J_ptr, J_idx, 3, row, col, val)
+    col[2] = efd_idx
+    val[2] = 1/T_d0p
+    col[3] = i_d_idx
+    val[3] = -(x_d - x_dp)*(-(-x_ddp + x_dp)*(x_dp - xl)**(-1.0) + 1)/T_d0p
+    csr_set_row(J_data, J_ptr, J_idx, 4, row, col, val)
+
 
     # second row
     row = dp + 1
@@ -719,21 +735,15 @@ def jac_genrou(z, v, theta, idxs,
     val[3] = 0.5*i_d*(-x_ddp + x_qp)/(H*(x_qp - xl))
     col[4] = w_idx
     val[4] = 0.5*(-D/(w + 1.0) - (-D*w + p_m)/(w + 1.0)**2.0)/H
-    
-    if pm_idx >= 0:
-        col[5] = i_q_idx
-        val[5] = 0.5*(-e_qp*(x_ddp - xl)/(x_dp - xl) - phi_1d*(-x_ddp + x_dp)/(x_dp - xl))/H
-        col[6] = i_d_idx
-        val[6] = 0.5*(e_dp*(-x_ddp + xl)/(x_qp - xl) + phi_2q*(-x_ddp + x_qp)/(x_qp - xl))/H
-        col[7] = pm_idx
-        val[7] = 0.5/(H*(w + 1))
-        csr_set_row(J_data, J_ptr, J_idx, 8, row, col, val)
-    else:
-        col[5] = i_q_idx
-        val[5] = 0.5*(-e_qp*(x_ddp - xl)/(x_dp - xl) - phi_1d*(-x_ddp + x_dp)/(x_dp - xl))/H
-        col[6] = i_d_idx
-        val[6] = 0.5*(e_dp*(-x_ddp + xl)/(x_qp - xl) + phi_2q*(-x_ddp + x_qp)/(x_qp - xl))/H
-        csr_set_row(J_data, J_ptr, J_idx, 7, row, col, val)
+    col[5] = pm_idx
+    val[5] = 0.5/(H*(w + 1))
+    csr_set_row(J_data, J_ptr, J_idx, 6, row, col, val)
+
+    col[0] = i_q_idx
+    val[0] = 0.5*(-e_qp*(x_ddp - xl)/(x_dp - xl) - phi_1d*(-x_ddp + x_dp)/(x_dp - xl))/H
+    col[1] = i_d_idx
+    val[1] = 0.5*(e_dp*(-x_ddp + xl)/(x_qp - xl) + phi_2q*(-x_ddp + x_qp)/(x_qp - xl))/H
+    csr_set_row(J_data, J_ptr, J_idx, 2, row, col, val)
 
     # sixth
     row = dp + 5

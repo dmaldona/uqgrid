@@ -81,8 +81,8 @@ def test_two_bus_system(data_dir):
     history = res["history"]
 
     # Calculate relative errors
-    error_volt1 = np.linalg.norm(np.abs((volt1_p - history[10, :]) / history[10, :]))
-    error_volt2 = np.linalg.norm(np.abs((volt2_p - history[12, :]) / history[12, :]))
+    error_volt1 = np.linalg.norm(np.abs((volt1_p - history[12, :]) / history[12, :]))
+    error_volt2 = np.linalg.norm(np.abs((volt2_p - history[14, :]) / history[14, :]))
     error_eqp = np.linalg.norm(np.abs((eq_p - history[0, :]) / history[0, :]))
     error_speed = np.linalg.norm(np.abs((speed - history[4, :]) / (history[4, :] + 1)))
 
