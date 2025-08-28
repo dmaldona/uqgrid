@@ -70,20 +70,24 @@ def run_single_scenario(
         base_psys, scenario, scenario_id,
         base_p_load, base_q_load,
         base_p_gen,  base_q_gen,
-        noise_type="normal", noise_var=0.1,
+        noise_type="normal", noise_var=0.1, 
+        global_seed=0, 
         balance_generation=False):
 
     psys = copy.deepcopy(base_psys)
 
+    ss = np.random.SeedSequence([global_seed, scenario["sample_idx"]])
+    rng_load, rng_gen = [np.random.default_rng(s) for s in ss.spawn(2)]
+
     #  Draw noise and obtain positive, scaled loads
     pL_scaled, qL_scaled, pL_noise, qL_noise = generate_perturbations(
         base_p_load, base_q_load,
-        noise_type=noise_type, var=noise_var,
+        noise_type=noise_type, var=noise_var, rng=rng_load, 
         return_noise=True)
 
     pG_scaled, qG_scaled, pG_noise, qG_noise = generate_perturbations(
         base_p_gen, base_q_gen,
-        noise_type=noise_type, var=noise_var,
+        noise_type=noise_type, var=noise_var, rng=rng_gen,
         return_noise=True)
 
     if balance_generation:
@@ -154,7 +158,7 @@ def run_simulation_driver_batched(
         batch_args = [
             (base_psys, scenarios_metadata[sid], sid,
              base_p, base_q, base_pG, base_qG, noise_type, noise_var, 
-             balance_generation)
+             balance_generation, 1234)
             for sid in batch_ids
         ]
 
@@ -217,7 +221,7 @@ def main():
     noise_type = "normal"   # "normal", "uniform", "none", 
     noise_var  = 0.10       # variance of the chosen distribution TODO: need to change this to be more flexible
 
-    balance_generation = False
+    balance_generation = True
 
     run_simulation_driver_batched(
         raw, dyr, metadata,
