@@ -1,0 +1,1892 @@
+{
+    "3dd58cdc-0afe-46aa-b581-4728ed5dd768": {
+        "sample_idx": 0,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_3dd58cdc-0afe-46aa-b581-4728ed5dd768.npz",
+        "diverged": false
+    },
+    "da640e97-214a-46da-aaf8-2f5b4c3f942d": {
+        "sample_idx": 0,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_da640e97-214a-46da-aaf8-2f5b4c3f942d.npz",
+        "diverged": false
+    },
+    "005a4286-b960-405f-bbfb-bd2db7b160d6": {
+        "sample_idx": 0,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_005a4286-b960-405f-bbfb-bd2db7b160d6.npz",
+        "diverged": false
+    },
+    "4d910403-0d95-4c98-aa35-514fddc4b44c": {
+        "sample_idx": 0,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4d910403-0d95-4c98-aa35-514fddc4b44c.npz",
+        "diverged": false
+    },
+    "05299223-cf80-4ee5-8215-8cca2b917ddc": {
+        "sample_idx": 0,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_05299223-cf80-4ee5-8215-8cca2b917ddc.npz",
+        "diverged": false
+    },
+    "e379eef3-6bf1-4375-b406-f20d21481ce3": {
+        "sample_idx": 0,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e379eef3-6bf1-4375-b406-f20d21481ce3.npz",
+        "diverged": false
+    },
+    "52c82df6-7024-46a6-bf29-a11c1c993cd1": {
+        "sample_idx": 0,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_52c82df6-7024-46a6-bf29-a11c1c993cd1.npz",
+        "diverged": false
+    },
+    "d4e75eef-b185-430f-a345-661f27e90de5": {
+        "sample_idx": 0,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_d4e75eef-b185-430f-a345-661f27e90de5.npz",
+        "diverged": false
+    },
+    "73ff12cd-0892-46bc-89c6-905877a0c8bc": {
+        "sample_idx": 0,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_73ff12cd-0892-46bc-89c6-905877a0c8bc.npz",
+        "diverged": true
+    },
+    "5b8aafcc-1952-4785-bd38-fe31688ba975": {
+        "sample_idx": 1,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_5b8aafcc-1952-4785-bd38-fe31688ba975.npz",
+        "diverged": false
+    },
+    "db2f32f7-530a-4e93-850c-8dfa4314985c": {
+        "sample_idx": 1,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_db2f32f7-530a-4e93-850c-8dfa4314985c.npz",
+        "diverged": false
+    },
+    "41530168-5312-4623-943b-8d7ac9ec2201": {
+        "sample_idx": 1,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_41530168-5312-4623-943b-8d7ac9ec2201.npz",
+        "diverged": false
+    },
+    "88760565-16b5-4ca1-a3f9-80361c9fdf31": {
+        "sample_idx": 1,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_88760565-16b5-4ca1-a3f9-80361c9fdf31.npz",
+        "diverged": false
+    },
+    "c66e3665-f87c-4491-8999-730a32a725f0": {
+        "sample_idx": 1,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_c66e3665-f87c-4491-8999-730a32a725f0.npz",
+        "diverged": false
+    },
+    "08c72978-2128-4a02-afa9-44e897da7ffd": {
+        "sample_idx": 1,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_08c72978-2128-4a02-afa9-44e897da7ffd.npz",
+        "diverged": false
+    },
+    "2e0a27c2-2c73-4c84-b950-76861ad9e559": {
+        "sample_idx": 1,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2e0a27c2-2c73-4c84-b950-76861ad9e559.npz",
+        "diverged": false
+    },
+    "f474d41c-fe48-4c82-8f6a-92668c838266": {
+        "sample_idx": 1,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f474d41c-fe48-4c82-8f6a-92668c838266.npz",
+        "diverged": false
+    },
+    "f543d0e6-23aa-401f-8841-57f66ff4d511": {
+        "sample_idx": 1,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f543d0e6-23aa-401f-8841-57f66ff4d511.npz",
+        "diverged": true
+    },
+    "79bfe1a7-77fc-4b83-a3ad-3b01acc4aa87": {
+        "sample_idx": 2,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_79bfe1a7-77fc-4b83-a3ad-3b01acc4aa87.npz",
+        "diverged": false
+    },
+    "267122bb-e7bd-4cd6-8bd9-e5d4a1446c4f": {
+        "sample_idx": 2,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_267122bb-e7bd-4cd6-8bd9-e5d4a1446c4f.npz",
+        "diverged": false
+    },
+    "9492b249-2a68-4aa4-ade1-a3987dce69f0": {
+        "sample_idx": 2,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_9492b249-2a68-4aa4-ade1-a3987dce69f0.npz",
+        "diverged": false
+    },
+    "f4c56ebc-df32-40f7-bb7d-b453c771c656": {
+        "sample_idx": 2,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f4c56ebc-df32-40f7-bb7d-b453c771c656.npz",
+        "diverged": false
+    },
+    "a6a947ac-cc73-4a95-b82c-952fab48116a": {
+        "sample_idx": 2,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a6a947ac-cc73-4a95-b82c-952fab48116a.npz",
+        "diverged": false
+    },
+    "9a3d5a26-6088-4037-b622-d37b09d91b72": {
+        "sample_idx": 2,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_9a3d5a26-6088-4037-b622-d37b09d91b72.npz",
+        "diverged": false
+    },
+    "3e66e2f1-2f09-41ab-9aba-98deb361bf11": {
+        "sample_idx": 2,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_3e66e2f1-2f09-41ab-9aba-98deb361bf11.npz",
+        "diverged": false
+    },
+    "e0a00cc5-b396-4bb2-8e30-06d7eca576d5": {
+        "sample_idx": 2,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e0a00cc5-b396-4bb2-8e30-06d7eca576d5.npz",
+        "diverged": false
+    },
+    "e5282fc5-9ab0-4d12-8d97-987fd5785d79": {
+        "sample_idx": 2,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e5282fc5-9ab0-4d12-8d97-987fd5785d79.npz",
+        "diverged": true
+    },
+    "8540994a-e7e8-4c0a-8a47-33e0f9c9ef40": {
+        "sample_idx": 3,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_8540994a-e7e8-4c0a-8a47-33e0f9c9ef40.npz",
+        "diverged": false
+    },
+    "b124b4e4-d388-489a-a152-2979d2209177": {
+        "sample_idx": 3,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_b124b4e4-d388-489a-a152-2979d2209177.npz",
+        "diverged": false
+    },
+    "9ebc7267-7698-47e8-bb59-8fca0dfcf2e3": {
+        "sample_idx": 3,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_9ebc7267-7698-47e8-bb59-8fca0dfcf2e3.npz",
+        "diverged": false
+    },
+    "152e7cbb-96fb-4a5a-a7c7-bf4ff880b2d8": {
+        "sample_idx": 3,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_152e7cbb-96fb-4a5a-a7c7-bf4ff880b2d8.npz",
+        "diverged": false
+    },
+    "0cbc6491-f691-493c-9709-267d3c941b2e": {
+        "sample_idx": 3,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0cbc6491-f691-493c-9709-267d3c941b2e.npz",
+        "diverged": false
+    },
+    "ecf470fd-6066-4b16-a685-5468bf316118": {
+        "sample_idx": 3,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ecf470fd-6066-4b16-a685-5468bf316118.npz",
+        "diverged": false
+    },
+    "f8dc4eca-38f2-4dda-b49e-7c1d2539bc07": {
+        "sample_idx": 3,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f8dc4eca-38f2-4dda-b49e-7c1d2539bc07.npz",
+        "diverged": false
+    },
+    "a90415a7-f0ec-43e3-b2c0-36bdc61d34f6": {
+        "sample_idx": 3,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a90415a7-f0ec-43e3-b2c0-36bdc61d34f6.npz",
+        "diverged": false
+    },
+    "fbb2bfa7-bc23-4914-86be-737aca4a951b": {
+        "sample_idx": 3,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_fbb2bfa7-bc23-4914-86be-737aca4a951b.npz",
+        "diverged": true
+    },
+    "2168701c-1402-4845-b1f5-2d695954351c": {
+        "sample_idx": 4,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2168701c-1402-4845-b1f5-2d695954351c.npz",
+        "diverged": false
+    },
+    "eca8dade-4776-4f94-ad33-47581680b8d8": {
+        "sample_idx": 4,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_eca8dade-4776-4f94-ad33-47581680b8d8.npz",
+        "diverged": false
+    },
+    "b0a9a40b-949c-409d-920b-f99be1d2bf1f": {
+        "sample_idx": 4,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_b0a9a40b-949c-409d-920b-f99be1d2bf1f.npz",
+        "diverged": false
+    },
+    "818c5b77-866d-4f71-9c80-7dff734424fb": {
+        "sample_idx": 4,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_818c5b77-866d-4f71-9c80-7dff734424fb.npz",
+        "diverged": false
+    },
+    "9318633d-79a9-4bf5-825c-9e9dcea5027e": {
+        "sample_idx": 4,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_9318633d-79a9-4bf5-825c-9e9dcea5027e.npz",
+        "diverged": false
+    },
+    "8a690354-d2e7-454b-899c-5b71e1089f9f": {
+        "sample_idx": 4,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_8a690354-d2e7-454b-899c-5b71e1089f9f.npz",
+        "diverged": false
+    },
+    "4da0ca2f-6cbc-4f72-bedc-ea13da7923a2": {
+        "sample_idx": 4,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4da0ca2f-6cbc-4f72-bedc-ea13da7923a2.npz",
+        "diverged": false
+    },
+    "b44004c3-f887-4da7-b9b8-4bd4b09bcae5": {
+        "sample_idx": 4,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_b44004c3-f887-4da7-b9b8-4bd4b09bcae5.npz",
+        "diverged": false
+    },
+    "2d4d62a8-5751-470c-a636-bf5ac4d30220": {
+        "sample_idx": 4,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2d4d62a8-5751-470c-a636-bf5ac4d30220.npz",
+        "diverged": true
+    },
+    "f6cb8111-0acf-4ab0-8eff-2e04a4bf472e": {
+        "sample_idx": 5,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f6cb8111-0acf-4ab0-8eff-2e04a4bf472e.npz",
+        "diverged": false
+    },
+    "f27db1f6-ce34-49d6-9c16-04bc3c73147b": {
+        "sample_idx": 5,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f27db1f6-ce34-49d6-9c16-04bc3c73147b.npz",
+        "diverged": false
+    },
+    "4b48c0cb-aeaa-423c-b903-0ec6499a2fa5": {
+        "sample_idx": 5,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4b48c0cb-aeaa-423c-b903-0ec6499a2fa5.npz",
+        "diverged": false
+    },
+    "e5267549-419b-4967-8f51-3a0729c7408c": {
+        "sample_idx": 5,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e5267549-419b-4967-8f51-3a0729c7408c.npz",
+        "diverged": false
+    },
+    "6a92ca7d-508d-42d3-b5c3-f2192cc9f5fd": {
+        "sample_idx": 5,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_6a92ca7d-508d-42d3-b5c3-f2192cc9f5fd.npz",
+        "diverged": false
+    },
+    "44292ec0-d5cb-4c9f-940d-c0738f1776f5": {
+        "sample_idx": 5,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_44292ec0-d5cb-4c9f-940d-c0738f1776f5.npz",
+        "diverged": false
+    },
+    "0f772c27-ee4b-4a7d-a4c3-d4d6b077f68e": {
+        "sample_idx": 5,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0f772c27-ee4b-4a7d-a4c3-d4d6b077f68e.npz",
+        "diverged": false
+    },
+    "8884c761-61c0-47ba-ac46-5dd0071dadb6": {
+        "sample_idx": 5,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_8884c761-61c0-47ba-ac46-5dd0071dadb6.npz",
+        "diverged": false
+    },
+    "7a81019f-d8d8-468e-abeb-7c2e13d45e55": {
+        "sample_idx": 5,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7a81019f-d8d8-468e-abeb-7c2e13d45e55.npz",
+        "diverged": true
+    },
+    "151a1521-a8b2-4893-b207-8d0fbb0f8aee": {
+        "sample_idx": 6,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_151a1521-a8b2-4893-b207-8d0fbb0f8aee.npz",
+        "diverged": false
+    },
+    "bac109d3-26d3-464f-b257-cfb2ebeef859": {
+        "sample_idx": 6,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_bac109d3-26d3-464f-b257-cfb2ebeef859.npz",
+        "diverged": false
+    },
+    "a1bae167-cba0-4d05-a327-2a4fbcd51817": {
+        "sample_idx": 6,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a1bae167-cba0-4d05-a327-2a4fbcd51817.npz",
+        "diverged": false
+    },
+    "e30fe27f-2519-46d7-9be8-0c7dafdd3325": {
+        "sample_idx": 6,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e30fe27f-2519-46d7-9be8-0c7dafdd3325.npz",
+        "diverged": false
+    },
+    "4f97646e-a763-4a1e-a0c1-b232102f96a5": {
+        "sample_idx": 6,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4f97646e-a763-4a1e-a0c1-b232102f96a5.npz",
+        "diverged": false
+    },
+    "6f62f078-373f-4a4d-9a83-d0835ab0981d": {
+        "sample_idx": 6,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_6f62f078-373f-4a4d-9a83-d0835ab0981d.npz",
+        "diverged": false
+    },
+    "ceea49b3-f8aa-4a3b-a52d-ab35da2bf895": {
+        "sample_idx": 6,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ceea49b3-f8aa-4a3b-a52d-ab35da2bf895.npz",
+        "diverged": false
+    },
+    "e422d610-9be7-47be-80dd-b4e831916ef1": {
+        "sample_idx": 6,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e422d610-9be7-47be-80dd-b4e831916ef1.npz",
+        "diverged": false
+    },
+    "79797128-7016-48a0-aa25-b13f82114589": {
+        "sample_idx": 6,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_79797128-7016-48a0-aa25-b13f82114589.npz",
+        "diverged": true
+    },
+    "248a9b15-f614-415a-a33e-73a50df8b261": {
+        "sample_idx": 7,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_248a9b15-f614-415a-a33e-73a50df8b261.npz",
+        "diverged": false
+    },
+    "65a3c86b-554c-4be2-8611-9d8ec96f9bdb": {
+        "sample_idx": 7,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_65a3c86b-554c-4be2-8611-9d8ec96f9bdb.npz",
+        "diverged": false
+    },
+    "9f6bb9db-c55f-4606-9eca-9ec22e204e01": {
+        "sample_idx": 7,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_9f6bb9db-c55f-4606-9eca-9ec22e204e01.npz",
+        "diverged": false
+    },
+    "7ade49b4-2943-4cac-87c9-05d16df5a923": {
+        "sample_idx": 7,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7ade49b4-2943-4cac-87c9-05d16df5a923.npz",
+        "diverged": false
+    },
+    "300089ce-0d92-4239-9b41-339f157c364b": {
+        "sample_idx": 7,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_300089ce-0d92-4239-9b41-339f157c364b.npz",
+        "diverged": false
+    },
+    "ca10dbfa-474a-44ec-8c76-8b81d0b1f18e": {
+        "sample_idx": 7,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ca10dbfa-474a-44ec-8c76-8b81d0b1f18e.npz",
+        "diverged": false
+    },
+    "8c6a79f0-093f-42cd-8abf-276c4283e7ed": {
+        "sample_idx": 7,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_8c6a79f0-093f-42cd-8abf-276c4283e7ed.npz",
+        "diverged": false
+    },
+    "04b80946-f69e-4984-9f1a-ca6ad0802321": {
+        "sample_idx": 7,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_04b80946-f69e-4984-9f1a-ca6ad0802321.npz",
+        "diverged": false
+    },
+    "ae9482e4-1d3c-4f40-b028-7c24a7c87775": {
+        "sample_idx": 7,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ae9482e4-1d3c-4f40-b028-7c24a7c87775.npz",
+        "diverged": true
+    },
+    "d8544218-74b8-43a3-9a3b-5f9c93603465": {
+        "sample_idx": 8,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_d8544218-74b8-43a3-9a3b-5f9c93603465.npz",
+        "diverged": false
+    },
+    "b2ee38f6-66f8-443a-8fc4-70d7e44b97df": {
+        "sample_idx": 8,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_b2ee38f6-66f8-443a-8fc4-70d7e44b97df.npz",
+        "diverged": false
+    },
+    "6547f45b-ac1d-40f7-ad3f-829095ba2ad1": {
+        "sample_idx": 8,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_6547f45b-ac1d-40f7-ad3f-829095ba2ad1.npz",
+        "diverged": false
+    },
+    "c5294e57-fd22-457e-99db-8b171e12a099": {
+        "sample_idx": 8,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_c5294e57-fd22-457e-99db-8b171e12a099.npz",
+        "diverged": false
+    },
+    "4b88e7a2-8873-4301-9b89-fc7e912ed595": {
+        "sample_idx": 8,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4b88e7a2-8873-4301-9b89-fc7e912ed595.npz",
+        "diverged": false
+    },
+    "796e5884-d463-460b-9197-86ff888eb97b": {
+        "sample_idx": 8,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_796e5884-d463-460b-9197-86ff888eb97b.npz",
+        "diverged": false
+    },
+    "47bc179e-8e85-4b1a-80be-f05e61384d81": {
+        "sample_idx": 8,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_47bc179e-8e85-4b1a-80be-f05e61384d81.npz",
+        "diverged": false
+    },
+    "24e3faed-792e-4f3f-9da7-c84b80144fc5": {
+        "sample_idx": 8,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_24e3faed-792e-4f3f-9da7-c84b80144fc5.npz",
+        "diverged": false
+    },
+    "0b6f3a30-fd98-4125-be93-1714e8a96aef": {
+        "sample_idx": 8,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0b6f3a30-fd98-4125-be93-1714e8a96aef.npz",
+        "diverged": true
+    },
+    "115e96d1-5996-4221-90cf-0bff93ffbdf9": {
+        "sample_idx": 9,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_115e96d1-5996-4221-90cf-0bff93ffbdf9.npz",
+        "diverged": false
+    },
+    "58a3edf4-8373-4543-beb6-47edb6ade75f": {
+        "sample_idx": 9,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_58a3edf4-8373-4543-beb6-47edb6ade75f.npz",
+        "diverged": false
+    },
+    "145aee8c-19a4-4f15-9488-60fe99a82c3b": {
+        "sample_idx": 9,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_145aee8c-19a4-4f15-9488-60fe99a82c3b.npz",
+        "diverged": false
+    },
+    "735dabca-6dee-4c42-84fd-c5dec0849cb2": {
+        "sample_idx": 9,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_735dabca-6dee-4c42-84fd-c5dec0849cb2.npz",
+        "diverged": false
+    },
+    "5705cb0c-2ab5-4097-a89f-5608aacd8f4a": {
+        "sample_idx": 9,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_5705cb0c-2ab5-4097-a89f-5608aacd8f4a.npz",
+        "diverged": false
+    },
+    "04f6421d-7e54-4992-94a3-3b7faf9c802f": {
+        "sample_idx": 9,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_04f6421d-7e54-4992-94a3-3b7faf9c802f.npz",
+        "diverged": false
+    },
+    "a189d129-6780-4b63-9865-6af4f12315db": {
+        "sample_idx": 9,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a189d129-6780-4b63-9865-6af4f12315db.npz",
+        "diverged": false
+    },
+    "c171770d-2baf-409e-9942-aea9aa293fd9": {
+        "sample_idx": 9,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_c171770d-2baf-409e-9942-aea9aa293fd9.npz",
+        "diverged": false
+    },
+    "fefc71f2-c403-4ce4-88dc-d7ec95550a74": {
+        "sample_idx": 9,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_fefc71f2-c403-4ce4-88dc-d7ec95550a74.npz",
+        "diverged": true
+    },
+    "559547f9-d8cb-4548-9fde-7bce68aa6251": {
+        "sample_idx": 10,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_559547f9-d8cb-4548-9fde-7bce68aa6251.npz",
+        "diverged": false
+    },
+    "26d0ddd4-5f99-45bb-ab68-9959000c4f37": {
+        "sample_idx": 10,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_26d0ddd4-5f99-45bb-ab68-9959000c4f37.npz",
+        "diverged": false
+    },
+    "7d45b6f9-a3ba-4cc8-a56d-140bc1a727f0": {
+        "sample_idx": 10,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7d45b6f9-a3ba-4cc8-a56d-140bc1a727f0.npz",
+        "diverged": false
+    },
+    "fe52dd06-f055-4211-a6c5-585d72205234": {
+        "sample_idx": 10,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_fe52dd06-f055-4211-a6c5-585d72205234.npz",
+        "diverged": false
+    },
+    "26e82ef2-b067-4e53-a4e2-c7f1f2eb406a": {
+        "sample_idx": 10,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_26e82ef2-b067-4e53-a4e2-c7f1f2eb406a.npz",
+        "diverged": false
+    },
+    "570d19a2-689e-46fb-80e1-dbd10590306d": {
+        "sample_idx": 10,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_570d19a2-689e-46fb-80e1-dbd10590306d.npz",
+        "diverged": false
+    },
+    "a9093198-f3ef-41b0-833c-b6f37663a5a6": {
+        "sample_idx": 10,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a9093198-f3ef-41b0-833c-b6f37663a5a6.npz",
+        "diverged": false
+    },
+    "86db7041-6b26-4930-a063-8decffec50eb": {
+        "sample_idx": 10,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_86db7041-6b26-4930-a063-8decffec50eb.npz",
+        "diverged": false
+    },
+    "d388076d-dfd6-45f6-891b-9062af80e30d": {
+        "sample_idx": 10,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_d388076d-dfd6-45f6-891b-9062af80e30d.npz",
+        "diverged": true
+    },
+    "8c14f835-e85d-4589-abc4-dab9efa89468": {
+        "sample_idx": 11,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_8c14f835-e85d-4589-abc4-dab9efa89468.npz",
+        "diverged": false
+    },
+    "ed633472-05a8-4d47-a68d-36f6e5b014a6": {
+        "sample_idx": 11,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ed633472-05a8-4d47-a68d-36f6e5b014a6.npz",
+        "diverged": false
+    },
+    "0a23a806-27f6-4cda-a651-773eec84e677": {
+        "sample_idx": 11,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0a23a806-27f6-4cda-a651-773eec84e677.npz",
+        "diverged": false
+    },
+    "9a9a1bca-99cd-4ef9-90b4-361bcc52ce25": {
+        "sample_idx": 11,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_9a9a1bca-99cd-4ef9-90b4-361bcc52ce25.npz",
+        "diverged": false
+    },
+    "3b01e5e5-7837-46f7-ad26-a73084dabd66": {
+        "sample_idx": 11,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_3b01e5e5-7837-46f7-ad26-a73084dabd66.npz",
+        "diverged": false
+    },
+    "b01de37e-f2c5-4c8f-9f74-8c5cff574fe8": {
+        "sample_idx": 11,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_b01de37e-f2c5-4c8f-9f74-8c5cff574fe8.npz",
+        "diverged": false
+    },
+    "59493a70-7502-4600-862d-03d28d51d37a": {
+        "sample_idx": 11,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_59493a70-7502-4600-862d-03d28d51d37a.npz",
+        "diverged": false
+    },
+    "001ffe87-f2a7-4ba8-9a63-3c1a72d80504": {
+        "sample_idx": 11,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_001ffe87-f2a7-4ba8-9a63-3c1a72d80504.npz",
+        "diverged": false
+    },
+    "ced9946c-018e-4d80-be14-ba58992bf28c": {
+        "sample_idx": 11,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ced9946c-018e-4d80-be14-ba58992bf28c.npz",
+        "diverged": true
+    },
+    "61e2d1e0-1b67-4f04-9c2e-4b0272410aa5": {
+        "sample_idx": 12,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_61e2d1e0-1b67-4f04-9c2e-4b0272410aa5.npz",
+        "diverged": false
+    },
+    "2e9ce907-f34a-400e-b035-ac6926baf27f": {
+        "sample_idx": 12,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2e9ce907-f34a-400e-b035-ac6926baf27f.npz",
+        "diverged": false
+    },
+    "d44bf95a-0cf8-4bb3-8b8d-672316a36495": {
+        "sample_idx": 12,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_d44bf95a-0cf8-4bb3-8b8d-672316a36495.npz",
+        "diverged": false
+    },
+    "f5324b91-13c2-43ce-aa16-bd79d7d63606": {
+        "sample_idx": 12,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f5324b91-13c2-43ce-aa16-bd79d7d63606.npz",
+        "diverged": false
+    },
+    "4826212f-7184-4906-9335-9fc9bc9a2c0f": {
+        "sample_idx": 12,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4826212f-7184-4906-9335-9fc9bc9a2c0f.npz",
+        "diverged": false
+    },
+    "6faa75ea-bfc1-4c77-aa0c-b5db14ed86a4": {
+        "sample_idx": 12,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_6faa75ea-bfc1-4c77-aa0c-b5db14ed86a4.npz",
+        "diverged": false
+    },
+    "32816c61-5616-4103-b7fc-fdd8a0482c76": {
+        "sample_idx": 12,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_32816c61-5616-4103-b7fc-fdd8a0482c76.npz",
+        "diverged": false
+    },
+    "ae61e4e9-fcdb-424b-bc58-533c21e2cb16": {
+        "sample_idx": 12,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ae61e4e9-fcdb-424b-bc58-533c21e2cb16.npz",
+        "diverged": false
+    },
+    "4eb10580-a259-43fe-8a88-a4c3256c7639": {
+        "sample_idx": 12,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4eb10580-a259-43fe-8a88-a4c3256c7639.npz",
+        "diverged": true
+    },
+    "7aa77953-3bb9-4685-b264-048181a7e285": {
+        "sample_idx": 13,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7aa77953-3bb9-4685-b264-048181a7e285.npz",
+        "diverged": false
+    },
+    "e122b784-4a57-4af6-b0e8-3e38c6d27927": {
+        "sample_idx": 13,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e122b784-4a57-4af6-b0e8-3e38c6d27927.npz",
+        "diverged": false
+    },
+    "3cd97e8c-6b6b-4c96-a651-787cc31fec8b": {
+        "sample_idx": 13,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_3cd97e8c-6b6b-4c96-a651-787cc31fec8b.npz",
+        "diverged": false
+    },
+    "106df0ef-cdfa-4fa9-be93-bd4f81bbd0d3": {
+        "sample_idx": 13,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_106df0ef-cdfa-4fa9-be93-bd4f81bbd0d3.npz",
+        "diverged": false
+    },
+    "115cb72f-b5d7-499a-bfe4-fac11a3dcbf7": {
+        "sample_idx": 13,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_115cb72f-b5d7-499a-bfe4-fac11a3dcbf7.npz",
+        "diverged": false
+    },
+    "433aa043-0531-43ab-9798-1f953a09762d": {
+        "sample_idx": 13,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_433aa043-0531-43ab-9798-1f953a09762d.npz",
+        "diverged": false
+    },
+    "3de31a7c-c035-4372-80eb-1321be90378b": {
+        "sample_idx": 13,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_3de31a7c-c035-4372-80eb-1321be90378b.npz",
+        "diverged": false
+    },
+    "47f090e0-31a3-44c5-81d6-2efdad4edc6a": {
+        "sample_idx": 13,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_47f090e0-31a3-44c5-81d6-2efdad4edc6a.npz",
+        "diverged": false
+    },
+    "8bf7b7f4-f816-42b1-8bed-3a81896493d9": {
+        "sample_idx": 13,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_8bf7b7f4-f816-42b1-8bed-3a81896493d9.npz",
+        "diverged": true
+    },
+    "7ad9629c-568b-410b-82b3-e16c7bc95619": {
+        "sample_idx": 14,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7ad9629c-568b-410b-82b3-e16c7bc95619.npz",
+        "diverged": false
+    },
+    "ebb11671-33f9-41a1-832c-5a74e439fa98": {
+        "sample_idx": 14,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ebb11671-33f9-41a1-832c-5a74e439fa98.npz",
+        "diverged": false
+    },
+    "848ae6e0-ba96-465d-99a1-1ea74bb63493": {
+        "sample_idx": 14,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_848ae6e0-ba96-465d-99a1-1ea74bb63493.npz",
+        "diverged": false
+    },
+    "774f4c18-6dea-4337-84c9-e3d7540a4e13": {
+        "sample_idx": 14,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_774f4c18-6dea-4337-84c9-e3d7540a4e13.npz",
+        "diverged": false
+    },
+    "695acc90-5a84-4904-9b5b-94e46b614f5e": {
+        "sample_idx": 14,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_695acc90-5a84-4904-9b5b-94e46b614f5e.npz",
+        "diverged": false
+    },
+    "3072def9-453c-47d3-894f-6f16683ae7b4": {
+        "sample_idx": 14,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_3072def9-453c-47d3-894f-6f16683ae7b4.npz",
+        "diverged": false
+    },
+    "1c566c00-60b6-4d23-8eeb-aaa684d41eaa": {
+        "sample_idx": 14,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_1c566c00-60b6-4d23-8eeb-aaa684d41eaa.npz",
+        "diverged": false
+    },
+    "c444ca29-0626-419b-a898-68d0b371869b": {
+        "sample_idx": 14,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_c444ca29-0626-419b-a898-68d0b371869b.npz",
+        "diverged": false
+    },
+    "5229ca62-377f-4e33-a2af-65f870264106": {
+        "sample_idx": 14,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_5229ca62-377f-4e33-a2af-65f870264106.npz",
+        "diverged": true
+    },
+    "0f1dc781-43f5-404c-8bff-1a3cd21ef5af": {
+        "sample_idx": 15,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0f1dc781-43f5-404c-8bff-1a3cd21ef5af.npz",
+        "diverged": false
+    },
+    "c8c3929b-d2f9-40ff-b3a3-3d66ec8dd4b0": {
+        "sample_idx": 15,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_c8c3929b-d2f9-40ff-b3a3-3d66ec8dd4b0.npz",
+        "diverged": false
+    },
+    "3c67c8ab-9323-4eb2-b047-ae6dce05dc5c": {
+        "sample_idx": 15,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_3c67c8ab-9323-4eb2-b047-ae6dce05dc5c.npz",
+        "diverged": false
+    },
+    "0a9e60d3-0f18-489d-a96e-b5c34d629d13": {
+        "sample_idx": 15,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0a9e60d3-0f18-489d-a96e-b5c34d629d13.npz",
+        "diverged": false
+    },
+    "8b981463-4056-4b5c-8902-d7a52d1961f2": {
+        "sample_idx": 15,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_8b981463-4056-4b5c-8902-d7a52d1961f2.npz",
+        "diverged": false
+    },
+    "b4adfc78-e2c0-4575-9958-ac29307c80de": {
+        "sample_idx": 15,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_b4adfc78-e2c0-4575-9958-ac29307c80de.npz",
+        "diverged": false
+    },
+    "65468283-ee93-49e1-a9e0-164f7afe12b3": {
+        "sample_idx": 15,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_65468283-ee93-49e1-a9e0-164f7afe12b3.npz",
+        "diverged": false
+    },
+    "2de56fcc-ae38-48dc-bb6a-a028db0a1d50": {
+        "sample_idx": 15,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2de56fcc-ae38-48dc-bb6a-a028db0a1d50.npz",
+        "diverged": false
+    },
+    "a7a0fdfb-e873-479f-ad6d-b7ab514358ac": {
+        "sample_idx": 15,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a7a0fdfb-e873-479f-ad6d-b7ab514358ac.npz",
+        "diverged": true
+    },
+    "bd1ea41c-a626-4ae7-a3bf-b29a3f6b9746": {
+        "sample_idx": 16,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_bd1ea41c-a626-4ae7-a3bf-b29a3f6b9746.npz",
+        "diverged": false
+    },
+    "f040911b-61be-4c8d-84ff-a76617c352d9": {
+        "sample_idx": 16,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f040911b-61be-4c8d-84ff-a76617c352d9.npz",
+        "diverged": false
+    },
+    "2f349874-09d4-4fd4-8244-c8caea06ffad": {
+        "sample_idx": 16,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2f349874-09d4-4fd4-8244-c8caea06ffad.npz",
+        "diverged": false
+    },
+    "f634946c-24a4-4cfb-ada4-1efc61502a32": {
+        "sample_idx": 16,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f634946c-24a4-4cfb-ada4-1efc61502a32.npz",
+        "diverged": false
+    },
+    "a9f70d1e-b652-4206-9abb-ba07e79ffd18": {
+        "sample_idx": 16,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a9f70d1e-b652-4206-9abb-ba07e79ffd18.npz",
+        "diverged": false
+    },
+    "aab42446-000b-4210-8a5f-c7afa8252108": {
+        "sample_idx": 16,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_aab42446-000b-4210-8a5f-c7afa8252108.npz",
+        "diverged": false
+    },
+    "4ea23a62-e373-4ed4-af46-c5770abed6ce": {
+        "sample_idx": 16,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4ea23a62-e373-4ed4-af46-c5770abed6ce.npz",
+        "diverged": false
+    },
+    "edac3338-59f9-428d-98c3-e20c067d4eb7": {
+        "sample_idx": 16,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_edac3338-59f9-428d-98c3-e20c067d4eb7.npz",
+        "diverged": false
+    },
+    "2f098eff-3dd6-4070-9761-f51ec4a52bf6": {
+        "sample_idx": 16,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2f098eff-3dd6-4070-9761-f51ec4a52bf6.npz",
+        "diverged": true
+    },
+    "2ea7a4a1-93b6-44f4-a579-9f8c647405af": {
+        "sample_idx": 17,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2ea7a4a1-93b6-44f4-a579-9f8c647405af.npz",
+        "diverged": false
+    },
+    "bdb1c00b-5645-4efa-ab03-6bb20d296c91": {
+        "sample_idx": 17,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_bdb1c00b-5645-4efa-ab03-6bb20d296c91.npz",
+        "diverged": false
+    },
+    "36eebb97-ed0d-47d5-b4b0-6baef24f24b2": {
+        "sample_idx": 17,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_36eebb97-ed0d-47d5-b4b0-6baef24f24b2.npz",
+        "diverged": false
+    },
+    "00d80e08-1751-470c-8000-df8742066c6f": {
+        "sample_idx": 17,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_00d80e08-1751-470c-8000-df8742066c6f.npz",
+        "diverged": false
+    },
+    "48ae3b89-efda-4641-925b-a7a1fc763b1b": {
+        "sample_idx": 17,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_48ae3b89-efda-4641-925b-a7a1fc763b1b.npz",
+        "diverged": false
+    },
+    "46370991-69cd-4ca8-a7b7-2c25ec2f6dd0": {
+        "sample_idx": 17,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_46370991-69cd-4ca8-a7b7-2c25ec2f6dd0.npz",
+        "diverged": false
+    },
+    "49cab4b3-8391-4705-8089-5cf7d0439233": {
+        "sample_idx": 17,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_49cab4b3-8391-4705-8089-5cf7d0439233.npz",
+        "diverged": false
+    },
+    "12c92f44-c69a-4624-89be-54033e47a3d1": {
+        "sample_idx": 17,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_12c92f44-c69a-4624-89be-54033e47a3d1.npz",
+        "diverged": false
+    },
+    "1cbfe993-9caa-46d6-9af0-5019abdf9cf1": {
+        "sample_idx": 17,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_1cbfe993-9caa-46d6-9af0-5019abdf9cf1.npz",
+        "diverged": true
+    },
+    "039c42b6-d0ee-4eb0-904b-a2c59c0bd9d8": {
+        "sample_idx": 18,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_039c42b6-d0ee-4eb0-904b-a2c59c0bd9d8.npz",
+        "diverged": false
+    },
+    "09cc88f7-1c61-44ee-a744-c9cb19ea4532": {
+        "sample_idx": 18,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_09cc88f7-1c61-44ee-a744-c9cb19ea4532.npz",
+        "diverged": false
+    },
+    "4fd2c516-8417-4cb7-9945-e0dd35b74fdf": {
+        "sample_idx": 18,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4fd2c516-8417-4cb7-9945-e0dd35b74fdf.npz",
+        "diverged": false
+    },
+    "20d2f56f-17c2-4a08-8e68-91389c819fee": {
+        "sample_idx": 18,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_20d2f56f-17c2-4a08-8e68-91389c819fee.npz",
+        "diverged": false
+    },
+    "6c35b3d6-caf4-4997-a246-fcaead78f9d9": {
+        "sample_idx": 18,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_6c35b3d6-caf4-4997-a246-fcaead78f9d9.npz",
+        "diverged": false
+    },
+    "7e02087c-5aa8-464d-bde3-3e7cc81d8592": {
+        "sample_idx": 18,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7e02087c-5aa8-464d-bde3-3e7cc81d8592.npz",
+        "diverged": false
+    },
+    "64068de0-4dc6-4671-a52f-7884d149a948": {
+        "sample_idx": 18,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_64068de0-4dc6-4671-a52f-7884d149a948.npz",
+        "diverged": false
+    },
+    "e48cf878-2e8e-4118-b6e2-ad19659ba4b0": {
+        "sample_idx": 18,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e48cf878-2e8e-4118-b6e2-ad19659ba4b0.npz",
+        "diverged": false
+    },
+    "c17c0600-fb69-4bed-b049-2152c619ef11": {
+        "sample_idx": 18,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_c17c0600-fb69-4bed-b049-2152c619ef11.npz",
+        "diverged": true
+    },
+    "5b4b489e-3e28-4b0a-9c11-196979d0f3fa": {
+        "sample_idx": 19,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_5b4b489e-3e28-4b0a-9c11-196979d0f3fa.npz",
+        "diverged": false
+    },
+    "0f17926d-c513-4674-bb85-a448b3cb12cb": {
+        "sample_idx": 19,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0f17926d-c513-4674-bb85-a448b3cb12cb.npz",
+        "diverged": false
+    },
+    "833bd132-6745-4576-b4f6-e2b786387a59": {
+        "sample_idx": 19,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_833bd132-6745-4576-b4f6-e2b786387a59.npz",
+        "diverged": false
+    },
+    "b9fefcd3-d7ef-4d3b-9b6e-0cc37b6b775e": {
+        "sample_idx": 19,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_b9fefcd3-d7ef-4d3b-9b6e-0cc37b6b775e.npz",
+        "diverged": false
+    },
+    "a33cad2e-3bc6-436b-9c17-fac33944a26d": {
+        "sample_idx": 19,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a33cad2e-3bc6-436b-9c17-fac33944a26d.npz",
+        "diverged": false
+    },
+    "4558569c-dd88-45e1-8f13-269454c13961": {
+        "sample_idx": 19,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4558569c-dd88-45e1-8f13-269454c13961.npz",
+        "diverged": false
+    },
+    "bb1dd190-cbd4-472f-92a4-26f47dcae0c7": {
+        "sample_idx": 19,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_bb1dd190-cbd4-472f-92a4-26f47dcae0c7.npz",
+        "diverged": false
+    },
+    "37fbed30-c8de-4c54-bf50-e41f5db69d84": {
+        "sample_idx": 19,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_37fbed30-c8de-4c54-bf50-e41f5db69d84.npz",
+        "diverged": false
+    },
+    "348203ca-7279-42e1-a7bc-cdeb5cc88614": {
+        "sample_idx": 19,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_348203ca-7279-42e1-a7bc-cdeb5cc88614.npz",
+        "diverged": true
+    },
+    "e2b5743a-a17b-40f8-8bf7-de9459a496cd": {
+        "sample_idx": 20,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e2b5743a-a17b-40f8-8bf7-de9459a496cd.npz",
+        "diverged": false
+    },
+    "31996976-ec13-429a-a26e-44e2d74459dc": {
+        "sample_idx": 20,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_31996976-ec13-429a-a26e-44e2d74459dc.npz",
+        "diverged": false
+    },
+    "28faadaf-5b86-4bf7-9941-d960d596d9b4": {
+        "sample_idx": 20,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_28faadaf-5b86-4bf7-9941-d960d596d9b4.npz",
+        "diverged": false
+    },
+    "c2743fe1-887c-485a-8926-aa93441b04c0": {
+        "sample_idx": 20,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_c2743fe1-887c-485a-8926-aa93441b04c0.npz",
+        "diverged": false
+    },
+    "9fa1fcdd-4b51-4f9c-8623-41142f6d6a97": {
+        "sample_idx": 20,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_9fa1fcdd-4b51-4f9c-8623-41142f6d6a97.npz",
+        "diverged": false
+    },
+    "f9cdfbc6-9af7-4ee1-9363-e674358c0e5e": {
+        "sample_idx": 20,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f9cdfbc6-9af7-4ee1-9363-e674358c0e5e.npz",
+        "diverged": false
+    },
+    "7a7118af-4c5c-4ad0-9e9f-98f5c16bb01e": {
+        "sample_idx": 20,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7a7118af-4c5c-4ad0-9e9f-98f5c16bb01e.npz",
+        "diverged": false
+    },
+    "8a69ca2e-a692-4929-974b-01b669fb391c": {
+        "sample_idx": 20,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_8a69ca2e-a692-4929-974b-01b669fb391c.npz",
+        "diverged": false
+    },
+    "64673045-b617-4357-ad0f-dd99f63f90d5": {
+        "sample_idx": 20,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_64673045-b617-4357-ad0f-dd99f63f90d5.npz",
+        "diverged": true
+    },
+    "baccd593-e5e1-4e19-ab2d-815846c4d926": {
+        "sample_idx": 21,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_baccd593-e5e1-4e19-ab2d-815846c4d926.npz",
+        "diverged": false
+    },
+    "0b9ecc3d-4850-4a35-927e-60a897491fdd": {
+        "sample_idx": 21,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0b9ecc3d-4850-4a35-927e-60a897491fdd.npz",
+        "diverged": false
+    },
+    "9e06f9bc-3137-436d-94e5-71e3d97c4125": {
+        "sample_idx": 21,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_9e06f9bc-3137-436d-94e5-71e3d97c4125.npz",
+        "diverged": false
+    },
+    "6b83510e-efde-45f5-bf9b-ba341f2b7526": {
+        "sample_idx": 21,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_6b83510e-efde-45f5-bf9b-ba341f2b7526.npz",
+        "diverged": false
+    },
+    "c2ac5ca9-ca3e-4793-b1e6-54ee1a792ae7": {
+        "sample_idx": 21,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_c2ac5ca9-ca3e-4793-b1e6-54ee1a792ae7.npz",
+        "diverged": false
+    },
+    "1b0929f5-336e-4a54-a8c1-e92b7a2a1588": {
+        "sample_idx": 21,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_1b0929f5-336e-4a54-a8c1-e92b7a2a1588.npz",
+        "diverged": false
+    },
+    "abc2b220-7a99-4343-9593-2df60693d2c8": {
+        "sample_idx": 21,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_abc2b220-7a99-4343-9593-2df60693d2c8.npz",
+        "diverged": false
+    },
+    "bc09c62f-75d6-4657-8a01-acfe4c7e38bc": {
+        "sample_idx": 21,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_bc09c62f-75d6-4657-8a01-acfe4c7e38bc.npz",
+        "diverged": false
+    },
+    "675398d1-a813-4409-95b8-334d168c7185": {
+        "sample_idx": 21,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_675398d1-a813-4409-95b8-334d168c7185.npz",
+        "diverged": true
+    },
+    "ca1f35b2-63f1-4426-84f1-68b0eb3775da": {
+        "sample_idx": 22,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ca1f35b2-63f1-4426-84f1-68b0eb3775da.npz",
+        "diverged": false
+    },
+    "2ff65783-18eb-4ce9-93f1-1ed3f37fbb46": {
+        "sample_idx": 22,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2ff65783-18eb-4ce9-93f1-1ed3f37fbb46.npz",
+        "diverged": false
+    },
+    "812bde5a-70d1-4e9d-b810-4c0422135032": {
+        "sample_idx": 22,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_812bde5a-70d1-4e9d-b810-4c0422135032.npz",
+        "diverged": false
+    },
+    "99ad1070-fc65-4a74-a627-d6a3acca820b": {
+        "sample_idx": 22,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_99ad1070-fc65-4a74-a627-d6a3acca820b.npz",
+        "diverged": false
+    },
+    "900ccdbf-3d6f-42b7-83a5-600880c1db2f": {
+        "sample_idx": 22,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_900ccdbf-3d6f-42b7-83a5-600880c1db2f.npz",
+        "diverged": false
+    },
+    "1345a4fe-262b-452b-8a8f-7be149464151": {
+        "sample_idx": 22,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_1345a4fe-262b-452b-8a8f-7be149464151.npz",
+        "diverged": false
+    },
+    "d705e8f7-ea07-444e-9860-93d40c22707d": {
+        "sample_idx": 22,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_d705e8f7-ea07-444e-9860-93d40c22707d.npz",
+        "diverged": false
+    },
+    "7817f4bb-c046-458f-bb4c-3d2a552ecbdc": {
+        "sample_idx": 22,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7817f4bb-c046-458f-bb4c-3d2a552ecbdc.npz",
+        "diverged": false
+    },
+    "855fb3c1-704d-460f-8339-d99ea2c3e3ad": {
+        "sample_idx": 22,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_855fb3c1-704d-460f-8339-d99ea2c3e3ad.npz",
+        "diverged": true
+    },
+    "7270e69e-7363-4c5c-8df8-b9b582083332": {
+        "sample_idx": 23,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7270e69e-7363-4c5c-8df8-b9b582083332.npz",
+        "diverged": false
+    },
+    "a6f77cdb-e9fa-4595-8d15-d76b2bd00a61": {
+        "sample_idx": 23,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a6f77cdb-e9fa-4595-8d15-d76b2bd00a61.npz",
+        "diverged": false
+    },
+    "92f858c2-a2f2-418d-9fcb-1944d6c3ede5": {
+        "sample_idx": 23,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_92f858c2-a2f2-418d-9fcb-1944d6c3ede5.npz",
+        "diverged": false
+    },
+    "3ffbb408-c67e-4a2c-aa7b-f2b56d7d9ac7": {
+        "sample_idx": 23,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_3ffbb408-c67e-4a2c-aa7b-f2b56d7d9ac7.npz",
+        "diverged": false
+    },
+    "e1f70335-d881-44b4-88cb-86a7af739ecf": {
+        "sample_idx": 23,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e1f70335-d881-44b4-88cb-86a7af739ecf.npz",
+        "diverged": false
+    },
+    "2b95f8d1-ff75-4ed6-862c-4b6db6328532": {
+        "sample_idx": 23,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2b95f8d1-ff75-4ed6-862c-4b6db6328532.npz",
+        "diverged": false
+    },
+    "3bedd42c-40a1-444a-b1d2-d4df79a40db9": {
+        "sample_idx": 23,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_3bedd42c-40a1-444a-b1d2-d4df79a40db9.npz",
+        "diverged": false
+    },
+    "a3054574-1bb2-41b0-bc91-46ac3d9dbad1": {
+        "sample_idx": 23,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a3054574-1bb2-41b0-bc91-46ac3d9dbad1.npz",
+        "diverged": false
+    },
+    "82a1145c-59e7-4a70-ae62-537e1d3101cf": {
+        "sample_idx": 23,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_82a1145c-59e7-4a70-ae62-537e1d3101cf.npz",
+        "diverged": true
+    },
+    "0a2a8d97-4714-477a-a02a-4f37cdb51ed8": {
+        "sample_idx": 24,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0a2a8d97-4714-477a-a02a-4f37cdb51ed8.npz",
+        "diverged": false
+    },
+    "0d7ff99f-19ce-459f-8ab7-36e17d27bab8": {
+        "sample_idx": 24,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0d7ff99f-19ce-459f-8ab7-36e17d27bab8.npz",
+        "diverged": false
+    },
+    "67b62ceb-7482-4da9-aa5a-5ebedfa5f14b": {
+        "sample_idx": 24,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_67b62ceb-7482-4da9-aa5a-5ebedfa5f14b.npz",
+        "diverged": false
+    },
+    "fa09c95d-5086-42b0-bd01-be77e04263d2": {
+        "sample_idx": 24,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_fa09c95d-5086-42b0-bd01-be77e04263d2.npz",
+        "diverged": false
+    },
+    "c470ea0a-a2e6-4e96-a0d0-86ca2463f0bf": {
+        "sample_idx": 24,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_c470ea0a-a2e6-4e96-a0d0-86ca2463f0bf.npz",
+        "diverged": false
+    },
+    "82de2657-b4d3-4e98-85f4-7eb36a6b4b5b": {
+        "sample_idx": 24,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_82de2657-b4d3-4e98-85f4-7eb36a6b4b5b.npz",
+        "diverged": false
+    },
+    "7fcf01d6-3afb-4126-a9b7-9ec37dcbec5e": {
+        "sample_idx": 24,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7fcf01d6-3afb-4126-a9b7-9ec37dcbec5e.npz",
+        "diverged": false
+    },
+    "2999bbd8-71a8-4e94-a2ba-08886650373f": {
+        "sample_idx": 24,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_2999bbd8-71a8-4e94-a2ba-08886650373f.npz",
+        "diverged": false
+    },
+    "cdbe867d-359d-489b-8888-61a84c569b32": {
+        "sample_idx": 24,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_cdbe867d-359d-489b-8888-61a84c569b32.npz",
+        "diverged": true
+    },
+    "7eeb4a05-3db4-4434-8206-2bc390672dee": {
+        "sample_idx": 25,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7eeb4a05-3db4-4434-8206-2bc390672dee.npz",
+        "diverged": false
+    },
+    "75481491-7951-4a37-841a-2369e4cc65ea": {
+        "sample_idx": 25,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_75481491-7951-4a37-841a-2369e4cc65ea.npz",
+        "diverged": false
+    },
+    "deae78ff-ad02-4310-91a2-075f24e19acc": {
+        "sample_idx": 25,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_deae78ff-ad02-4310-91a2-075f24e19acc.npz",
+        "diverged": false
+    },
+    "e720751f-5393-4e6b-ad54-082b62c515e6": {
+        "sample_idx": 25,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_e720751f-5393-4e6b-ad54-082b62c515e6.npz",
+        "diverged": false
+    },
+    "65ede852-9b27-4b7c-9123-80ef2a4b91f7": {
+        "sample_idx": 25,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_65ede852-9b27-4b7c-9123-80ef2a4b91f7.npz",
+        "diverged": false
+    },
+    "ea19ac58-78fb-4d04-b485-8e2687d90ef6": {
+        "sample_idx": 25,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ea19ac58-78fb-4d04-b485-8e2687d90ef6.npz",
+        "diverged": false
+    },
+    "ae0bbec3-3009-437b-8975-117874492ed2": {
+        "sample_idx": 25,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_ae0bbec3-3009-437b-8975-117874492ed2.npz",
+        "diverged": false
+    },
+    "67ed0607-c57e-4ac4-a58d-c1da92974da5": {
+        "sample_idx": 25,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_67ed0607-c57e-4ac4-a58d-c1da92974da5.npz",
+        "diverged": false
+    },
+    "85d020eb-1158-47b2-8005-0ea483eb4bed": {
+        "sample_idx": 25,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_85d020eb-1158-47b2-8005-0ea483eb4bed.npz",
+        "diverged": true
+    },
+    "a66ed090-e013-4535-b034-354d6e80755e": {
+        "sample_idx": 26,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a66ed090-e013-4535-b034-354d6e80755e.npz",
+        "diverged": false
+    },
+    "1e69af1b-7386-49cd-b375-08338e11235e": {
+        "sample_idx": 26,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_1e69af1b-7386-49cd-b375-08338e11235e.npz",
+        "diverged": false
+    },
+    "75f1b099-d914-47db-83ba-96ccef83a450": {
+        "sample_idx": 26,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_75f1b099-d914-47db-83ba-96ccef83a450.npz",
+        "diverged": false
+    },
+    "891a7f88-841e-453e-a842-f992c80f9a9c": {
+        "sample_idx": 26,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_891a7f88-841e-453e-a842-f992c80f9a9c.npz",
+        "diverged": false
+    },
+    "11d1517d-5792-4fec-8a8a-3791df1b3644": {
+        "sample_idx": 26,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_11d1517d-5792-4fec-8a8a-3791df1b3644.npz",
+        "diverged": false
+    },
+    "aecb3061-65c4-41e5-8e32-a836fd890469": {
+        "sample_idx": 26,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_aecb3061-65c4-41e5-8e32-a836fd890469.npz",
+        "diverged": false
+    },
+    "5ba4e532-1901-4283-9a51-43052b450a60": {
+        "sample_idx": 26,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_5ba4e532-1901-4283-9a51-43052b450a60.npz",
+        "diverged": false
+    },
+    "f355f99e-d6ca-4425-aa44-f1116eb4bf40": {
+        "sample_idx": 26,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f355f99e-d6ca-4425-aa44-f1116eb4bf40.npz",
+        "diverged": false
+    },
+    "bb6bcbfe-ef75-45f1-a383-190057c8512c": {
+        "sample_idx": 26,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_bb6bcbfe-ef75-45f1-a383-190057c8512c.npz",
+        "diverged": true
+    },
+    "221a3785-a3a2-481b-8af3-66c20d995362": {
+        "sample_idx": 27,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_221a3785-a3a2-481b-8af3-66c20d995362.npz",
+        "diverged": false
+    },
+    "664fd410-a5b2-423d-b9f8-c9ac9f4c133b": {
+        "sample_idx": 27,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_664fd410-a5b2-423d-b9f8-c9ac9f4c133b.npz",
+        "diverged": false
+    },
+    "9d2a70a7-f8a7-4564-9673-dc6cffa6b453": {
+        "sample_idx": 27,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_9d2a70a7-f8a7-4564-9673-dc6cffa6b453.npz",
+        "diverged": false
+    },
+    "4ed82749-35e7-4066-97ae-9029a0fef24b": {
+        "sample_idx": 27,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_4ed82749-35e7-4066-97ae-9029a0fef24b.npz",
+        "diverged": false
+    },
+    "30de1252-e2f8-40f2-9229-2b74077a8c75": {
+        "sample_idx": 27,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_30de1252-e2f8-40f2-9229-2b74077a8c75.npz",
+        "diverged": false
+    },
+    "76fb6ec3-64d2-41c9-b6ce-a827c21a67cb": {
+        "sample_idx": 27,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_76fb6ec3-64d2-41c9-b6ce-a827c21a67cb.npz",
+        "diverged": false
+    },
+    "33674165-4a05-4418-a370-4cb3d4465b50": {
+        "sample_idx": 27,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_33674165-4a05-4418-a370-4cb3d4465b50.npz",
+        "diverged": false
+    },
+    "5f739f74-6c58-4e84-8bd5-7e370bcde48a": {
+        "sample_idx": 27,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_5f739f74-6c58-4e84-8bd5-7e370bcde48a.npz",
+        "diverged": false
+    },
+    "8e0ce9a1-c1fb-4f64-9a94-92f96fb1d008": {
+        "sample_idx": 27,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_8e0ce9a1-c1fb-4f64-9a94-92f96fb1d008.npz",
+        "diverged": true
+    },
+    "707c3037-b4c7-47fb-8de6-4e7636d731b7": {
+        "sample_idx": 28,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_707c3037-b4c7-47fb-8de6-4e7636d731b7.npz",
+        "diverged": false
+    },
+    "bb9cdca7-b739-4b04-bf2f-b566b3d6080b": {
+        "sample_idx": 28,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_bb9cdca7-b739-4b04-bf2f-b566b3d6080b.npz",
+        "diverged": false
+    },
+    "c9c7ec83-0e0f-4092-9cb8-4defb56e11df": {
+        "sample_idx": 28,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_c9c7ec83-0e0f-4092-9cb8-4defb56e11df.npz",
+        "diverged": false
+    },
+    "f3a97f3c-3f88-466b-9b0f-6818becc995f": {
+        "sample_idx": 28,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f3a97f3c-3f88-466b-9b0f-6818becc995f.npz",
+        "diverged": false
+    },
+    "bcc6d581-a52a-458f-a53b-193dbf19232f": {
+        "sample_idx": 28,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_bcc6d581-a52a-458f-a53b-193dbf19232f.npz",
+        "diverged": false
+    },
+    "a1aa9104-d9f9-46fa-a833-dbfe2fbe0945": {
+        "sample_idx": 28,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a1aa9104-d9f9-46fa-a833-dbfe2fbe0945.npz",
+        "diverged": false
+    },
+    "0ba3b684-294e-4007-a85a-a3d3a50f460b": {
+        "sample_idx": 28,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_0ba3b684-294e-4007-a85a-a3d3a50f460b.npz",
+        "diverged": false
+    },
+    "3d70216d-9bb4-4d54-993f-0bf686acfa3f": {
+        "sample_idx": 28,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_3d70216d-9bb4-4d54-993f-0bf686acfa3f.npz",
+        "diverged": false
+    },
+    "5e3ef4aa-e582-4343-8a9c-9ef0de73b102": {
+        "sample_idx": 28,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_5e3ef4aa-e582-4343-8a9c-9ef0de73b102.npz",
+        "diverged": true
+    },
+    "7cb2ae6c-b5bc-4e2b-b7a1-87447be8992d": {
+        "sample_idx": 29,
+        "fault_location": 1,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_7cb2ae6c-b5bc-4e2b-b7a1-87447be8992d.npz",
+        "diverged": false
+    },
+    "b67e2db1-b07f-4af5-98ea-f2d88c7f87c6": {
+        "sample_idx": 29,
+        "fault_location": 2,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_b67e2db1-b07f-4af5-98ea-f2d88c7f87c6.npz",
+        "diverged": false
+    },
+    "5e3ec7a1-cfb3-4b73-9750-8be600438f9b": {
+        "sample_idx": 29,
+        "fault_location": 3,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_5e3ec7a1-cfb3-4b73-9750-8be600438f9b.npz",
+        "diverged": false
+    },
+    "a0daf182-8116-45ea-8f1b-b91ddc2f5d41": {
+        "sample_idx": 29,
+        "fault_location": 4,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a0daf182-8116-45ea-8f1b-b91ddc2f5d41.npz",
+        "diverged": false
+    },
+    "f6cc0a37-fd4e-4e64-b5a1-f932a7ef7601": {
+        "sample_idx": 29,
+        "fault_location": 5,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_f6cc0a37-fd4e-4e64-b5a1-f932a7ef7601.npz",
+        "diverged": false
+    },
+    "a82b42ba-6a38-4465-bd5d-1034bb6abef6": {
+        "sample_idx": 29,
+        "fault_location": 6,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_a82b42ba-6a38-4465-bd5d-1034bb6abef6.npz",
+        "diverged": false
+    },
+    "fcf6396e-0b87-419f-953c-0e107ef703b9": {
+        "sample_idx": 29,
+        "fault_location": 7,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_fcf6396e-0b87-419f-953c-0e107ef703b9.npz",
+        "diverged": false
+    },
+    "40f79782-fde3-4d52-a04d-773d276623d8": {
+        "sample_idx": 29,
+        "fault_location": 8,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_40f79782-fde3-4d52-a04d-773d276623d8.npz",
+        "diverged": false
+    },
+    "bd925f15-f7c7-4d9c-aacf-1bbe9aad9364": {
+        "sample_idx": 29,
+        "fault_location": 9,
+        "fault_impedance": 0.0001,
+        "file": "simulation_data/scenario_bd925f15-f7c7-4d9c-aacf-1bbe9aad9364.npz",
+        "diverged": true
+    }
+}
