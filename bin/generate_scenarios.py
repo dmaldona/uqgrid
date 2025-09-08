@@ -44,10 +44,8 @@ def generate_perturbations(base_p, base_q,
         return p_scaled, q_scaled, p_noise, q_noise
     return p_scaled, q_scaled
 
-
 def sample_scenarios(n_samples, fault_locations, fault_impedances):
     return list(itertools.product(range(n_samples), fault_locations, fault_impedances))
-
 
 def generate_metadata(scenarios):
     """
@@ -65,7 +63,6 @@ def generate_metadata(scenarios):
         json.dump(metadata, f, indent=4)
     return metadata
 
-
 def run_single_scenario(
         base_psys, scenario, scenario_id,
         base_p_load, base_q_load,
@@ -73,6 +70,7 @@ def run_single_scenario(
         noise_type="normal", noise_var=0.1,
         balance_generation=False, 
         add_perturbations = True,
+        mat_dir = "simulation_data",
         fn = None):
 
     psys = copy.deepcopy(base_psys)
@@ -122,9 +120,9 @@ def run_single_scenario(
         sim       = {"history": None, "tvec": None}
         diverged  = True
 
-    os.makedirs("simulation_data", exist_ok=True)
+    os.makedirs(mat_dir, exist_ok=True)
     if fn is None:
-        fn = f"simulation_data/scenario_{scenario_id}.npz"
+        fn = f"{mat_dir}/scenario_{scenario_id}.npz"
         
     #  Draw noise and obtain positive, scaled loads
     if add_perturbations:
@@ -154,7 +152,8 @@ def run_simulation_driver_batched_fixed_sample(
         raw, dyr, scenarios_metadata,
         *, noise_type="normal", noise_var=0.1,
         balance_generation=True, 
-        n_jobs=-1, batch_size=10):
+        n_jobs=-1, batch_size=10,
+        mat_dir = "simulation_data"):
 
     simulation_log = {}
     starting_points = {}
@@ -209,7 +208,7 @@ def run_simulation_driver_batched_fixed_sample(
             starting_points[scenarios_metadata[sid]['sample_idx']]["base_pG"], 
             starting_points[scenarios_metadata[sid]['sample_idx']]["base_qG"], 
             noise_type, noise_var, 
-            balance_generation, False)
+            balance_generation, False, mat_dir)
             for sid in batch_ids
         ]
 
@@ -232,7 +231,8 @@ def run_simulation_driver_batched_varried_sample(
         raw, dyr, scenarios_metadata,
         *, noise_type="normal", noise_var=0.1,
         balance_generation=True, 
-        n_jobs=-1, batch_size=10):
+        n_jobs=-1, batch_size=10,
+        mat_dir = "simulation_data"):
 
     scenario_ids   = list(scenarios_metadata.keys())
     simulation_log = {}
@@ -255,7 +255,7 @@ def run_simulation_driver_batched_varried_sample(
         batch_args = [
             (base_psys, scenarios_metadata[sid], sid,
              base_p, base_q, base_pG, base_qG, noise_type, noise_var, 
-             balance_generation)
+             balance_generation, False, mat_dir)
             for sid in batch_ids
         ]
 
@@ -277,20 +277,23 @@ def run_simulation_driver_batched(
     *, noise_type="normal", noise_var=0.1,
     balance_generation=True, 
     n_jobs=-1, batch_size=10, 
-    fix_samp_per_scen = False):
+    fix_samp_per_scen = False,
+    mat_dir = "simulation_data"):
         
     if fix_samp_per_scen:
         simulation_log = run_simulation_driver_batched_fixed_sample(
                                 raw, dyr, scenarios_metadata,
                                 noise_type=noise_type, noise_var=noise_var,
                                 balance_generation=balance_generation, 
-                                n_jobs=n_jobs, batch_size=batch_size)
+                                n_jobs=n_jobs, batch_size=batch_size,
+                                mat_dir = mat_dir)
     else:
         simulation_log = run_simulation_driver_batched_varried_sample(
                                 raw, dyr, scenarios_metadata,
                                 noise_type=noise_type, noise_var=noise_var,
                                 balance_generation=balance_generation, 
-                                n_jobs=n_jobs, batch_size=batch_size)
+                                n_jobs=n_jobs, batch_size=batch_size,
+                                mat_dir = mat_dir)
 
     return simulation_log
 
