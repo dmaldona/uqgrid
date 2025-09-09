@@ -1,0 +1,512 @@
+{
+    "0": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 3,
+        "bus_num": 0,
+        "state_name": "e_qp",
+        "description": "GenGENROU 3 e_qp"
+    },
+    "1": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 3,
+        "bus_num": 0,
+        "state_name": "e_dp",
+        "description": "GenGENROU 3 e_dp"
+    },
+    "2": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 3,
+        "bus_num": 0,
+        "state_name": "phi_1d",
+        "description": "GenGENROU 3 phi_1d"
+    },
+    "3": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 3,
+        "bus_num": 0,
+        "state_name": "phi_2q",
+        "description": "GenGENROU 3 phi_2q"
+    },
+    "4": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 3,
+        "bus_num": 0,
+        "state_name": "w",
+        "description": "GenGENROU 3 w"
+    },
+    "5": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 3,
+        "bus_num": 0,
+        "state_name": "delta",
+        "description": "GenGENROU 3 delta"
+    },
+    "6": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 4,
+        "bus_num": 1,
+        "state_name": "e_qp",
+        "description": "GenGENROU 4 e_qp"
+    },
+    "7": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 4,
+        "bus_num": 1,
+        "state_name": "e_dp",
+        "description": "GenGENROU 4 e_dp"
+    },
+    "8": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 4,
+        "bus_num": 1,
+        "state_name": "phi_1d",
+        "description": "GenGENROU 4 phi_1d"
+    },
+    "9": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 4,
+        "bus_num": 1,
+        "state_name": "phi_2q",
+        "description": "GenGENROU 4 phi_2q"
+    },
+    "10": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 4,
+        "bus_num": 1,
+        "state_name": "w",
+        "description": "GenGENROU 4 w"
+    },
+    "11": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 4,
+        "bus_num": 1,
+        "state_name": "delta",
+        "description": "GenGENROU 4 delta"
+    },
+    "12": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 5,
+        "bus_num": 2,
+        "state_name": "e_qp",
+        "description": "GenGENROU 5 e_qp"
+    },
+    "13": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 5,
+        "bus_num": 2,
+        "state_name": "e_dp",
+        "description": "GenGENROU 5 e_dp"
+    },
+    "14": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 5,
+        "bus_num": 2,
+        "state_name": "phi_1d",
+        "description": "GenGENROU 5 phi_1d"
+    },
+    "15": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 5,
+        "bus_num": 2,
+        "state_name": "phi_2q",
+        "description": "GenGENROU 5 phi_2q"
+    },
+    "16": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 5,
+        "bus_num": 2,
+        "state_name": "w",
+        "description": "GenGENROU 5 w"
+    },
+    "17": {
+        "type": "Differential",
+        "model": "GenGENROU",
+        "device_number": 5,
+        "bus_num": 2,
+        "state_name": "delta",
+        "description": "GenGENROU 5 delta"
+    },
+    "18": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 6,
+        "bus_num": 0,
+        "state_name": "PF0",
+        "description": "GovIEESGO 6 PF0"
+    },
+    "19": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 6,
+        "bus_num": 0,
+        "state_name": "PLL",
+        "description": "GovIEESGO 6 PLL"
+    },
+    "20": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 6,
+        "bus_num": 0,
+        "state_name": "TP1",
+        "description": "GovIEESGO 6 TP1"
+    },
+    "21": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 6,
+        "bus_num": 0,
+        "state_name": "TP2",
+        "description": "GovIEESGO 6 TP2"
+    },
+    "22": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 6,
+        "bus_num": 0,
+        "state_name": "TP3",
+        "description": "GovIEESGO 6 TP3"
+    },
+    "23": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 7,
+        "bus_num": 1,
+        "state_name": "PF0",
+        "description": "GovIEESGO 7 PF0"
+    },
+    "24": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 7,
+        "bus_num": 1,
+        "state_name": "PLL",
+        "description": "GovIEESGO 7 PLL"
+    },
+    "25": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 7,
+        "bus_num": 1,
+        "state_name": "TP1",
+        "description": "GovIEESGO 7 TP1"
+    },
+    "26": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 7,
+        "bus_num": 1,
+        "state_name": "TP2",
+        "description": "GovIEESGO 7 TP2"
+    },
+    "27": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 7,
+        "bus_num": 1,
+        "state_name": "TP3",
+        "description": "GovIEESGO 7 TP3"
+    },
+    "28": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 8,
+        "bus_num": 2,
+        "state_name": "PF0",
+        "description": "GovIEESGO 8 PF0"
+    },
+    "29": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 8,
+        "bus_num": 2,
+        "state_name": "PLL",
+        "description": "GovIEESGO 8 PLL"
+    },
+    "30": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 8,
+        "bus_num": 2,
+        "state_name": "TP1",
+        "description": "GovIEESGO 8 TP1"
+    },
+    "31": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 8,
+        "bus_num": 2,
+        "state_name": "TP2",
+        "description": "GovIEESGO 8 TP2"
+    },
+    "32": {
+        "type": "Differential",
+        "model": "GovIEESGO",
+        "device_number": 8,
+        "bus_num": 2,
+        "state_name": "TP3",
+        "description": "GovIEESGO 8 TP3"
+    },
+    "33": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 3,
+        "bus_num": 0,
+        "state_name": "v_q",
+        "description": "GenGENROU 3 v_q"
+    },
+    "34": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 3,
+        "bus_num": 0,
+        "state_name": "v_d",
+        "description": "GenGENROU 3 v_d"
+    },
+    "35": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 3,
+        "bus_num": 0,
+        "state_name": "i_q",
+        "description": "GenGENROU 3 i_q"
+    },
+    "36": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 3,
+        "bus_num": 0,
+        "state_name": "i_d",
+        "description": "GenGENROU 3 i_d"
+    },
+    "37": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 4,
+        "bus_num": 1,
+        "state_name": "v_q",
+        "description": "GenGENROU 4 v_q"
+    },
+    "38": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 4,
+        "bus_num": 1,
+        "state_name": "v_d",
+        "description": "GenGENROU 4 v_d"
+    },
+    "39": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 4,
+        "bus_num": 1,
+        "state_name": "i_q",
+        "description": "GenGENROU 4 i_q"
+    },
+    "40": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 4,
+        "bus_num": 1,
+        "state_name": "i_d",
+        "description": "GenGENROU 4 i_d"
+    },
+    "41": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 5,
+        "bus_num": 2,
+        "state_name": "v_q",
+        "description": "GenGENROU 5 v_q"
+    },
+    "42": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 5,
+        "bus_num": 2,
+        "state_name": "v_d",
+        "description": "GenGENROU 5 v_d"
+    },
+    "43": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 5,
+        "bus_num": 2,
+        "state_name": "i_q",
+        "description": "GenGENROU 5 i_q"
+    },
+    "44": {
+        "type": "Algebraic",
+        "model": "GenGENROU",
+        "device_number": 5,
+        "bus_num": 2,
+        "state_name": "i_d",
+        "description": "GenGENROU 5 i_d"
+    },
+    "45": {
+        "type": "Algebraic",
+        "model": "GovIEESGO",
+        "device_number": 6,
+        "bus_num": 0,
+        "state_name": "p_m",
+        "description": "GovIEESGO 6 p_m"
+    },
+    "46": {
+        "type": "Algebraic",
+        "model": "GovIEESGO",
+        "device_number": 7,
+        "bus_num": 1,
+        "state_name": "p_m",
+        "description": "GovIEESGO 7 p_m"
+    },
+    "47": {
+        "type": "Algebraic",
+        "model": "GovIEESGO",
+        "device_number": 8,
+        "bus_num": 2,
+        "state_name": "p_m",
+        "description": "GovIEESGO 8 p_m"
+    },
+    "48": {
+        "type": "Network Voltage",
+        "bus_num": 0,
+        "component": "real",
+        "state_name": "vr",
+        "description": "Bus 0 voltage real part"
+    },
+    "49": {
+        "type": "Network Voltage",
+        "bus_num": 0,
+        "component": "imaginary",
+        "state_name": "vi",
+        "description": "Bus 0 voltage imaginary part"
+    },
+    "50": {
+        "type": "Network Voltage",
+        "bus_num": 1,
+        "component": "real",
+        "state_name": "vr",
+        "description": "Bus 1 voltage real part"
+    },
+    "51": {
+        "type": "Network Voltage",
+        "bus_num": 1,
+        "component": "imaginary",
+        "state_name": "vi",
+        "description": "Bus 1 voltage imaginary part"
+    },
+    "52": {
+        "type": "Network Voltage",
+        "bus_num": 2,
+        "component": "real",
+        "state_name": "vr",
+        "description": "Bus 2 voltage real part"
+    },
+    "53": {
+        "type": "Network Voltage",
+        "bus_num": 2,
+        "component": "imaginary",
+        "state_name": "vi",
+        "description": "Bus 2 voltage imaginary part"
+    },
+    "54": {
+        "type": "Network Voltage",
+        "bus_num": 3,
+        "component": "real",
+        "state_name": "vr",
+        "description": "Bus 3 voltage real part"
+    },
+    "55": {
+        "type": "Network Voltage",
+        "bus_num": 3,
+        "component": "imaginary",
+        "state_name": "vi",
+        "description": "Bus 3 voltage imaginary part"
+    },
+    "56": {
+        "type": "Network Voltage",
+        "bus_num": 4,
+        "component": "real",
+        "state_name": "vr",
+        "description": "Bus 4 voltage real part"
+    },
+    "57": {
+        "type": "Network Voltage",
+        "bus_num": 4,
+        "component": "imaginary",
+        "state_name": "vi",
+        "description": "Bus 4 voltage imaginary part"
+    },
+    "58": {
+        "type": "Network Voltage",
+        "bus_num": 5,
+        "component": "real",
+        "state_name": "vr",
+        "description": "Bus 5 voltage real part"
+    },
+    "59": {
+        "type": "Network Voltage",
+        "bus_num": 5,
+        "component": "imaginary",
+        "state_name": "vi",
+        "description": "Bus 5 voltage imaginary part"
+    },
+    "60": {
+        "type": "Network Voltage",
+        "bus_num": 6,
+        "component": "real",
+        "state_name": "vr",
+        "description": "Bus 6 voltage real part"
+    },
+    "61": {
+        "type": "Network Voltage",
+        "bus_num": 6,
+        "component": "imaginary",
+        "state_name": "vi",
+        "description": "Bus 6 voltage imaginary part"
+    },
+    "62": {
+        "type": "Network Voltage",
+        "bus_num": 7,
+        "component": "real",
+        "state_name": "vr",
+        "description": "Bus 7 voltage real part"
+    },
+    "63": {
+        "type": "Network Voltage",
+        "bus_num": 7,
+        "component": "imaginary",
+        "state_name": "vi",
+        "description": "Bus 7 voltage imaginary part"
+    },
+    "64": {
+        "type": "Network Voltage",
+        "bus_num": 8,
+        "component": "real",
+        "state_name": "vr",
+        "description": "Bus 8 voltage real part"
+    },
+    "65": {
+        "type": "Network Voltage",
+        "bus_num": 8,
+        "component": "imaginary",
+        "state_name": "vi",
+        "description": "Bus 8 voltage imaginary part"
+    }
+}
