@@ -373,97 +373,9 @@ def ComputeTSI():
         
     return post_data
 
-# This code is assuming that the number of indices stays the same forper fault
-def fault_location_by_matrix_index(post_data, simulation_log_path = 'simulation_log.json'):
-    simulation_log = load_simulation_log(simulation_log_path)
-
-    # Using a normal dict
-    fault_location_map = {}
-
-    for k, v in simulation_log.items():
-        floc = v["fault_location"]
-        if floc not in fault_location_map:
-            fault_location_map[floc] = []
-        fault_location_map[floc].append(k)
-
-    # build a mapping from uuid -> index
-    uuid_to_idx = {uuid: i for i, uuid in enumerate(post_data["tsi_per_scenario"])}
-
-    # Create dicturnary for the fault location and missing faults
-    floc_with_indices = {}
-    removed_uuids = {}  # store the missing ones here
-
-    for floc, uuids in fault_location_map.items():
-        indices = []
-        missing = []
-
-        for uid in uuids:
-            if uid in uuid_to_idx:
-                indices.append(uuid_to_idx[uid])
-            else:
-                missing.append(uid)
-
-        floc_with_indices[floc] = {
-            "indices": indices,
-        }
-
-        # That uuids removed in the process to calculate the TSI
-        if missing:  
-            removed_uuids[floc] = missing
-
-    # Filter out empty lists
-    nonempty = {k: v["indices"] for k, v in floc_with_indices.items() if v["indices"]}
-
-    # Stack into matrix
-    index_by_fault = np.vstack(list(nonempty.values()))
-    row_fault_location = np.array(list(nonempty.keys()), dtype=int)
-
-    return index_by_fault, row_fault_location, removed_uuids
-
-# def create_training_samples(post_data: Dict):
-#     tsi_dict = post_data['tsi_per_scenario']
-#     pg_dict  = post_data['pg_per_scenario']
-#     pl_dict  = post_data['pl_per_scenario']
-#     ql_dict  = post_data['ql_per_scenario']
-
-#     scenario_ids = sorted(tsi_dict.keys())
-
-#     first_sid = scenario_ids[0]
-#     pg_len = len(pg_dict[first_sid])
-#     pl_len = len(pl_dict[first_sid])
-#     ql_len = len(ql_dict[first_sid])
-
-#     col_name = (
-#         [f'pg_{i+1}' for i in range(pg_len)] +
-#         [f'pl_{i+1}' for i in range(pl_len)] +
-#         [f'ql_{i+1}' for i in range(ql_len)] +
-#         ['tsi']
-#     )
-
-#     rows = []
-#     for sid in scenario_ids:
-#         pg = pg_dict[sid]
-#         pl = pl_dict[sid]
-#         ql = ql_dict[sid]
-#         tsi = np.array([tsi_dict[sid]])
-    
-#         row = np.hstack((pg, pl, ql, tsi))
-#         rows.append(row)
-
-#     Data = np.vstack(rows)
-
-#     # save to .mat file
-#     print("Save samples to data_record.mat")
-#     scio.savemat('data_record.mat', {'Data': Data, 'col_name': col_name})
-
-def create_training_samples(post_data: Dict, filename = None, simulation_log_path = 'simulation_log.json'):
-    tsi_all_time = post_data['tsi_ts_per_scenario']
+def create_training_samples(post_data: Dict):
     tsi_dict = post_data['tsi_per_scenario']
-    # tsi_dict = post_data['tsi_all']
-    print(f"tsi_all_time", tsi_all_time)
-    print(f"tsi_all_time first element's value", tsi_all_time[list(tsi_all_time.keys())[0]])
     pg_dict  = post_data['pg_per_scenario']
-    # qg_dict  = post_data['qg_per_scenario']
     pl_dict  = post_data['pl_per_scenario']
     ql_dict  = post_data['ql_per_scenario']
 
@@ -471,49 +383,31 @@ def create_training_samples(post_data: Dict, filename = None, simulation_log_pat
 
     first_sid = scenario_ids[0]
     pg_len = len(pg_dict[first_sid])
-    # qg_len = len(qg_dict[first_sid])
     pl_len = len(pl_dict[first_sid])
     ql_len = len(ql_dict[first_sid])
 
-    col_name = (    
-
+    col_name = (
         [f'pg_{i+1}' for i in range(pg_len)] +
-        # [f'qg_{i+1}' for i in range(qg_len)] +
         [f'pl_{i+1}' for i in range(pl_len)] +
         [f'ql_{i+1}' for i in range(ql_len)] +
-        ['tsi'] +
-        [f'tsi_t{i+1}' for i in range(len(tsi_all_time[list(tsi_all_time.keys())[0]]))]
+        ['tsi']
     )
 
     rows = []
     for sid in scenario_ids:
         pg = pg_dict[sid]
-        # qg = qg_dict[sid]
         pl = pl_dict[sid]
         ql = ql_dict[sid]
         tsi = np.array([tsi_dict[sid]])
-        print(f"tsi_all_time[sid]", tsi_all_time[sid])
-        tsi_ts = tsi_all_time[sid]
     
-        row = np.hstack((pg, pl, ql, tsi, tsi_ts))
-        # row = np.hstack((pg, qg, pl, ql, tsi, tsi_ts))
+        row = np.hstack((pg, pl, ql, tsi))
         rows.append(row)
 
     Data = np.vstack(rows)
 
-    index_by_fault, row_fault_location, removed_uuids = fault_location_by_matrix_index(post_data, simulation_log_path = 'simulation_log.json')
-
-    print(row_fault_location)
-
     # save to .mat file
-    if filename is None:
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        print(f"./Save samples to IEEE9_{Data.shape[0]}_samples_{timestamp}.mat")
-        # scio.savemat(f'IEEE9_{Data.shape[0]}_samples_{timestamp}.mat', {'Data': Data, 'col_name': col_name, "fault_per_index"})
-        scio.savemat(f'IEEE9_{Data.shape[0]}_samples_{timestamp}.mat', {'Data': Data, 'col_name': col_name, "index_by_fault": index_by_fault, "row_fault_location": row_fault_location})
-    else:
-        print(f"{filename}.mat")
-        scio.savemat(f'{filename}.mat', {'Data': Data, 'col_name': col_name, "index_by_fault": index_by_fault, "row_fault_location": row_fault_location})
+    print("Save samples to data_record.mat")
+    scio.savemat('data_record.mat', {'Data': Data, 'col_name': col_name})
 
 if __name__ == "__main__":
     # (original) compute generator speeds (ω)
