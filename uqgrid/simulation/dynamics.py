@@ -1665,7 +1665,6 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
     if arkimex and petsc:
         print("ARKIMEX activated.")
 
-
     results = {}
     psys.power_injection=power_injection
 
@@ -1688,8 +1687,8 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
         theta = theta_user
 
     system_size = z0.shape[0]
-    J = preallocate_jacobian(psys)
-    F = np.zeros(system_size)
+    jacobian = preallocate_jacobian(psys)
+    residual = np.zeros(system_size)
 
     # calculate nsteps
     h = dt
@@ -1713,26 +1712,26 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
 
     if petsc4py and petsc:
         if verbose: print("Convert objects to PETSc format")
-        nsize = J.shape[0]
-        Jp = PETSc.Mat()
-        Jp.create(PETSc.COMM_WORLD)
-        Jp.setSizes([nsize, nsize])
-        Jp.setType('seqaij') # sparse
-        csr = [J.indptr, J.indices, J.data]
-        Jp.setPreallocationCSR(csr)
-        Jp.assemblyBegin()
-        Jp.assemblyEnd()
+        nsize = jacobian.shape[0]
+        jac_rhs = PETSc.Mat()
+        jac_rhs.create(PETSc.COMM_WORLD)
+        jac_rhs.setSizes([nsize, nsize])
+        jac_rhs.setType('seqaij') # sparse
+        csr = [jacobian.indptr, jacobian.indices, jacobian.data]
+        jac_rhs.setPreallocationCSR(csr)
+        jac_rhs.assemblyBegin()
+        jac_rhs.assemblyEnd()
 
         nparam = 2 * psys.nloads
-        Jp_struct = preallocate_jacobian_parameters(psys)
-        Jtheta = PETSc.Mat()
-        Jtheta.create(PETSc.COMM_WORLD)
-        Jtheta.setSizes([nsize, nparam])
-        Jtheta.setType('seqaij')
-        csr = [Jp_struct.indptr, Jp_struct.indices, Jp_struct.data]
-        Jtheta.setPreallocationCSR(csr)
-        Jtheta.assemblyBegin()
-        Jtheta.assemblyEnd()
+        jac_par_struct = preallocate_jacobian_parameters(psys)
+        jac_par = PETSc.Mat()
+        jac_par.create(PETSc.COMM_WORLD)
+        jac_par.setSizes([nsize, nparam])
+        jac_par.setType('seqaij')
+        csr = [jac_par_struct.indptr, jac_par_struct.indices, jac_par_struct.data]
+        jac_par.setPreallocationCSR(csr)
+        jac_par.assemblyBegin()
+        jac_par.assemblyEnd()
 
         z0p = PETSc.Vec()
         z0p.createSeq(nsize)
@@ -1740,17 +1739,17 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
         z0p.assemblyBegin()
         z0p.assemblyEnd()
 
-        fp = z0p.duplicate()
+        rhs_vec = z0p.duplicate()
 
         # Create integration object
-        dae = DAE_petsc(psys, theta, J, ton, toff)
+        dae = DAE_petsc(psys, theta, jacobian, ton, toff)
 
         ts = PETSc.TS().create(comm=PETSc.COMM_WORLD)
         ts.setProblemType(ts.ProblemType.NONLINEAR)
         ts.setType(ts.Type.THETA)
-        ts.setIFunction(dae.evalFunction, fp)
-        ts.setIJacobian(dae.evalJacobian, Jp)
-        ts.setIJacobianP(dae.evalJacobianP, Jtheta)
+        ts.setIFunction(dae.evalFunction, rhs_vec)
+        ts.setIJacobian(dae.evalJacobian, jac_rhs)
+        ts.setIJacobianP(dae.evalJacobianP, jac_par)
 
         # create adjoint integrator
         if comp_sens:
@@ -1788,12 +1787,12 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
         if ton < tend:
             # fault application
             psys.fault_events[0].apply()
-            alg = ALG_petsc(psys, theta, J)
+            alg = ALG_petsc(psys, theta, jacobian)
             fsp = z0p.duplicate()
             snes = PETSc.SNES()
             snes.create(PETSc.COMM_WORLD)
             snes.setFunction(alg.evalFunction, fsp)
-            snes.setJacobian(alg.evalJacobian, Jp)
+            snes.setJacobian(alg.evalJacobian, jac_rhs)
             snes.setOptionsPrefix("alg_")
             snes.setFromOptions()
             snes.solve(None, z0p)
@@ -1856,8 +1855,8 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
                                 theta,
                                 h,
                                 psys,
-                                F,
-                                J,
+                                residual,
+                                jacobian,
                                 None,
                                 verbose=verbose,
                                 fsolve=fsolve,
@@ -1874,8 +1873,8 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
                                     theta,
                                     0.0,
                                     psys,
-                                    F,
-                                    J,
+                                    residual,
+                                    jacobian,
                                     None,
                                     verbose=verbose,
                                     fsolve=True,
@@ -1890,8 +1889,8 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
                                     theta,
                                     0.0,
                                     psys,
-                                    F,
-                                    J,
+                                    residual,
+                                    jacobian,
                                     None,
                                     verbose=verbose,
                                     fsolve=True,
