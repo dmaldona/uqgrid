@@ -1459,6 +1459,25 @@ if petsc4py:
             self.J = J
             self.tfon = tfon
             self.tfoff = tfoff
+
+            # ARKIMEX INFORMATION
+            self.slow_indices = None
+            self.fast_indices = None
+            self.fast_indices_alg = None
+            self.fast_indices_dif = None
+            self.current_step = -1
+            self.jfast_frozen = None # frozen Jacobian for fast system
+            self.ff_arkimex = None
+
+        def set_ndiffeq_fast(self, ndiffeq_fast):
+            self.ndiffeq_fast = ndiffeq_fast
+
+        def set_fast_indices_split(self, fast_indices_alg, fast_indices_dif):
+            self.fast_indices_alg = fast_indices_alg
+            self.fast_indices_dif = fast_indices_dif
+
+        def set_ts_ref(self, ts):
+            self.ts_ref = ts
         
         def evalFunction(self, ts, t, x, xdot, f):
             # This operation is redundant but necessary for the correct
@@ -1509,6 +1528,73 @@ if petsc4py:
             
             P.setValuesCSR(Jp_temp.indptr, Jp_temp.indices, -Jp_temp.data)
             P.assemble()
+            return True
+        
+        # arkimex callbacks
+        def evalRHSFunctionSlow(self, ts, t, x, f):
+            start, end = x.getOwnershipRange()
+            xx = np.array(x[start:end])
+            ff = np.zeros_like(xx)
+            residual_function(ff, xx, self.theta, self.psys)
+            f.setArray(ff[self.slow_indices])
+            f.assemble()
+        
+        def evalIFunctionFast_split(self, ts, t, x, xdot, f):
+            tstep = self.ts_ref.getStepNumber()
+            ndiffeq_fast = self.ndiffeq_fast
+            start, end = x.getOwnershipRange()
+            xx = np.array(x[start:end])
+            ff = np.zeros_like(xx)
+
+            # We compute Jacobian once at the beginning of the time step
+            if tstep != self.current_step:
+                residual_jacobian(self.J, xx, self.theta, self.psys)
+                self.jfast_frozen = self.J[self.fast_indices_dif][:, self.fast_indices_dif]
+                self.current_step = tstep
+
+            residual_function(ff, xx, self.theta, self.psys)
+
+            # Store residual for evalRHS
+            self.ff_arkimex = ff
+
+            f.setArray(-ff[self.fast_indices])
+            f[:ndiffeq_fast] = np.zeros(len(self.fast_indices_dif))
+            f[:ndiffeq_fast] += xdot[:ndiffeq_fast]
+            f[:ndiffeq_fast] -= self.jfast_frozen.dot(xx[self.fast_indices_dif])
+            f.assemble()
+
+        def evalRHSFunctionFast_split(self, ts, t, x, f):
+            start, end = x.getOwnershipRange()
+            ndiffeq_fast = self.ndiffeq_fast
+            xx = np.array(x[start:end])
+            
+            ff = self.ff_arkimex
+            f.setArray(ff[self.fast_indices])
+            f[ndiffeq_fast:] = np.zeros(len(self.fast_indices_alg))
+            f[:ndiffeq_fast] -= self.jfast_frozen.dot(xx[self.fast_indices_dif])
+            f.assemble()
+
+        def evalIJacobianFast_split(self, ts, t, x, xdot, a, Jfast, Pfast):
+            start, end = x.getOwnershipRange()
+            xx = np.array(x[start:end])
+            ndiffeq_fast = self.ndiffeq_fast
+            NDIFFEQ = self.psys.num_dof_dif
+            
+            # Compute full Jacobian
+            residual_jacobian(self.J, xx, self.theta, self.psys)
+            J_temp = self.J[self.fast_indices][:, self.fast_indices]
+                
+            # For differential part: -J + a*I
+            J_temp[:ndiffeq_fast, :ndiffeq_fast] = self.jfast_frozen[:ndiffeq_fast, :ndiffeq_fast]
+            J_temp[:ndiffeq_fast, :ndiffeq_fast] -= a * np.eye(ndiffeq_fast)
+            
+            # Off-diagonal part must be zero
+            J_temp[:ndiffeq_fast, ndiffeq_fast:] = 0.0
+            
+            Pfast.setValuesCSR(J_temp.indptr, J_temp.indices, -J_temp.data)
+            Pfast.assemble()
+            if Jfast != Pfast: 
+                Jfast.assemble()
             return True
 
     class ALG_petsc(object):
@@ -1638,6 +1724,36 @@ def compute_initial_state_sensitivity(psys, lambda_adjoint, nominal_params, eps=
     
     return sensitivity
 
+def generate_default_partition_indices(psys):
+    slow_indices = []
+    fast_indices = []
+
+    fast_indices_alg = []
+    fast_indices_dif = []
+
+    dif_size = psys.num_dof_dif
+    alg_size = psys.num_dof_alg
+    pow_size = 2 * psys.nbuses
+    sys_size = alg_size + dif_size + pow_size
+
+    # The first half of the differential variables are slow
+    slow_indices.extend(range(dif_size // 2))
+
+    # The second half of the differential variables are fast
+    fast_indices.extend(range(dif_size // 2, dif_size))
+
+    # Algebraic and power variables are slow (if they are included in the splitting)
+    fast_indices.extend(range(dif_size, dif_size + alg_size + pow_size))
+
+    # Now we have fast algebraic and fast differential indexes
+    fast_indices_alg.extend(range(dif_size, dif_size + alg_size + pow_size))
+    fast_indices_dif.extend(range(dif_size // 2, dif_size))
+
+    # dimension of fast differential variables
+    ndiff_fast = dif_size // 2
+
+    return slow_indices, fast_indices, fast_indices_alg, fast_indices_dif, ndiff_fast
+
 def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationCtx = None) -> dict:
     """Integrate power system dynamics
 
@@ -1746,10 +1862,45 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
 
         ts = PETSc.TS().create(comm=PETSc.COMM_WORLD)
         ts.setProblemType(ts.ProblemType.NONLINEAR)
-        ts.setType(ts.Type.THETA)
-        ts.setIFunction(dae.evalFunction, rhs_vec)
-        ts.setIJacobian(dae.evalJacobian, jac_rhs)
-        ts.setIJacobianP(dae.evalJacobianP, jac_par)
+
+        if arkimex:
+            slow_indices, fast_indices, fast_indices_alg, fast_indices_dif, ndiff_fast = generate_default_partition_indices(psys)
+            
+            # Set the optional fields in the DAE object
+            dae.slow_indices = slow_indices
+            dae.fast_indices = fast_indices
+            dae.set_ndiffeq_fast(ndiff_fast)
+            dae.set_fast_indices_split(fast_indices_alg, fast_indices_dif)
+            dae.set_ts_ref(ts)
+
+            # Preallocate the Jacobian for the fast variables
+            nfast = len(fast_indices)
+            jac_fast = PETSc.Mat()
+            jac_fast.create(PETSc.COMM_WORLD)
+            jac_fast.setSizes([nfast, nfast])
+            jac_fast.setType('seqaij')
+
+            # Extract the fast part of the rhs Jacobian
+            j_fast_pattern = jacobian[fast_indices][:, fast_indices]
+            jac_fast.setPreallocationCSR([j_fast_pattern.indptr, j_fast_pattern.indices, j_fast_pattern.data])
+            jac_fast.assemblyBegin()
+            jac_fast.assemblyEnd()
+
+            iss = PETSc.IS().createGeneral(slow_indices, comm=PETSc.COMM_WORLD)
+            isf = PETSc.IS().createGeneral(fast_indices, comm=PETSc.COMM_WORLD)
+            ts.setType(ts.Type.ARKIMEX)
+            ts.setARKIMEXFastSlowSplit(True)
+            ts.setRHSSplitIS("slow", iss)
+            ts.setRHSSplitIS("fast", isf)
+            ts.setRHSSplitRHSFunction("slow", dae.evalRHSFunctionSlow, None)
+            ts.setRHSSplitIFunction("fast", dae.evalIFunctionFast_split, None)
+            ts.setRHSSplitRHSFunction("fast", dae.evalRHSFunctionFast_split, None)
+            ts.setRHSSplitIJacobian("fast", dae.evalIJacobianFast_split, jac_fast, jac_fast)
+        else:
+            ts.setType(ts.Type.THETA)
+            ts.setIFunction(dae.evalFunction, rhs_vec)
+            ts.setIJacobian(dae.evalJacobian, jac_rhs)
+            ts.setIJacobianP(dae.evalJacobianP, jac_par)
 
         # create adjoint integrator
         if comp_sens:
