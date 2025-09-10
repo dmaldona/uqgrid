@@ -1659,6 +1659,11 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
     petsc = config.petsc
     power_injection = config.power_injection
     solve_power_flow = config.solve_powerflow_dynamics
+    arkimex = config.arkimex
+
+    # check for arkimex enabled
+    if arkimex and petsc:
+        print("ARKIMEX activated.")
 
 
     results = {}

@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument('--ton', type=float, default=0.25, help='Fault activation time.')
     parser.add_argument('--toff', type=float, default=0.4, help='Fault deactivation time.')
     parser.add_argument('--petsc', action='store_true', help='Enable PETSc integration.')
+    parser.add_argument('--arkimex', action='store_true', help='Use ARKIMEX integrator.')
 
     # Parse only the script arguments
     args = parser.parse_args(script_args)
@@ -52,7 +53,8 @@ def parse_args():
             verbose=args.verbose,
             comp_sens=args.comp_sens,
             fsolve=args.fsolve,
-            petsc=args.petsc
+            petsc=args.petsc,
+            arkimex=args.arkimex
         )
     except ValueError as e:
         print(f"Configuration Error: {e}")
