@@ -1549,7 +1549,6 @@ if petsc4py:
             """
             Performs one-time computation of indices and CSR structures for submatrices.
             This avoids expensive sparse matrix slicing inside the time-stepper.
-            This is needed for ARKIMEX methods with split fast/slow systems.
             """            
             # 1. Create a map where data contains its own index
             J_idx_map = self.J.copy().astype(np.int32)
@@ -1564,22 +1563,68 @@ if petsc4py:
             jfast_map = J_idx_map[self.fast_indices][:, self.fast_indices]
             self._jfast_data_indices = jfast_map.data.copy()
             self._jfast_csr = (jfast_map.indices.copy(), jfast_map.indptr.copy(), jfast_map.shape)
+            
+            # Pre-allocate the temporary Jacobian for fast subsystem
+            self._jfast_temp_data = np.zeros(len(self._jfast_data_indices), dtype=np.float64)
 
             # 4. Find the locations of the diagonal entries in J_temp's data array
-            # This is needed for the `a * I` update in the Jacobian.
             diag_indices = []
-            # Iterate over the number of differential equations in the fast subsystem
             for i in range(self.ndiffeq_fast):
-                # Find the column index for row i
                 start, end = jfast_map.indptr[i], jfast_map.indptr[i+1]
                 cols_in_row = jfast_map.indices[start:end]
                 
-                # Check if the diagonal entry exists (it should for a well-posed system)
                 if i in cols_in_row:
                     loc_in_row = np.where(cols_in_row == i)[0][0]
                     diag_indices.append(start + loc_in_row)
             
             self._jfast_diag_indices_in_data = np.array(diag_indices, dtype=np.int32)
+            
+            # 5. NEW: Precompute indices for the differential-differential block
+            # This is the [:ndiffeq_fast, :ndiffeq_fast] submatrix of jfast
+            diff_diff_indices = []
+            off_diag_indices = []  # For the [:ndiffeq_fast, ndiffeq_fast:] block
+            
+            for i in range(len(self.fast_indices)):
+                start, end = jfast_map.indptr[i], jfast_map.indptr[i+1]
+                cols_in_row = jfast_map.indices[start:end]
+                
+                if i < self.ndiffeq_fast:
+                    # This is a differential equation row
+                    for idx, col in enumerate(cols_in_row):
+                        data_idx = start + idx
+                        if col < self.ndiffeq_fast:
+                            # This entry is in the diff-diff block
+                            diff_diff_indices.append(data_idx)
+                        else:
+                            # This entry is in the off-diagonal block (diff-alg)
+                            off_diag_indices.append(data_idx)
+            
+            self._jfast_diff_diff_indices = np.array(diff_diff_indices, dtype=np.int32)
+            self._jfast_off_diag_indices = np.array(off_diag_indices, dtype=np.int32)
+            
+            # 6. Create mapping from jfrozen data indices to jfast data indices
+            # Since both come from the same original matrix, we need to map between them
+            jfrozen_indices, jfrozen_indptr, jfrozen_shape = self._jfrozen_csr
+            jfast_indices, jfast_indptr, jfast_shape = self._jfast_csr
+            
+            jfrozen_to_jfast_map = []
+            for i in range(self.ndiffeq_fast):
+                # Find entries in jfrozen row i
+                jfrozen_start, jfrozen_end = jfrozen_indptr[i], jfrozen_indptr[i+1]
+                jfrozen_cols = jfrozen_indices[jfrozen_start:jfrozen_end]
+                
+                # Find corresponding entries in jfast row i  
+                jfast_start, jfast_end = jfast_indptr[i], jfast_indptr[i+1]
+                jfast_cols = jfast_indices[jfast_start:jfast_end]
+                
+                for idx, col in enumerate(jfrozen_cols):
+                    if col < self.ndiffeq_fast:  # Only map entries in the diff-diff block
+                        jfast_idx = np.where(jfast_cols == col)[0]
+                        if len(jfast_idx) > 0:
+                            jfrozen_to_jfast_map.append((jfrozen_start + idx, jfast_start + jfast_idx[0]))
+            
+            self._jfrozen_to_jfast_data_map = np.array(jfrozen_to_jfast_map, dtype=np.int32)
+            
             self._indices_precomputed = True
 
         def evalRHSFunctionSlow(self, ts, t, x, f):
@@ -1632,20 +1677,29 @@ if petsc4py:
             start, end = x.getOwnershipRange()
             xx = np.array(x[start:end])
             ndiffeq_fast = self.ndiffeq_fast
-            NDIFFEQ = self.psys.num_dof_dif
             
             # Compute full Jacobian
             residual_jacobian(self.J, xx, self.theta, self.psys)
-            J_temp = self.J[self.fast_indices][:, self.fast_indices]
-                
-            # For differential part: -J + a*I
-            J_temp[:ndiffeq_fast, :ndiffeq_fast] = self.jfast_frozen[:ndiffeq_fast, :ndiffeq_fast]
-            J_temp.data[self._jfast_diag_indices_in_data] -= a
             
-            # Off-diagonal part must be zero
-            J_temp[:ndiffeq_fast, ndiffeq_fast:] = 0.0
+            # Extract data for fast subsystem directly using precomputed indices
+            # This replaces: J_temp = self.J[self.fast_indices][:, self.fast_indices]
+            self._jfast_temp_data[:] = self.J.data[self._jfast_data_indices]
             
-            Pfast.setValuesCSR(J_temp.indptr, J_temp.indices, -J_temp.data)
+            # Zero out the off-diagonal block (differential-algebraic coupling)
+            self._jfast_temp_data[self._jfast_off_diag_indices] = 0.0
+            
+            # Copy the frozen Jacobian values to the differential-differential block
+            # This replaces: J_temp[:ndiffeq_fast, :ndiffeq_fast] = self.jfast_frozen[:, :]
+            if self._jfrozen_to_jfast_data_map.size > 0:
+                jfrozen_data_vals = self.jfast_frozen.data[self._jfrozen_to_jfast_data_map[:, 0]]
+                self._jfast_temp_data[self._jfrozen_to_jfast_data_map[:, 1]] = jfrozen_data_vals
+            
+            # Add -a*I to the diagonal of the differential part
+            self._jfast_temp_data[self._jfast_diag_indices_in_data] -= a
+            
+            # Set the values in the PETSc matrix using precomputed CSR structure
+            indices, indptr, shape = self._jfast_csr
+            Pfast.setValuesCSR(indptr, indices, -self._jfast_temp_data)
             Pfast.assemble()
             if Jfast != Pfast: 
                 Jfast.assemble()
