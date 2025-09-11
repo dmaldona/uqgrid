@@ -1627,6 +1627,7 @@ if petsc4py:
             
             self._indices_precomputed = True
 
+        @profile
         def evalRHSFunctionSlow(self, ts, t, x, f):
             start, end = x.getOwnershipRange()
             xx = np.array(x[start:end])
@@ -1634,6 +1635,7 @@ if petsc4py:
             f.setArray(ff[self.slow_indices])
             f.assemble()
         
+        @profile
         def evalIFunctionFast_split(self, ts, t, x, xdot, f):
             tstep = self.ts_ref.getStepNumber()
             ndiffeq_fast = self.ndiffeq_fast
@@ -1662,6 +1664,7 @@ if petsc4py:
             f[:ndiffeq_fast] -= self.jfast_frozen.dot(xx[self.fast_indices_dif])
             f.assemble()
 
+        @profile
         def evalRHSFunctionFast_split(self, ts, t, x, f):
             start, end = x.getOwnershipRange()
             ndiffeq_fast = self.ndiffeq_fast
@@ -1673,6 +1676,7 @@ if petsc4py:
             f[:ndiffeq_fast] -= self.jfast_frozen.dot(xx[self.fast_indices_dif])
             f.assemble()
 
+        @profile
         def evalIJacobianFast_split(self, ts, t, x, xdot, a, Jfast, Pfast):
             start, end = x.getOwnershipRange()
             xx = np.array(x[start:end])
