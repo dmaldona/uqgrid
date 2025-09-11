@@ -1469,12 +1469,23 @@ if petsc4py:
             self.jfast_frozen = None # frozen Jacobian for fast system
             self.ff_arkimex = None
 
+            # Pre-computed indices and structures for fast operations
+            self._jfrozen_data_indices = None
+            self._jfrozen_csr = None
+            self._jfast_data_indices = None
+            self._jfast_csr = None
+            self._jfast_diag_indices_in_data = None
+            self._indices_precomputed = False
+
         def set_ndiffeq_fast(self, ndiffeq_fast):
             self.ndiffeq_fast = ndiffeq_fast
 
         def set_fast_indices_split(self, fast_indices_alg, fast_indices_dif):
             self.fast_indices_alg = fast_indices_alg
             self.fast_indices_dif = fast_indices_dif
+
+            if not self._indices_precomputed and self.J.nnz > 0:
+                self._precompute_submatrix_indices()        
 
         def set_ts_ref(self, ts):
             self.ts_ref = ts
@@ -1529,13 +1540,52 @@ if petsc4py:
             P.setValuesCSR(Jp_temp.indptr, Jp_temp.indices, -Jp_temp.data)
             P.assemble()
             return True
-        
-        # arkimex callbacks
+
+        #####################
+        # ARKIMEX callbacks #
+        #####################
+
+        def _precompute_submatrix_indices(self):
+            """
+            Performs one-time computation of indices and CSR structures for submatrices.
+            This avoids expensive sparse matrix slicing inside the time-stepper.
+            This is needed for ARKIMEX methods with split fast/slow systems.
+            """            
+            # 1. Create a map where data contains its own index
+            J_idx_map = self.J.copy().astype(np.int32)
+            J_idx_map.data = np.arange(self.J.nnz, dtype=np.int32)
+
+            # 2. Pre-compute for jfast_frozen = J[fast_indices_dif, fast_indices_dif]
+            jfrozen_map = J_idx_map[self.fast_indices_dif][:, self.fast_indices_dif]
+            self._jfrozen_data_indices = jfrozen_map.data.copy()
+            self._jfrozen_csr = (jfrozen_map.indices.copy(), jfrozen_map.indptr.copy(), jfrozen_map.shape)
+
+            # 3. Pre-compute for J_temp = J[fast_indices, fast_indices]
+            jfast_map = J_idx_map[self.fast_indices][:, self.fast_indices]
+            self._jfast_data_indices = jfast_map.data.copy()
+            self._jfast_csr = (jfast_map.indices.copy(), jfast_map.indptr.copy(), jfast_map.shape)
+
+            # 4. Find the locations of the diagonal entries in J_temp's data array
+            # This is needed for the `a * I` update in the Jacobian.
+            diag_indices = []
+            # Iterate over the number of differential equations in the fast subsystem
+            for i in range(self.ndiffeq_fast):
+                # Find the column index for row i
+                start, end = jfast_map.indptr[i], jfast_map.indptr[i+1]
+                cols_in_row = jfast_map.indices[start:end]
+                
+                # Check if the diagonal entry exists (it should for a well-posed system)
+                if i in cols_in_row:
+                    loc_in_row = np.where(cols_in_row == i)[0][0]
+                    diag_indices.append(start + loc_in_row)
+            
+            self._jfast_diag_indices_in_data = np.array(diag_indices, dtype=np.int32)
+            self._indices_precomputed = True
+
         def evalRHSFunctionSlow(self, ts, t, x, f):
             start, end = x.getOwnershipRange()
             xx = np.array(x[start:end])
-            ff = np.zeros_like(xx)
-            residual_function(ff, xx, self.theta, self.psys)
+            ff = self.ff_arkimex
             f.setArray(ff[self.slow_indices])
             f.assemble()
         
@@ -1549,7 +1599,11 @@ if petsc4py:
             # We compute Jacobian once at the beginning of the time step
             if tstep != self.current_step:
                 residual_jacobian(self.J, xx, self.theta, self.psys)
-                self.jfast_frozen = self.J[self.fast_indices_dif][:, self.fast_indices_dif]
+                # Extract data using pre-computed indices
+                jfrozen_data = self.J.data[self._jfrozen_data_indices]
+                # Reconstruct the sparse matrix from pre-computed CSR structure
+                indices, indptr, shape = self._jfrozen_csr
+                self.jfast_frozen = csr_matrix((jfrozen_data, indices, indptr), shape=shape)
                 self.current_step = tstep
 
             residual_function(ff, xx, self.theta, self.psys)
@@ -1586,7 +1640,7 @@ if petsc4py:
                 
             # For differential part: -J + a*I
             J_temp[:ndiffeq_fast, :ndiffeq_fast] = self.jfast_frozen[:ndiffeq_fast, :ndiffeq_fast]
-            J_temp[:ndiffeq_fast, :ndiffeq_fast] -= a * np.eye(ndiffeq_fast)
+            J_temp.data[self._jfast_diag_indices_in_data] -= a
             
             # Off-diagonal part must be zero
             J_temp[:ndiffeq_fast, ndiffeq_fast:] = 0.0
