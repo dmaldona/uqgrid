@@ -69,9 +69,9 @@ def find_state_index(
             
     return indices
 
-def load_scenario_data(scenario_id: str, simulation_log: Dict) -> Dict:
+def load_scenario_data(scenario_id: str, simulation_log: Dict, case_dir='.') -> Dict:
     """Load data for a specific scenario."""
-    file_path = simulation_log[scenario_id]['file']
+    file_path = os.path.join(case_dir, simulation_log[scenario_id]['file'])
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Scenario data file not found: {file_path}")
     
@@ -109,10 +109,12 @@ def get_state_timeseries_all(
     sample_idx: Optional[int] = None,
     fault_location: Optional[int] = None,
     fault_impedance: Optional[float] = None,
-    diverged: Optional[bool] = False
+    diverged: Optional[bool] = False,
+    case_dir='.'
 ) -> Dict[str, Dict[str, Union[np.ndarray, Any]]]:
     """Extract a state variable from multiple scenarios with filtering."""
     # Filter scenarios
+    print("Filter scenarios")
     filtered_scenarios = filter_scenarios(
         simulation_log, 
         sample_idx,
@@ -122,6 +124,7 @@ def get_state_timeseries_all(
     )
     
     # Find state indices
+    print("Find state indices")
     state_indices = find_state_index(
         state_metadata, 
         model, 
@@ -137,9 +140,13 @@ def get_state_timeseries_all(
     
     # Extract data for each scenario
     results = {}
-    for scenario_id, scenario_info in filtered_scenarios.items():
+    PRINT_EVERY = 200
+    n_load_scenario = 0
+    total_scenario = len(filtered_scenarios)
+    print(f"Extract data from {total_scenario} scenario")
+    for i, (scenario_id, scenario_info) in enumerate(filtered_scenarios.items(), start=1):
         try:
-            scenario_data = load_scenario_data(scenario_id, simulation_log)
+            scenario_data = load_scenario_data(scenario_id, simulation_log, case_dir=case_dir)
             tvec, values = get_state_timeseries(scenario_data, state_idx)
             
             results[scenario_id] = {
@@ -147,8 +154,15 @@ def get_state_timeseries_all(
                 'values': values,
                 'metadata': scenario_info
             }
+            n_load_scenario += 1
+
+            if (n_load_scenario % PRINT_EVERY == 0) or (i == total_scenario):
+                pct = 100.0 * i / total_scenario
+                print(f"[{i}/{total_scenario}] ({pct:.1f}%) processed; "
+                    f"{n_load_scenario} loaded successfully ",
+                    flush=True)
         except Exception as e:
-            print(f"Error loading scenario {scenario_id}: {e}")
+            print(f"Error loading scenario {scenario_id}: {e}", flush=True)
     
     return results
 
@@ -182,65 +196,14 @@ def plot_state_comparison(
     
     return plt
 
-# Example usage
-def example_gen1_speed_deviation():
-    """Example that extracts generator 1 speed deviation for all scenarios."""
+def ComputeTSI(sim_results_dir='.'):
     # Load metadata
-    simulation_log = load_simulation_log()
-    state_metadata = load_state_metadata()
-    
-    # Get all generator 1 speed deviations from non-diverged simulations
-    results = get_state_timeseries_all(
-        simulation_log,
-        state_metadata,
-        model='GenGENROU',
-        device_number='1',
-        state_name='w',
-        diverged=False
-    )
-    
-    # Plot results grouped by base load
-    plt = plot_state_comparison(
-        results,
-        title='Generator 1 Speed Deviation',
-        ylabel='Speed Deviation (pu)',
-        legend_key='base_load'
-    )
-    
-    # Save figure
-    plt.savefig('gen1_speed_comparison.png')
-    plt.close()
-    
-    # Now filter by fault location and show for a specific load level
-    results_filtered = get_state_timeseries_all(
-        simulation_log,
-        state_metadata,
-        model='GenGENROU',
-        device_number='1',
-        state_name='w',
-        sample_idx=1,
-        diverged=False
-    )
-    
-    plt = plot_state_comparison(
-        results_filtered,
-        title='Generator 1 Speed Deviation (Sample Index = 1)',
-        ylabel='Speed Deviation (pu)',
-        legend_key='fault_location'
-    )
-    
-    plt.savefig('gen1_speed_comparison_sample1.png')
-    
-    print(f"Found {len(results)} non-diverged scenarios")
-    print(f"Found {len(results_filtered)} non-diverged scenarios at sample_idx=1")
-    
-    return results
+    sim_log_path = os.path.join(sim_results_dir, 'simulation_log.json')
+    state_meta_path = os.path.join(sim_results_dir, 'state_metadata.json')
 
-def ComputeTSI():
-    # Load metadata
-    simulation_log = load_simulation_log()
-    state_metadata = load_state_metadata()
-    
+    simulation_log = load_simulation_log(str(sim_log_path))
+    state_metadata = load_state_metadata(str(state_meta_path))
+
     # 1) find all (device_number, bus_num) pairs for GenGENROU δ-states
     gen_pairs = {
         (str(data['device_number']), data['bus_num'])
@@ -264,7 +227,8 @@ def ComputeTSI():
             device_number=device_number,
             bus_num=bus_num,
             state_name='delta',
-            diverged=False
+            diverged=False,
+            case_dir=sim_results_dir
         )
         delta_dicts[(bus_num, device_number)] = d
 
@@ -272,6 +236,7 @@ def ComputeTSI():
         raise RuntimeError("No generator deltas were loaded!")
 
     # find common scenarios
+    print(f"Try to find common scenarios")
     scenario_sets = [set(d.keys()) for d in delta_dicts.values()]
     common_scenarios = sorted(set.intersection(*scenario_sets))
     if not common_scenarios:
@@ -292,6 +257,9 @@ def ComputeTSI():
     pg_per_scenario = {}
     pl_per_scenario = {}
     ql_per_scenario = {}
+    fault_loc_per_scenario = {}
+    fault_impedance_per_scenario = {}
+    sample_id_per_scenario = {}
 
     # 3) Process scenarios one by one (memory efficient)
     print("⟳ Processing scenarios...")
@@ -301,10 +269,13 @@ def ComputeTSI():
         
         # Load scenario data once for pg, pl, ql
         try:
-            scenario_data = load_scenario_data(scenario_id, simulation_log)
+            scenario_data = load_scenario_data(scenario_id, simulation_log, case_dir=sim_results_dir)
             pg_per_scenario[scenario_id] = scenario_data['p_gen_scaled']
             pl_per_scenario[scenario_id] = scenario_data['p_load_scaled']
             ql_per_scenario[scenario_id] = scenario_data['q_load_scaled']
+            fault_loc_per_scenario[scenario_id] = scenario_data['metadata']['fault_location']
+            fault_impedance_per_scenario[scenario_id] = scenario_data['metadata']['fault_impedance']
+            sample_id_per_scenario[scenario_id] = scenario_data['metadata']['sample_idx']
             del scenario_data  # Free immediately
         except Exception as e:
             print(f"Error loading scenario {scenario_id}: {e}")
@@ -343,6 +314,9 @@ def ComputeTSI():
     post_data['pg_per_scenario'] = pg_per_scenario
     post_data['pl_per_scenario'] = pl_per_scenario
     post_data['ql_per_scenario'] = ql_per_scenario
+    post_data['fault_loc'] = fault_loc_per_scenario
+    post_data['fault_impedance'] = fault_impedance_per_scenario
+    post_data['sample_id'] = sample_id_per_scenario
 
     print(f'TSI for all scenarios: {tsi_all.shape}')
     print(f'TSI for all time scenarios: {tsi_all_time.shape}')
@@ -373,41 +347,123 @@ def ComputeTSI():
         
     return post_data
 
-def create_training_samples(post_data: Dict):
+# This code is assuming that the number of indices stays the same forper fault
+def fault_location_by_matrix_index(post_data, simulation_log_path = 'simulation_log.json'):
+    simulation_log = load_simulation_log(simulation_log_path)
+
+    # Using a normal dict
+    fault_location_map = {}
+
+    for k, v in simulation_log.items():
+        floc = v["fault_location"]
+        if floc not in fault_location_map:
+            fault_location_map[floc] = []
+        fault_location_map[floc].append(k)
+
+    # build a mapping from uuid -> index
+    uuid_to_idx = {uuid: i for i, uuid in enumerate(post_data["tsi_per_scenario"])}
+
+    # Create dicturnary for the fault location and missing faults
+    floc_with_indices = {}
+    removed_uuids = {}  # store the missing ones here
+
+    for floc, uuids in fault_location_map.items():
+        indices = []
+        missing = []
+
+        for uid in uuids:
+            if uid in uuid_to_idx:
+                indices.append(uuid_to_idx[uid])
+            else:
+                missing.append(uid)
+
+        floc_with_indices[floc] = {
+            "indices": indices,
+        }
+
+        # That uuids removed in the process to calculate the TSI
+        if missing:  
+            removed_uuids[floc] = missing
+
+    # Filter out empty lists
+    nonempty = {k: v["indices"] for k, v in floc_with_indices.items() if v["indices"]}
+
+    # Stack into matrix
+    index_by_fault = np.vstack(list(nonempty.values()))
+    row_fault_location = np.array(list(nonempty.keys()), dtype=int)
+
+    return index_by_fault, row_fault_location, removed_uuids
+
+
+def create_training_samples(post_data: Dict, filename = None, simulation_log_path = 'simulation_log.json'):
+    tsi_all_time = post_data['tsi_ts_per_scenario']
     tsi_dict = post_data['tsi_per_scenario']
+    # tsi_dict = post_data['tsi_all']
+    #print(f"tsi_all_time", tsi_all_time)
+    #print(f"tsi_all_time first element's value", tsi_all_time[list(tsi_all_time.keys())[0]])
     pg_dict  = post_data['pg_per_scenario']
+    # qg_dict  = post_data['qg_per_scenario']
     pl_dict  = post_data['pl_per_scenario']
     ql_dict  = post_data['ql_per_scenario']
+    fault_loc_dict  = post_data['fault_loc']
+    fault_impedance_dict  = post_data['fault_impedance']
+    sample_id_dict  = post_data['sample_id']
 
     scenario_ids = sorted(tsi_dict.keys())
 
     first_sid = scenario_ids[0]
     pg_len = len(pg_dict[first_sid])
+    # qg_len = len(qg_dict[first_sid])
     pl_len = len(pl_dict[first_sid])
     ql_len = len(ql_dict[first_sid])
 
-    col_name = (
+    col_name = (    
         [f'pg_{i+1}' for i in range(pg_len)] +
+        # [f'qg_{i+1}' for i in range(qg_len)] +
         [f'pl_{i+1}' for i in range(pl_len)] +
         [f'ql_{i+1}' for i in range(ql_len)] +
-        ['tsi']
+        ['tsi'] +
+        [f'tsi_t{i+1}' for i in range(len(tsi_all_time[list(tsi_all_time.keys())[0]]))]
     )
 
     rows = []
+    rows_misc = []
     for sid in scenario_ids:
         pg = pg_dict[sid]
+        # qg = qg_dict[sid]
         pl = pl_dict[sid]
         ql = ql_dict[sid]
-        tsi = np.array([tsi_dict[sid]])
-    
-        row = np.hstack((pg, pl, ql, tsi))
+        tsi = tsi_dict[sid]
+        tsi_ts = tsi_all_time[sid]
+
+        row = np.hstack((pg, pl, ql, tsi, tsi_ts))
         rows.append(row)
 
+        fault_loc  = fault_loc_dict[sid]
+        fault_impedance  = fault_impedance_dict[sid]
+        sample_id  = sample_id_dict[sid]
+    
+        row_misc = np.hstack((fault_loc, fault_impedance, sample_id))
+        rows_misc.append(row_misc)
+
     Data = np.vstack(rows)
+    DataMisc = np.vstack(rows_misc)
+
+    index_by_fault, row_fault_location, removed_uuids = fault_location_by_matrix_index(post_data, simulation_log_path = 'simulation_log.json')
+
+    print(row_fault_location)
 
     # save to .mat file
-    print("Save samples to data_record.mat")
-    scio.savemat('data_record.mat', {'Data': Data, 'col_name': col_name})
+    if filename is None:
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        print(f"./Save samples to IEEE9_{Data.shape[0]}_samples_{timestamp}.mat")
+        # scio.savemat(f'IEEE9_{Data.shape[0]}_samples_{timestamp}.mat', {'Data': Data, 'col_name': col_name, "fault_per_index"})
+        scio.savemat(f'IEEE9_{Data.shape[0]}_samples_{timestamp}.mat', {'Data': Data, 'DataPlus': DataMisc, 'col_name': col_name, "index_by_fault": index_by_fault, "row_fault_location": row_fault_location})
+    else:
+        print(f"{filename}.mat")
+        scio.savemat(f'{filename}.mat', {'Data': Data, 'DataPlus': DataMisc, 'col_name': col_name, "index_by_fault": index_by_fault, "row_fault_location": row_fault_location})
+
+
 
 if __name__ == "__main__":
     # (original) compute generator speeds (ω)
