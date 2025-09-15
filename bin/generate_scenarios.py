@@ -171,8 +171,8 @@ def run_simulation_driver_batched_fixed_sample(
 
     del base_psys
     
-    print(f"base_p = {base_p}")
-    print(f"base_pG = {base_pG}")
+    #print(f"base_p = {base_p}")
+    #print(f"base_pG = {base_pG}")
 
     # Define the base powers for each sample
     sim_per_scen = max(entry["sample_idx"] for entry in scenarios_metadata.values()) + 1
@@ -252,8 +252,8 @@ def run_simulation_driver_batched_varried_sample(
         base_p, base_q = base_psys.get_load_pq()
         base_pG, base_qG = base_psys.get_gen_pq()
         
-        print(f"base_p = {base_p}")
-        print(f"base_pG = {base_pG}")
+        #print(f"base_p = {base_p}")
+        #print(f"base_pG = {base_pG}")
 
         batch_args = [
             (base_psys, scenarios_metadata[sid], sid,

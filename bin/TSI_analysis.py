@@ -449,16 +449,17 @@ def create_training_samples(post_data: Dict, filename = None, simulation_log_pat
     Data = np.vstack(rows)
     DataMisc = np.vstack(rows_misc)
 
-    index_by_fault, row_fault_location, removed_uuids = fault_location_by_matrix_index(post_data, simulation_log_path = 'simulation_log.json')
-
+    index_by_fault = []
+    row_fault_location = []
+#    index_by_fault, row_fault_location, removed_uuids = fault_location_by_matrix_index(post_data, simulation_log_path = 'simulation_log.json')
     print(row_fault_location)
 
     # save to .mat file
     if filename is None:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        print(f"./Save samples to IEEE9_{Data.shape[0]}_samples_{timestamp}.mat")
-        # scio.savemat(f'IEEE9_{Data.shape[0]}_samples_{timestamp}.mat', {'Data': Data, 'col_name': col_name, "fault_per_index"})
-        scio.savemat(f'IEEE9_{Data.shape[0]}_samples_{timestamp}.mat', {'Data': Data, 'DataPlus': DataMisc, 'col_name': col_name, "index_by_fault": index_by_fault, "row_fault_location": row_fault_location})
+        print(f"./Save samples to uqgrid_{Data.shape[0]}_samples_{timestamp}.mat")
+        # scio.savemat(f'uqgrid_{Data.shape[0]}_samples_{timestamp}.mat', {'Data': Data, 'col_name': col_name, "fault_per_index"})
+        scio.savemat(f'uqgrid_{Data.shape[0]}_samples_{timestamp}.mat', {'Data': Data, 'DataPlus': DataMisc, 'col_name': col_name, "index_by_fault": index_by_fault, "row_fault_location": row_fault_location})
     else:
         print(f"{filename}.mat")
         scio.savemat(f'{filename}.mat', {'Data': Data, 'DataPlus': DataMisc, 'col_name': col_name, "index_by_fault": index_by_fault, "row_fault_location": row_fault_location})
