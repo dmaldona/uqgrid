@@ -121,6 +121,18 @@ def get_state_timeseries_all(
         diverged
     )
     
+    # Diverged scenarios - should comment this out for performance
+    filtered_scenarios_div = filter_scenarios(
+        simulation_log, 
+        sample_idx,
+        fault_location,
+        fault_impedance,
+        diverged=True
+    )
+    print(f"Scenarios that did not diverge: {len(filtered_scenarios)}; scenarios that diverged: {len(filtered_scenarios_div)}")
+    # Free up the memory
+    filtered_scenarios_div = None
+
     # Find state indices
     state_indices = find_state_index(
         state_metadata, 
