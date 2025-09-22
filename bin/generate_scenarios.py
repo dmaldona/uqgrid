@@ -318,17 +318,19 @@ def main():
         dyr = "data/IEEE39_gov.dyr"
         n_bus = 39
     elif PowerGridModel == "ACTIVSg200":
+        # 49 generators
         raw = "data/ACTIVSg200.raw"
         dyr = "data/ACTIVSg200.dyr"
-        n_bus = 49
+        n_bus = 200
     elif PowerGridModel == "ACTIVSg500":
+        # 90 generators
         raw = "data/ACTIVSg500.raw"
         dyr = "data/ACTIVSg500.dyr"
-        n_bus = 90
+        n_bus = 500
     else:
         raise RuntimeError(f"{PowerGridModel} is an invalid model!")
 
-    fault_locations   = list(range(1, n_bus + 1))
+    fault_locations   = list(range(0, n_bus))
 
     # Calculate total scenarios
     total_scenarios = SAMPLES_PER_FAULT_LOCATION * len(fault_locations) * len(FAULT_IMPEDANCES)

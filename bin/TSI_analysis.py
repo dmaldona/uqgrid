@@ -122,7 +122,19 @@ def get_state_timeseries_all(
         fault_impedance,
         diverged
     )
-    
+
+    # Diverged scenarios - should comment this out for performance
+    filtered_scenarios_div = filter_scenarios(
+        simulation_log, 
+        sample_idx,
+        fault_location,
+        fault_impedance,
+        diverged=True
+    )
+    print(f"Scenarios that did not diverge: {len(filtered_scenarios)}; scenarios that diverged: {len(filtered_scenarios_div)}")
+    # Free up the memory
+    filtered_scenarios_div = None
+
     # Find state indices
     print("Find state indices")
     state_indices = find_state_index(
@@ -445,7 +457,6 @@ def create_training_samples(post_data: Dict, filename = None, simulation_log_pat
     
         row_misc = np.hstack((fault_loc, fault_impedance, sample_id))
         rows_misc.append(row_misc)
-
     Data = np.vstack(rows)
     DataMisc = np.vstack(rows_misc)
 

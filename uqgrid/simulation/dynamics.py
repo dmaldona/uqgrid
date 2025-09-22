@@ -1440,6 +1440,7 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
         Hess = None
 
     if petsc4py and petsc:
+        print("using petsc\n")
         if verbose: print("Convert objects to PETSc format")
         nsize = J.shape[0]
         Jp = PETSc.Mat()
@@ -1555,6 +1556,7 @@ def integrate_system(psys: Psystem, config: IntegrationConfig) -> dict:
         tvec = np.array(tvecp)
 
     else:
+        print("using python solver\n")
         tvec = np.linspace(0, nsteps*h, nsteps)
         history = np.zeros((system_size, nsteps))
         for i in range(nsteps):
