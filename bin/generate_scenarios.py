@@ -11,7 +11,7 @@ from uqgrid.simulation.config   import IntegrationConfig
 from uqgrid.io.parse            import load_psse, add_dyr
 
 
-def generate_perturbations(base_p, base_q,
+def generate_perturbations_load(base_p, base_q,
                                 *,
                                 noise_type="normal", var=0.1,
                                 rng=None, return_noise=False):
@@ -29,7 +29,8 @@ def generate_perturbations(base_p, base_q,
         p_noise = rng.normal(0.0, var, size=base_p.shape)
         q_noise = rng.normal(0.0, var, size=base_q.shape)
     elif noise_type == "uniform":
-        half = np.sqrt(3 * var)              # Var(U[-a,a]) = var
+        #half = np.sqrt(3 * var)              # Var(U[-a,a]) = var
+        half = 0.1
         p_noise = rng.uniform(-half, half, size=base_p.shape)
         q_noise = rng.uniform(-half, half, size=base_q.shape)
     elif noise_type == "none":
@@ -39,6 +40,57 @@ def generate_perturbations(base_p, base_q,
 
     p_scaled = base_p * (1.0 + p_noise)
     q_scaled = base_q * (1.0 + q_noise)
+
+    if return_noise:
+        return p_scaled, q_scaled, p_noise, q_noise
+    return p_scaled, q_scaled
+
+
+import numpy as np
+
+def generate_perturbations_gen(base_p, base_q,
+                                p_gen_lb, p_gen_ub, q_gen_lb, q_gen_ub,
+                                noise_type="normal", var=0.1,
+                                rng=None, return_noise=False):
+    """
+    Apply per-bus noise -> return scaled loads.
+    If return_noise=True, also return (p_noise, q_noise)
+
+        P_scaled = base_p * (1 + p_noise)
+        Q_scaled = base_q * (1 + q_noise)
+    TODO: may need to change it so it's more flexible.
+    """    
+    rng = np.random.default_rng() if rng is None else rng
+
+    if noise_type == "normal":
+        p_noise = rng.normal(0.0, var, size=base_p.shape)
+        q_noise = rng.normal(0.0, var, size=base_q.shape)
+        
+        p_scaled = base_p * (1.0 + p_noise)
+        q_scaled = base_q * (1.0 + q_noise)
+    elif noise_type == "uniform":
+        half = np.sqrt(3 * var)              # Var(U[-a,a]) = var
+        #p_noise = rng.uniform(-half, half, size=base_p.shape)
+        #q_noise = rng.uniform(-half, half, size=base_q.shape)
+
+        lo_p = base_p * np.maximum(0, 1 - half)
+        hi_p = p_gen_ub
+        p_scaled = rng.uniform(low=lo_p, high=hi_p)
+        
+        lo_q = base_q * np.maximum(0, 1 - half)
+        hi_q = q_gen_ub
+        q_scaled = rng.uniform(low=lo_q, high=hi_q)
+        
+        p_noise = p_scaled - base_p
+        q_noise = q_scaled - base_q
+        
+    elif noise_type == "none":
+        p_noise = q_noise = np.zeros_like(base_p)
+        
+        p_scaled = base_p * (1.0 + p_noise)
+        q_scaled = base_q * (1.0 + q_noise)
+    else:
+        raise ValueError(f"Unknown noise_type '{noise_type}'")
 
     if return_noise:
         return p_scaled, q_scaled, p_noise, q_noise
@@ -69,7 +121,9 @@ def generate_metadata(scenarios):
 def run_single_scenario(
         base_psys, scenario, scenario_id,
         base_p_load, base_q_load,
-        base_p_gen,  base_q_gen,
+        base_p_gen,  base_q_gen, 
+        p_gen_lb, p_gen_ub,
+        q_gen_lb, q_gen_ub,
         noise_type="normal", noise_var=0.1,
         balance_generation=False, 
         add_perturbations = True,
@@ -80,13 +134,13 @@ def run_single_scenario(
 
     #  Draw noise and obtain positive, scaled loads
     if add_perturbations:
-        pL_scaled, qL_scaled, pL_noise, qL_noise = generate_perturbations(
+        pL_scaled, qL_scaled, pL_noise, qL_noise = generate_perturbations_load(
             base_p_load, base_q_load,
             noise_type=noise_type, var=noise_var,
             return_noise=True)
 
-        pG_scaled, qG_scaled, pG_noise, qG_noise = generate_perturbations(
-            base_p_gen, base_q_gen,
+        pG_scaled, qG_scaled, pG_noise, qG_noise = generate_perturbations_gen(
+            base_p_gen, base_q_gen, p_gen_lb, p_gen_ub, q_gen_lb, q_gen_ub,
             noise_type=noise_type, var=noise_var,
             return_noise=True)
     else:
@@ -113,7 +167,7 @@ def run_single_scenario(
 
     cfg = IntegrationConfig(
         tend=10.0, dt=1/120.0, power_injection=False,
-        ton=0.25, toff=0.4, verbose=False, petsc=True
+        ton=0.25, toff=0.4, verbose=False, petsc=False
     )
 
     try:
@@ -155,7 +209,7 @@ def run_simulation_driver_batched_fixed_sample(
         raw, dyr, scenarios_metadata,
         *, noise_type="normal", noise_var=0.1,
         balance_generation=True, 
-        n_jobs=-1, batch_size=10,
+        n_jobs=-1, batch_size=10, 
         mat_dir = "simulation_data"):
 
     simulation_log = {}
@@ -168,24 +222,39 @@ def run_simulation_driver_batched_fixed_sample(
 
     base_p, base_q = base_psys.get_load_pq()
     base_pG, base_qG = base_psys.get_gen_pq()
+    
+    pglb, pgub = base_psys.get_pgen_bounds()
+    qglb, qgub = base_psys.get_qgen_bounds()
 
     del base_psys
     
     #print(f"base_p = {base_p}")
     #print(f"base_pG = {base_pG}")
 
+    job_id  = int(os.environ.get("SLURM_JOB_ID", 0))
+    task_id = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
+
+    # Optional: add a human-chosen base seed to version your experiment
+    BASE_SEED = 20251001
+
+    ss = np.random.SeedSequence(entropy=BASE_SEED, spawn_key=[job_id, task_id])
+    print(f"\nrandom seed = {ss}\n")
+    rng = np.random.default_rng(ss)
+
     # Define the base powers for each sample
     sim_per_scen = max(entry["sample_idx"] for entry in scenarios_metadata.values()) + 1
     for sim in range(sim_per_scen):
-        pL_scaled, qL_scaled, pL_noise, qL_noise = generate_perturbations(
+        pL_scaled, qL_scaled, pL_noise, qL_noise = generate_perturbations_load(
             base_p, base_q,
-            noise_type=noise_type, var=noise_var,
-            return_noise=True)
+            noise_type=noise_type, var=noise_var, 
+            rng=rng, return_noise=True)
 
-        pG_scaled, qG_scaled, pG_noise, qG_noise = generate_perturbations(
+        pG_scaled, qG_scaled, pG_noise, qG_noise = generate_perturbations_gen(
             base_pG, base_qG,
+            pglb, pgub,
+            qglb, qgub,
             noise_type=noise_type, var=noise_var,
-            return_noise=True)
+            rng=rng, return_noise=True)
 
         starting_points[sim] = {
         "base_p": pL_scaled,
@@ -210,6 +279,8 @@ def run_simulation_driver_batched_fixed_sample(
             starting_points[scenarios_metadata[sid]['sample_idx']]["base_q"], 
             starting_points[scenarios_metadata[sid]['sample_idx']]["base_pG"], 
             starting_points[scenarios_metadata[sid]['sample_idx']]["base_qG"], 
+            pglb, pgub,
+            qglb, qgub,
             noise_type, noise_var, 
             balance_generation, False, mat_dir)
             for sid in batch_ids
@@ -330,7 +401,9 @@ def main():
     else:
         raise RuntimeError(f"{PowerGridModel} is an invalid model!")
 
-    fault_locations   = list(range(0, n_bus))
+    #fault_locations   = list(range(0, n_bus))
+    fault_locations = [142, 143, 144, 495,  86, 337, 458,  62, 497,  87, 361, 338, 422,
+       124, 140, 423,  61, 141,  81]
 
     # Calculate total scenarios
     total_scenarios = SAMPLES_PER_FAULT_LOCATION * len(fault_locations) * len(FAULT_IMPEDANCES)

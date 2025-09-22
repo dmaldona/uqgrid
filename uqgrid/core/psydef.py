@@ -224,11 +224,15 @@ class Load(DeviceModel):
         GX[vm_idx + 1, vm_idx] = 2.0*Ql*(vm/v0)**2.0/vm
 
 class Generator(object):
-    def __init__(self, bus, idx_name, psch, qsch, basemva, internal_id, mbase):
+    def __init__(self, bus, idx_name, psch, qsch, pub, plb, qub, qlb, basemva, internal_id, mbase):
         self.bus = bus
         self.idx = idx_name
         self.psch = psch/basemva
         self.qsch = qsch/basemva
+        self.pgub = pub/basemva
+        self.pglb = plb/basemva
+        self.qgub = qub/basemva
+        self.qglb = qlb/basemva
         self.has_dynamic_model = False
         self.internal_id = internal_id
 
@@ -474,8 +478,8 @@ class Psystem:
         self.branches.append(Branch(i, j, r, x, sh=sh, tap=tap, shift=shift))
         self.nbranches += 1
 
-    def add_gen(self, bus, idx_name, psch, qsch, mbase=-1):
-        self.gens.append(Generator(bus, idx_name, psch, qsch, self.basemva, self.ngens, mbase=mbase))
+    def add_gen(self, bus, idx_name, psch, qsch, pgub, pglb, qgub, qglb, mbase=-1):
+        self.gens.append(Generator(bus, idx_name, psch, qsch, pgub, pglb, qgub, qglb, self.basemva, self.ngens, mbase=mbase))
         self.ngens += 1
 
     def add_busfault(self, bus, rfault, time):
@@ -711,6 +715,38 @@ class Psystem:
             q_load[i] = load.qload
             
         return p_load, q_load
+
+    def get_pgen_bounds(self):
+        """Returns two numpy arrays containing the real power generation lower and upper bounds.
+        
+        Returns:
+            tuple: (pg_lb, pg_ub) where each is a numpy array of length nloads
+        """
+        import numpy as np
+        pg_lb = np.zeros(self.ngens)
+        pg_ub = np.zeros(self.ngens)
+        
+        for i, gen in enumerate(self.gens):
+            pg_lb[i] = gen.pglb
+            pg_ub[i] = gen.pgub
+            
+        return pg_lb, pg_ub
+    
+    def get_qgen_bounds(self):
+        """Returns two numpy arrays containing the reactive power generation lower and upper bounds.
+        
+        Returns:
+            tuple: (qg_lb, qg_ub) where each is a numpy array of length nloads
+        """
+        import numpy as np
+        qg_lb = np.zeros(self.ngens)
+        qg_ub = np.zeros(self.ngens)
+        
+        for i, gen in enumerate(self.gens):
+            qg_lb[i] = gen.qglb
+            qg_ub[i] = gen.qgub
+            
+        return qg_lb, qg_ub
 
     def set_load_pq(self, p_load, q_load):
         """Sets the real and reactive power load values.

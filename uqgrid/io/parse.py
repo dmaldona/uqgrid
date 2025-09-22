@@ -166,7 +166,7 @@ def load_psse(raw_filename):
     # add generators
     for gen in case.gens:
         bus = psse_to_int[int(gen.busn)]
-        psys.add_gen(bus, gen.name, gen.pg, gen.qg, mbase=gen.mbase)
+        psys.add_gen(bus, gen.name, gen.pg, gen.qg, gen.pt, gen.pb, gen.qt, gen.qb, mbase=gen.mbase)
 
     # add loads
     for i in range(nloads):
@@ -227,7 +227,9 @@ def load_matpower(mat_file):
 
     for i in range(ngens):
         bus = mat_to_int[int(mat_gens[i, 0])]
-        psys.add_gen(bus, "id", mat_gens[i, 1], mat_gens[i, 2])
+        psys.add_gen(bus, "id", mat_gens[i, 1], mat_gens[i, 2],
+                     mat_gens[i, 8], mat_gens[i, 9],
+                     mat_gens[i, 3], mat_gens[i, 4],)
 
     for i in range(nbranch):
         fr_internal = mat_to_int[int(mat_branches[i, 0])]
