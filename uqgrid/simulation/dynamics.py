@@ -1832,33 +1832,61 @@ def compute_initial_state_sensitivity(psys, lambda_adjoint, nominal_params, eps=
     
     return sensitivity
 
-def generate_default_partition_indices(psys):
-    slow_indices = []
-    fast_indices = []
+def generate_default_partition_indices(psys, slow_diff_indices=None, fast_diff_indices=None):
+    """Generate fast/slow index sets for ARKIMEX.
 
-    fast_indices_alg = []
-    fast_indices_dif = []
+    Args:
+        psys: Power system object with sizing information.
+        slow_diff_indices: Optional iterable with the global indexes of
+            differential equations that must belong to the slow subsystem.
+        fast_diff_indices: Optional iterable with the global indexes of
+            differential equations that must belong to the fast subsystem.
+
+    Returns:
+        Tuple containing the index lists expected by the ARKIMEX callbacks.
+    """
 
     dif_size = psys.num_dof_dif
     alg_size = psys.num_dof_alg
     pow_size = 2 * psys.nbuses
-    sys_size = alg_size + dif_size + pow_size
 
-    # The first half of the differential variables are slow
-    slow_indices.extend(range(dif_size // 2))
+    all_diff = list(range(dif_size))
 
-    # The second half of the differential variables are fast
-    fast_indices.extend(range(dif_size // 2, dif_size))
+    if slow_diff_indices is not None and fast_diff_indices is not None:
+        raise ValueError("Specify only one of slow or fast differential index sets.")
 
-    # Algebraic and power variables are slow (if they are included in the splitting)
-    fast_indices.extend(range(dif_size, dif_size + alg_size + pow_size))
+    def _validate_diff_indices(indices, label):
+        if indices is None:
+            return None
+        processed = [int(idx) for idx in indices]
+        if len(set(processed)) != len(processed):
+            raise ValueError(f"Duplicate entries detected in {label} indices.")
+        for idx in processed:
+            if idx < 0 or idx >= dif_size:
+                raise ValueError(
+                    f"{label.capitalize()} index {idx} is outside the valid range [0, {dif_size - 1}]."
+                )
+        return sorted(processed)
 
-    # Now we have fast algebraic and fast differential indexes
-    fast_indices_alg.extend(range(dif_size, dif_size + alg_size + pow_size))
-    fast_indices_dif.extend(range(dif_size // 2, dif_size))
+    slow_validated = _validate_diff_indices(slow_diff_indices, "slow differential")
+    fast_validated = _validate_diff_indices(fast_diff_indices, "fast differential")
 
-    # dimension of fast differential variables
-    ndiff_fast = dif_size // 2
+    if fast_validated is not None:
+        fast_diff = fast_validated
+        slow_indices = [idx for idx in all_diff if idx not in fast_diff]
+        fast_diff_indices = fast_diff
+    elif slow_validated is not None:
+        slow_indices = slow_validated
+        fast_diff_indices = [idx for idx in all_diff if idx not in slow_indices]
+    else:
+        midpoint = dif_size // 2
+        slow_indices = list(range(midpoint))
+        fast_diff_indices = list(range(midpoint, dif_size))
+
+    fast_indices_alg = list(range(dif_size, dif_size + alg_size + pow_size))
+    fast_indices = fast_diff_indices + fast_indices_alg
+    fast_indices_dif = fast_diff_indices
+    ndiff_fast = len(fast_diff_indices)
 
     return slow_indices, fast_indices, fast_indices_alg, fast_indices_dif, ndiff_fast
 
@@ -1972,7 +2000,11 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
         ts.setProblemType(ts.ProblemType.NONLINEAR)
 
         if arkimex:
-            slow_indices, fast_indices, fast_indices_alg, fast_indices_dif, ndiff_fast = generate_default_partition_indices(psys)
+            slow_indices, fast_indices, fast_indices_alg, fast_indices_dif, ndiff_fast = generate_default_partition_indices(
+                psys,
+                slow_diff_indices=config.arkimex_slow_differential,
+                fast_diff_indices=config.arkimex_fast_differential,
+            )
             
             # Set the optional fields in the DAE object
             dae.slow_indices = slow_indices
@@ -1980,6 +2012,15 @@ def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationC
             dae.set_ndiffeq_fast(ndiff_fast)
             dae.set_fast_indices_split(fast_indices_alg, fast_indices_dif)
             dae.set_ts_ref(ts)
+
+            # Provide stable default PETSc options for ARKIMEX unless the user overrides them.
+            opts = PETSc.Options()
+
+            if not opts.hasName("ts_adapt_type"):
+                opts.setValue("ts_adapt_type", "none")
+
+            if not opts.hasName("ts_arkimex_type"):
+                opts.setValue("ts_arkimex_type", "a2")
 
             # Preallocate the Jacobian for the fast variables
             nfast = len(fast_indices)
