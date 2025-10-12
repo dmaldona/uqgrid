@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 from scipy.optimize import fsolve
@@ -34,9 +34,11 @@ class ClosestSNBResult:
     normal: np.ndarray
     distance: float
     angle: float
-    sigma: float
+    sigma_min: float
     diagnostics: SolverDiagnostics
     lambda0: np.ndarray
+    kkt_residuals: Dict[str, float]
+    metadata: Dict[str, Any]
 
 
 def _prepare_context(psys: Psystem) -> tuple[Psystem, PFIndexCache, csr_matrix, np.ndarray,
@@ -79,6 +81,10 @@ def closest_snb_fsolve(
     alpha: float = 1e-3,
     c_vector: Optional[np.ndarray] = None,
     fsolve_kwargs: Optional[Dict[str, float]] = None,
+    x_init: Optional[np.ndarray] = None,
+    w_init: Optional[np.ndarray] = None,
+    lambda_init: Optional[np.ndarray] = None,
+    k_init: Optional[float] = None,
 ) -> ClosestSNBResult:
     (
         psys,
@@ -118,15 +124,41 @@ def closest_snb_fsolve(
         graph,
     )
 
-    c_vec = np.asarray(c_vector, dtype=float) if c_vector is not None else np.ones(n_x, dtype=float)
-    _, w0 = smallest_left_singular_vector(jac0)
-    w0 = normalize_left_vector(w0, c_vec)
+    c_vec = np.ones(n_x, dtype=float) if c_vector is None else np.asarray(c_vector, dtype=float)
+    if c_vec.shape[0] != n_x:
+        raise ValueError("Normalization vector length must match number of state variables.")
+
+    if w_init is not None:
+        w0 = np.asarray(w_init, dtype=float).copy()
+        if w0.shape[0] != n_x:
+            raise ValueError("Initial left-null guess has incorrect dimension.")
+        w0 = normalize_left_vector(w0, c_vec)
+    else:
+        _, w0 = smallest_left_singular_vector(jac0)
+        w0 = normalize_left_vector(w0, c_vec)
+
     normal0 = np.asarray(selector.transpose().dot(w0)).ravel()
 
-    lambda_init = lambda0 + alpha * normal0
-    k_init = 1.0
+    if lambda_init is not None:
+        lambda_start = np.asarray(lambda_init, dtype=float)
+        if lambda_start.shape[0] != n_lambda:
+            raise ValueError("Initial lambda guess has incorrect dimension.")
+    else:
+        lambda_start = lambda0 + alpha * normal0
 
-    z0 = np.concatenate([x0, lambda_init, w0, np.array([k_init])])
+    if k_init is not None:
+        k_start = float(k_init)
+    else:
+        k_start = max(alpha, 1.0)
+
+    if x_init is not None:
+        x_start = np.asarray(x_init, dtype=float)
+        if x_start.shape[0] != n_x:
+            raise ValueError("Initial state guess has incorrect dimension.")
+    else:
+        x_start = x0
+
+    z0 = np.concatenate([x_start, lambda_start, w0, np.array([k_start])])
 
     def residual(z: np.ndarray) -> np.ndarray:
         x = z[:n_x]
@@ -166,14 +198,12 @@ def closest_snb_fsolve(
 
         delta_lambda = lam - lambda0
         normal = np.asarray(selector.transpose().dot(w)).ravel()
-        J_dense = J.toarray()
-
         eq_pf = F
-        eq_left = (w @ J_dense).ravel()
+        eq_left = J.transpose().dot(w)
         eq_stationarity = delta_lambda - k * normal
         eq_normalization = np.array([w @ c_vec - 1.0])
 
-        return np.concatenate([eq_pf, eq_left, eq_stationarity, eq_normalization])
+        return np.concatenate([eq_pf, np.asarray(eq_left).ravel(), eq_stationarity, eq_normalization])
 
     fs_kwargs = dict(maxfev=500, xtol=1e-9)
     if fsolve_kwargs:
@@ -217,12 +247,41 @@ def closest_snb_fsolve(
         cos_theta = float(np.clip((delta_lambda @ normal) / (norm_normal * norm_delta), -1.0, 1.0))
         angle = float(np.arccos(cos_theta))
 
+    eq_pf_star = resfun_wrapper(
+        x_star,
+        vmag_base.copy(),
+        vang_base.copy(),
+        pinj_star.copy(),
+        qinj_star.copy(),
+        ybus,
+        cache.bus_type,
+        cache.pq_indices,
+        cache.pqv_indices,
+        graph,
+    )
+    left_null_star = jac_star.transpose().dot(w_star)
+    stationarity_star = delta_lambda - k_star * normal
+    normalization_star = float(w_star @ c_vec - 1.0)
+
     diagnostics = SolverDiagnostics(
         nfev=info.get("nfev", 0),
         ier=ier,
         message=mesg,
         sigma=sigma_star,
     )
+
+    kkt_residuals = {
+        "pf": float(np.linalg.norm(eq_pf_star, ord=np.inf)),
+        "left_null": float(np.linalg.norm(left_null_star, ord=np.inf)),
+        "stationarity": float(np.linalg.norm(stationarity_star, ord=np.inf)),
+        "normalization": abs(normalization_star),
+    }
+
+    metadata: Dict[str, Any] = {
+        "nfev": diagnostics.nfev,
+        "ier": diagnostics.ier,
+        "message": diagnostics.message,
+    }
 
     return ClosestSNBResult(
         x_star=x_star,
@@ -232,7 +291,9 @@ def closest_snb_fsolve(
         normal=normal,
         distance=distance,
         angle=angle,
-        sigma=sigma_star,
+        sigma_min=sigma_star,
         diagnostics=diagnostics,
         lambda0=lambda0,
+        kkt_residuals=kkt_residuals,
+        metadata=metadata,
     )

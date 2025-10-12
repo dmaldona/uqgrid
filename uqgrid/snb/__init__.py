@@ -6,6 +6,7 @@ from .params import (build_fixed_injections, extract_lambda, pack_params,
 from .pf import PFFunctions, build_pf_operators, solution_to_state_vector
 from .selectors import build_param_selector
 from .solver import (ClosestSNBResult, SolverDiagnostics, closest_snb_fsolve)
+from .viewer import print_snb_result
 
 __all__ = [
     "build_index_cache",
@@ -22,4 +23,5 @@ __all__ = [
     "closest_snb_fsolve",
     "ClosestSNBResult",
     "SolverDiagnostics",
+    "print_snb_result",
 ]
