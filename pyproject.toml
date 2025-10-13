@@ -35,6 +35,13 @@ dev = [
     "black>=22.0.0",
 ]
 
+# Documentation toolchain
+docs = [
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.16",
+    "pymdown-extensions>=10.8",
+]
+
 [project.urls]
 Homepage = "https://github.com/dmaldona/uqgrid"
 Repository = "https://github.com/dmaldona/uqgrid"
