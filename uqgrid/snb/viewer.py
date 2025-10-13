@@ -60,6 +60,22 @@ def print_snb_result(
 			f"    {label:>3}: λ0={lam0: .6f}  λ*={lam_star: .6f}  Δ={dlam: .6f}\n"
 		)
 
+	if result.beta is not None:
+		mu_vec = (
+			np.asarray(result.mu, dtype=float)
+			if result.mu is not None
+			else np.zeros_like(result.lambda0)
+		)
+		preview_count = min(6, mu_vec.size)
+		mu_preview = ", ".join(f"{val: .6f}" for val in mu_vec[:preview_count])
+		stream.write("  LDT (Gaussian, 1st order):\n")
+		stream.write(f"    mu[0:{preview_count}]     : {mu_preview}\n")
+		stream.write(f"    beta              : {result.beta: .6e}\n")
+		if result.I_value is not None:
+			stream.write(f"    I(lambda*)       : {result.I_value: .6e}\n")
+		if result.p_ldt_first is not None:
+			stream.write(f"    P1st             : {result.p_ldt_first: .6e}\n")
+
 	w_top = _top_components(result.w_star)
 	normal_top = _top_components(normal)
 	stream.write("  Top components:\n")

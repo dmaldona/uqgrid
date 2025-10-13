@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 from scipy.optimize import fsolve
@@ -11,6 +11,12 @@ from uqgrid.core.psydef import Psystem
 from uqgrid.simulation.pflow import jac_wrapper, resfun_wrapper, runpf
 
 from .indexing import PFIndexCache, build_index_cache
+from .ldt import (
+    as_linear_op_Sigma_inv,
+    first_order_ldt_prob,
+    grad_I,
+    rate_I,
+)
 from .nullspace import normalize_left_vector, smallest_left_singular_vector
 from .params import build_fixed_injections, extract_lambda, scatter_lambda
 from .pf import solution_to_state_vector
@@ -39,6 +45,10 @@ class ClosestSNBResult:
     lambda0: np.ndarray
     kkt_residuals: Dict[str, float]
     metadata: Dict[str, Any]
+    beta: Optional[float] = None
+    I_value: Optional[float] = None
+    p_ldt_first: Optional[float] = None
+    mu: Optional[np.ndarray] = None
 
 
 def _prepare_context(psys: Psystem) -> tuple[Psystem, PFIndexCache, csr_matrix, np.ndarray,
@@ -85,6 +95,9 @@ def closest_snb_fsolve(
     w_init: Optional[np.ndarray] = None,
     lambda_init: Optional[np.ndarray] = None,
     k_init: Optional[float] = None,
+    mu: Optional[np.ndarray] = None,
+    Sigma_inv: Optional[Any] = None,
+    grad_func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
 ) -> ClosestSNBResult:
     (
         psys,
@@ -160,6 +173,30 @@ def closest_snb_fsolve(
 
     z0 = np.concatenate([x_start, lambda_start, w0, np.array([k_start])])
 
+    mu_vec: Optional[np.ndarray] = None
+    Sigma_inv_op = None
+    grad_callable: Optional[Callable[[np.ndarray], np.ndarray]] = grad_func
+
+    if grad_callable is None and Sigma_inv is not None:
+        mu_arr = lambda0 if mu is None else np.asarray(mu, dtype=float)
+        if mu_arr.shape[0] != n_lambda:
+            raise ValueError("mu must have the same dimension as lambda.")
+        mu_vec = mu_arr
+        Sigma_inv_op = as_linear_op_Sigma_inv(Sigma_inv, n_lambda)
+
+        def _grad_from_sigma(lam_vec: np.ndarray, *, _mu=mu_vec, _op=Sigma_inv_op) -> np.ndarray:
+            return grad_I(lam_vec, _mu, _op)
+
+        grad_callable = _grad_from_sigma
+    elif grad_callable is None:
+        mu_vec = lambda0 if mu is None else np.asarray(mu, dtype=float)
+        if mu_vec.shape[0] != n_lambda:
+            raise ValueError("mu must have the same dimension as lambda.")
+    else:
+        mu_vec = lambda0 if mu is None else np.asarray(mu, dtype=float)
+        if mu_vec.shape[0] != n_lambda:
+            raise ValueError("mu must have the same dimension as lambda.")
+
     def residual(z: np.ndarray) -> np.ndarray:
         x = z[:n_x]
         lam = z[n_x:n_x + n_lambda]
@@ -200,7 +237,11 @@ def closest_snb_fsolve(
         normal = np.asarray(selector.transpose().dot(w)).ravel()
         eq_pf = F
         eq_left = J.transpose().dot(w)
-        eq_stationarity = delta_lambda - k * normal
+        if grad_callable is not None:
+            grad = grad_callable(lam)
+        else:
+            grad = delta_lambda
+        eq_stationarity = grad - k * normal
         eq_normalization = np.array([w @ c_vec - 1.0])
 
         return np.concatenate([eq_pf, np.asarray(eq_left).ravel(), eq_stationarity, eq_normalization])
@@ -260,7 +301,6 @@ def closest_snb_fsolve(
         graph,
     )
     left_null_star = jac_star.transpose().dot(w_star)
-    stationarity_star = delta_lambda - k_star * normal
     normalization_star = float(w_star @ c_vec - 1.0)
 
     diagnostics = SolverDiagnostics(
@@ -269,6 +309,12 @@ def closest_snb_fsolve(
         message=mesg,
         sigma=sigma_star,
     )
+
+    if grad_callable is not None:
+        grad_star = grad_callable(lambda_star)
+    else:
+        grad_star = delta_lambda
+    stationarity_star = grad_star - k_star * normal
 
     kkt_residuals = {
         "pf": float(np.linalg.norm(eq_pf_star, ord=np.inf)),
@@ -283,6 +329,14 @@ def closest_snb_fsolve(
         "message": diagnostics.message,
     }
 
+    beta_val: Optional[float] = None
+    I_val: Optional[float] = None
+    p_first: Optional[float] = None
+    if Sigma_inv_op is not None and mu_vec is not None:
+        I_val = rate_I(lambda_star, mu_vec, Sigma_inv_op)
+        beta_val = float(np.sqrt(2.0 * I_val))
+        p_first = first_order_ldt_prob(beta_val)
+
     return ClosestSNBResult(
         x_star=x_star,
         lambda_star=lambda_star,
@@ -296,4 +350,8 @@ def closest_snb_fsolve(
         lambda0=lambda0,
         kkt_residuals=kkt_residuals,
         metadata=metadata,
+        beta=beta_val,
+        I_value=I_val,
+        p_ldt_first=p_first,
+        mu=mu_vec,
     )
