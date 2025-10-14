@@ -317,3 +317,132 @@ def build_second_form(
                 II[j, i] = II[i, j]
 
     return 0.5 * (II + II.T)
+
+
+def householder_to_e1(g: Array) -> Array:
+    """Return an orthogonal matrix ``R`` such that ``R.T @ g = ||g|| e1``.
+
+    Uses a Householder reflection. Raises ``ValueError`` when ``g`` is the
+    zero vector or contains non-finite entries.
+    """
+
+    g_vec = np.asarray(g, dtype=float).ravel()
+    if g_vec.size == 0:
+        raise ValueError("Input vector g must have positive dimension.")
+    if not np.isfinite(g_vec).all():
+        raise ValueError("Input vector g must contain only finite values.")
+
+    norm_g = float(np.linalg.norm(g_vec))
+    if norm_g == 0.0:
+        raise ValueError("Householder reflection undefined for zero vector.")
+
+    m = g_vec.size
+    e1 = np.zeros(m, dtype=float)
+    e1[0] = 1.0
+
+    u = g_vec - norm_g * e1
+    norm_u = float(np.linalg.norm(u))
+    if norm_u <= 1e-15:
+        return np.eye(m, dtype=float)
+
+    v = u / norm_u
+    R = np.eye(m, dtype=float) - 2.0 * np.outer(v, v)
+    return R
+
+
+def build_alignment(
+    Sigma_inv: Mat,
+    II: Array,
+    N: Array,
+) -> tuple[Array, Array, float]:
+    """Construct alignment matrices ``S`` and ``S_perp`` for second-order LDT.
+
+    Parameters
+    ----------
+    Sigma_inv
+        Representation of :math:`\\Sigma^{-1}`. Accepts a 1-D diagonal array or
+        a full SPD ``(m, m)`` ndarray. LinearOperator inputs currently require a
+        dense fallback and are therefore rejected.
+    II
+        Second fundamental form matrix with shape ``(m, m)``.
+    N
+        Unscaled normal vector with shape ``(m,)``.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, float]
+        ``(S, S_perp, norm_ATN)`` where ``S`` is the aligned curvature matrix,
+        ``S_perp`` its sub-block excluding the aligned normal direction, and
+        ``norm_ATN = ||A^T N||`` for ``A = Σ^{1/2} R``.
+    """
+
+    II_arr = np.asarray(II, dtype=float)
+    if II_arr.ndim != 2 or II_arr.shape[0] != II_arr.shape[1]:
+        raise ValueError("II must be a square matrix.")
+
+    N_vec = np.asarray(N, dtype=float).ravel()
+    if N_vec.size != II_arr.shape[0]:
+        raise ValueError("Dimension mismatch between II and N.")
+    if not np.isfinite(N_vec).all():
+        raise ValueError("Normal vector N must contain only finite values.")
+
+    m = N_vec.size
+
+    # Resolve Sigma^{-1} structure.
+    if isinstance(Sigma_inv, (list, tuple, np.ndarray, sparse.spmatrix)):
+        Sigma_inv_arr = np.asarray(Sigma_inv, dtype=float)
+    else:
+        Sigma_inv_arr = None
+
+    if Sigma_inv_arr is not None and Sigma_inv_arr.ndim == 1:
+        if Sigma_inv_arr.size != m:
+            raise ValueError("Diagonal Sigma^{-1} must have length equal to dim of N.")
+        if np.any(Sigma_inv_arr <= 0.0) or not np.isfinite(Sigma_inv_arr).all():
+            raise ValueError("Diagonal Sigma^{-1} entries must be positive and finite.")
+
+        sigma_inv_sqrt = np.sqrt(Sigma_inv_arr)
+        sigma_sqrt = 1.0 / sigma_inv_sqrt
+
+        g_vec = sigma_inv_sqrt * N_vec
+        R = householder_to_e1(g_vec)
+        A = sigma_sqrt[:, None] * R
+
+    elif Sigma_inv_arr is not None and Sigma_inv_arr.ndim == 2:
+        if Sigma_inv_arr.shape != (m, m):
+            raise ValueError("Sigma^{-1} matrix must match dimension of N.")
+        if not np.allclose(Sigma_inv_arr, Sigma_inv_arr.T, atol=1e-12):
+            raise ValueError("Sigma^{-1} must be symmetric positive definite.")
+
+        try:
+            chol = np.linalg.cholesky(Sigma_inv_arr)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError("Sigma^{-1} must be positive definite.") from exc
+
+        # chol is lower-triangular such that Sigma_inv = chol @ chol.T.
+        Sigma_inv_sqrt = chol
+        Sigma_sqrt = np.linalg.solve(Sigma_inv_sqrt, np.eye(m, dtype=float))
+
+        g_vec = Sigma_inv_sqrt @ N_vec
+        R = householder_to_e1(g_vec)
+        A = Sigma_sqrt @ R
+
+    else:
+        raise TypeError(
+            "Sigma_inv must be provided as a diagonal array or dense SPD matrix for now."
+        )
+
+    g_norm = float(np.linalg.norm(g_vec))
+    if g_norm == 0.0:
+        raise ValueError("Transformed normal is zero; alignment undefined.")
+
+    AT = A.T
+    ATN = AT @ N_vec
+    norm_ATN = float(np.linalg.norm(ATN))
+    if not np.isfinite(norm_ATN) or norm_ATN <= 0.0:
+        raise ValueError("||A^T N|| must be positive and finite.")
+
+    S_mat = (AT @ II_arr @ A) / norm_ATN
+    S_mat = 0.5 * (S_mat + S_mat.T)
+
+    S_perp = S_mat[1:, 1:].copy()
+    return S_mat, S_perp, norm_ATN
