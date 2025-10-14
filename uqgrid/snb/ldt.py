@@ -250,3 +250,70 @@ def compute_x_lambda(
         results.append(np.asarray(x_candidate))
 
     return results
+
+
+def hvp_fx(
+    fx_apply_x: Callable[[Array, Array], Array],
+    x_star: Array,
+    dir_u: Array,
+    dir_v: Array,
+    eps: float | None = None,
+) -> Array:
+    """Approximate f_{xx}(u, v) at ``x_star`` using Jacobian-vector products."""
+
+    x0 = np.asarray(x_star, dtype=float).ravel()
+    u = np.asarray(dir_u, dtype=float).ravel()
+    v = np.asarray(dir_v, dtype=float).ravel()
+
+    if x0.size == 0 or u.size != x0.size or v.size != x0.size:
+        raise ValueError("Directions must match the dimension of x_star.")
+
+    if not (np.isfinite(u).all() and np.isfinite(v).all() and np.isfinite(x0).all()):
+        raise ValueError("Inputs contain non-finite values.")
+
+    if eps is None:
+        scale = max(1.0, np.linalg.norm(u))
+        eps = 1e-5 / scale
+
+    fx_forward_v = np.asarray(fx_apply_x(x0 + eps * u, v), dtype=float).ravel()
+    fx_backward_v = np.asarray(fx_apply_x(x0 - eps * u, v), dtype=float).ravel()
+
+    return (fx_forward_v - fx_backward_v) / (2.0 * eps)
+
+
+def build_second_form(
+    w_star: Array,
+    x_lam_cols: Iterable[Array],
+    fx_apply_x: Callable[[Array, Array], Array],
+    x_star: Array,
+    eps: float | None = None,
+) -> Array:
+    """Assemble the second fundamental form matrix using Hessian-vector products."""
+
+    w = np.asarray(w_star, dtype=float).ravel()
+    if w.size == 0 or not np.isfinite(w).all():
+        raise ValueError("w_star must be a finite, non-empty vector.")
+
+    cols = [np.asarray(col, dtype=float).ravel() for col in x_lam_cols]
+    if not cols:
+        raise ValueError("x_lam_cols must contain at least one direction.")
+
+    x0 = np.asarray(x_star, dtype=float).ravel()
+
+    for col in cols:
+        if col.shape != x0.shape:
+            raise ValueError("Each x_lambda column must match dimension of x_star.")
+        if not np.isfinite(col).all():
+            raise ValueError("x_lambda columns must contain only finite values.")
+
+    m = len(cols)
+    II = np.zeros((m, m), dtype=float)
+
+    for i in range(m):
+        for j in range(i, m):
+            hvp = hvp_fx(fx_apply_x, x_star, cols[i], cols[j], eps=eps)
+            II[i, j] = float(w @ hvp)
+            if j != i:
+                II[j, i] = II[i, j]
+
+    return 0.5 * (II + II.T)

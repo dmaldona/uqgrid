@@ -2,75 +2,25 @@ import numpy as np
 import pytest
 from scipy.sparse.linalg import lsmr, aslinearoperator
 
-from tests.ldt_test_utils import build_two_bus_system
+from tests.ldt_test_utils import build_two_bus_context
 
-from uqgrid.snb import (
-    build_index_cache,
-    build_param_selector,
-    closest_snb_fsolve,
-)
 from uqgrid.snb.ldt import compute_x_lambda
 from uqgrid.snb.params import scatter_lambda
-from uqgrid.snb.solver import _prepare_context
-from uqgrid.simulation.pflow import jac_wrapper, resfun_wrapper
+from uqgrid.simulation.pflow import resfun_wrapper
 
 
 @pytest.fixture(scope="module")
 def two_bus_context():
-    psys = build_two_bus_system()
-    result = closest_snb_fsolve(psys)
-
-    (
-        _psys,
-        cache,
-        selector,
-        _x0,
-        _lambda0,
-        vmag_base,
-        vang_base,
-        p_fixed,
-        q_fixed,
-        ybus,
-        graph,
-    ) = _prepare_context(psys)
-
-    p_load_star, q_load_star = scatter_lambda(result.lambda_star, psys, cache)
-    pinj_star = p_fixed + p_load_star
-    qinj_star = q_fixed + q_load_star
-
-    jac_star = jac_wrapper(
-        result.x_star,
-        vmag_base.copy(),
-        vang_base.copy(),
-        pinj_star.copy(),
-        qinj_star.copy(),
-        ybus,
-        cache.bus_type,
-        cache.pq_indices,
-        cache.pqv_indices,
-        graph,
-    )
-
-    selector_cols = [selector.getcol(j).toarray().ravel() for j in range(selector.shape[1])]
+    ctx = build_two_bus_context()
+    jac_star = ctx["jac"]
 
     def fx_solve(rhs):
         sol, *_ = lsmr(jac_star, rhs, atol=1e-12, btol=1e-12, conlim=1e12)
         return sol
 
-    return {
-        "psys": psys,
-        "result": result,
-        "cache": cache,
-        "jac": jac_star,
-        "selector_cols": selector_cols,
-        "fx_solve": fx_solve,
-        "vmag_base": vmag_base,
-        "vang_base": vang_base,
-        "p_fixed": p_fixed,
-        "q_fixed": q_fixed,
-        "ybus": ybus,
-        "graph": graph,
-    }
+    ctx = dict(ctx)
+    ctx["fx_solve"] = fx_solve
+    return ctx
 
 
 def _project_residual(residual, w):
@@ -150,5 +100,5 @@ def test_p2_finite_difference(two_bus_context):
         )
 
         residual = jac_op.matvec(x_lam) + col
-    approx_error = F_trial / eps - residual
-    assert np.linalg.norm(approx_error) <= 1e-4
+        approx_error = F_trial / eps - residual
+        assert np.linalg.norm(approx_error) <= 1e-4
