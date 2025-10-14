@@ -371,9 +371,9 @@ def build_alignment(
     Returns
     -------
     tuple[np.ndarray, np.ndarray, float]
-        ``(S, S_perp, norm_ATN)`` where ``S`` is the aligned curvature matrix,
-        ``S_perp`` its sub-block excluding the aligned normal direction, and
-        ``norm_ATN = ||A^T N||`` for ``A = Σ^{1/2} R``.
+    ``(S, S_perp, norm_ATN)`` where ``S`` is the aligned curvature matrix,
+    ``S_perp`` its sub-block excluding the aligned normal direction, and
+    ``norm_ATN = ||A^{-T} N||`` with ``A = Σ^{1/2} R``.
     """
 
     II_arr = np.asarray(II, dtype=float)
@@ -400,12 +400,10 @@ def build_alignment(
         if np.any(Sigma_inv_arr <= 0.0) or not np.isfinite(Sigma_inv_arr).all():
             raise ValueError("Diagonal Sigma^{-1} entries must be positive and finite.")
 
-        sigma_inv_sqrt = np.sqrt(Sigma_inv_arr)
-        sigma_sqrt = 1.0 / sigma_inv_sqrt
-
-        g_vec = sigma_inv_sqrt * N_vec
+        Sigma_inv_sqrt_mat = np.diag(np.sqrt(Sigma_inv_arr))
+        g_vec = Sigma_inv_sqrt_mat @ N_vec
         R = householder_to_e1(g_vec)
-        A = sigma_sqrt[:, None] * R
+        A_inv = Sigma_inv_sqrt_mat @ R.T
 
     elif Sigma_inv_arr is not None and Sigma_inv_arr.ndim == 2:
         if Sigma_inv_arr.shape != (m, m):
@@ -418,13 +416,10 @@ def build_alignment(
         except np.linalg.LinAlgError as exc:
             raise ValueError("Sigma^{-1} must be positive definite.") from exc
 
-        # chol is lower-triangular such that Sigma_inv = chol @ chol.T.
         Sigma_inv_sqrt = chol
-        Sigma_sqrt = np.linalg.solve(Sigma_inv_sqrt, np.eye(m, dtype=float))
-
         g_vec = Sigma_inv_sqrt @ N_vec
         R = householder_to_e1(g_vec)
-        A = Sigma_sqrt @ R
+        A_inv = Sigma_inv_sqrt @ R.T
 
     else:
         raise TypeError(
@@ -435,14 +430,54 @@ def build_alignment(
     if g_norm == 0.0:
         raise ValueError("Transformed normal is zero; alignment undefined.")
 
-    AT = A.T
-    ATN = AT @ N_vec
+    ATN = A_inv.T @ N_vec
     norm_ATN = float(np.linalg.norm(ATN))
     if not np.isfinite(norm_ATN) or norm_ATN <= 0.0:
-        raise ValueError("||A^T N|| must be positive and finite.")
+        raise ValueError("||A^{-T} N|| must be positive and finite.")
 
-    S_mat = (AT @ II_arr @ A) / norm_ATN
+    S_mat = (A_inv.T @ II_arr @ A_inv) / norm_ATN
     S_mat = 0.5 * (S_mat + S_mat.T)
 
     S_perp = S_mat[1:, 1:].copy()
     return S_mat, S_perp, norm_ATN
+
+
+def second_order_prefactor(S_perp: Array, beta: float) -> tuple[float, Array]:
+    """Compute the second-order LDT prefactor C from the eigenvalues of ``S_perp``.
+
+    Parameters
+    ----------
+    S_perp
+        Symmetric matrix of shape ``(m-1, m-1)`` obtained from :func:`build_alignment`.
+    beta
+        The scalar ``β = √(2 I(λ*))`` controlling the rarity of the event. Must be
+        non-negative.
+
+    Returns
+    -------
+    tuple[float, np.ndarray]
+        ``(C, evals)`` where ``evals`` are the eigenvalues of ``S_perp``. Raises a
+        ``ValueError`` if symmetry is violated or when ``1 - β λ_i ≤ 0`` for any
+        eigenvalue ``λ_i``.
+    """
+
+    S_arr = np.asarray(S_perp, dtype=float)
+    if S_arr.ndim != 2 or S_arr.shape[0] != S_arr.shape[1]:
+        raise ValueError("S_perp must be a square matrix.")
+    if beta < 0.0 or not np.isfinite(beta):
+        raise ValueError("beta must be a finite, non-negative scalar.")
+
+    # Handle the degenerate case (m = 1 ⇒ S_perp is 0x0) with C = 1.
+    if S_arr.size == 0 or S_arr.shape[0] == 0:
+        return 1.0, np.empty(0, dtype=float)
+
+    if not np.allclose(S_arr, S_arr.T, atol=1e-10):
+        raise ValueError("S_perp must be symmetric.")
+
+    evals = np.linalg.eigvalsh(0.5 * (S_arr + S_arr.T))
+    stability = 1.0 - beta * evals
+    if np.any(stability <= 0.0):
+        raise ValueError("Second-order prefactor undefined: beta * lambda_i >= 1.")
+
+    C = float(np.prod(stability ** (-0.5)))
+    return C, evals
