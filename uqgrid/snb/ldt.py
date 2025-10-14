@@ -72,3 +72,48 @@ def first_order_ldt_prob(beta: float) -> float:
     if beta <= 0:
         return np.inf
     return (1.0 / (np.sqrt(2.0 * np.pi) * beta)) * np.exp(-0.5 * beta * beta)
+
+
+def oriented_unit_normal(normal: Array, reference: Array, *, tol: float = 1e-12) -> Array:
+    """Return a unit-length normal oriented to align with a reference vector.
+
+    Parameters
+    ----------
+    normal:
+        Candidate normal vector (will be normalized).
+    reference:
+        Vector providing orientation; resulting unit normal will satisfy
+        ``unit_normal · reference >= 0`` within the tolerance.
+    tol:
+        Absolute tolerance used for guarding degenerate vectors.
+    """
+
+    normal_arr = np.asarray(normal, dtype=float).ravel()
+    if normal_arr.size == 0:
+        raise ValueError("Normal vector must not be empty.")
+    if not np.isfinite(normal_arr).all():
+        raise ValueError("Normal vector must contain only finite values.")
+
+    norm = np.linalg.norm(normal_arr)
+    if norm <= tol:
+        raise ValueError("Normal vector norm is too small to normalize.")
+
+    unit = normal_arr / norm
+
+    reference_arr = np.asarray(reference, dtype=float).ravel()
+    if reference_arr.shape[0] != unit.shape[0]:
+        raise ValueError("Reference vector must have the same dimension as normal.")
+    if not np.isfinite(reference_arr).all():
+        raise ValueError("Reference vector must contain only finite values.")
+
+    ref_norm = np.linalg.norm(reference_arr)
+    if ref_norm <= tol:
+        raise ValueError("Reference vector norm is too small to determine orientation.")
+
+    dot = float(unit @ reference_arr)
+    if np.isnan(dot):
+        raise ValueError("Dot product with reference vector is not finite.")
+    if dot < 0.0:
+        unit = -unit
+
+    return unit
