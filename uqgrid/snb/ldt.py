@@ -5,9 +5,12 @@ from typing import Callable, Iterable, Union
 import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import LinearOperator, aslinearoperator, svds, lsmr
+from scipy.special import ndtr
 
 Array = np.ndarray
 Mat = Union[np.ndarray, sparse.spmatrix, LinearOperator, list, tuple]
+
+BETA_MIN_DEFAULT = 2.0
 
 
 def as_linear_op_Sigma_inv(Sigma_inv: Mat, m: int) -> LinearOperator:
@@ -63,15 +66,55 @@ def rate_I(lambda_vec: Array, mu: Array, Sigma_inv_op: LinearOperator) -> float:
     return 0.5 * float(delta @ (Sigma_inv_op @ delta))
 
 
-def first_order_ldt_prob(beta: float) -> float:
-    """Evaluate first-order Gaussian LDT probability approximation.
+def plane_prob(beta: float | Array) -> float | Array:
+    r"""Return the tangent-plane probability :math:`\Phi(-\beta)` for a Gaussian."""
 
-    P_1st ≈ (1 / (sqrt(2π) * β)) * exp(-β^2 / 2). Guard β <= 0.
+    beta_arr = np.asarray(beta, dtype=float)
+    probs = ndtr(-beta_arr)
+    if np.isscalar(beta):
+        return float(probs)
+    if probs.ndim == 0:
+        return float(probs)
+    return probs
+
+
+def _phi_over_beta(beta: float) -> float:
+    return (1.0 / (np.sqrt(2.0 * np.pi) * beta)) * np.exp(-0.5 * beta * beta)
+
+
+def ldt_first_order(beta: float, *, beta_min: float = BETA_MIN_DEFAULT) -> float:
+    r"""Return the first-order LDT approximation :math:`\phi(\beta)/\beta`.
+
+    Values are reported only when ``beta`` is above ``beta_min``; otherwise ``nan``
+    is returned to indicate that the tail approximation is unreliable.
     """
 
-    if beta <= 0:
+    if not np.isfinite(beta):
+        raise ValueError("beta must be a finite scalar.")
+    if beta <= 0.0:
+        return float("nan")
+    if beta < beta_min:
+        return float("nan")
+    return _phi_over_beta(beta)
+
+
+def ldt_second_order(beta: float, C: float) -> float:
+    """Combine plane probability with the curvature prefactor ``C``."""
+
+    if not np.isfinite(beta) or beta < 0.0:
+        raise ValueError("beta must be a finite, non-negative scalar.")
+    if not np.isfinite(C) or C <= 0.0:
+        raise ValueError("C must be a positive, finite scalar.")
+    base = plane_prob(beta)
+    return float(base * C)
+
+
+def first_order_ldt_prob(beta: float) -> float:
+    """Evaluate the legacy first-order Gaussian LDT probability approximation."""
+
+    if not np.isfinite(beta) or beta <= 0.0:
         return np.inf
-    return (1.0 / (np.sqrt(2.0 * np.pi) * beta)) * np.exp(-0.5 * beta * beta)
+    return _phi_over_beta(beta)
 
 
 def oriented_unit_normal(delta: Array, n: Array, eps: float = 1e-15) -> tuple[Array | None, bool]:
