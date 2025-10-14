@@ -74,46 +74,37 @@ def first_order_ldt_prob(beta: float) -> float:
     return (1.0 / (np.sqrt(2.0 * np.pi) * beta)) * np.exp(-0.5 * beta * beta)
 
 
-def oriented_unit_normal(normal: Array, reference: Array, *, tol: float = 1e-12) -> Array:
-    """Return a unit-length normal oriented to align with a reference vector.
+def oriented_unit_normal(delta: Array, n: Array, eps: float = 1e-15) -> tuple[Array | None, bool]:
+    """Normalize and orient a normal vector relative to a displacement.
 
-    Parameters
-    ----------
-    normal:
-        Candidate normal vector (will be normalized).
-    reference:
-        Vector providing orientation; resulting unit normal will satisfy
-        ``unit_normal · reference >= 0`` within the tolerance.
-    tol:
-        Absolute tolerance used for guarding degenerate vectors.
+    Returns a unit-length vector (or ``None`` when ``n`` is invalid) together with
+    a boolean flag indicating whether the vector was flipped to align with
+    ``delta``. The returned vector satisfies ``delta · n_unit >= -eps``.
     """
 
-    normal_arr = np.asarray(normal, dtype=float).ravel()
-    if normal_arr.size == 0:
-        raise ValueError("Normal vector must not be empty.")
-    if not np.isfinite(normal_arr).all():
-        raise ValueError("Normal vector must contain only finite values.")
+    n_arr = np.asarray(n, dtype=float).ravel()
+    if n_arr.size == 0 or not np.isfinite(n_arr).all():
+        return None, False
 
-    norm = np.linalg.norm(normal_arr)
-    if norm <= tol:
-        raise ValueError("Normal vector norm is too small to normalize.")
+    n_norm = np.linalg.norm(n_arr)
+    if n_norm <= eps:
+        return None, False
 
-    unit = normal_arr / norm
+    delta_arr = np.asarray(delta, dtype=float).ravel()
+    if delta_arr.shape != n_arr.shape:
+        raise ValueError("delta and n must have the same dimension.")
+    if not np.isfinite(delta_arr).all():
+        return None, False
 
-    reference_arr = np.asarray(reference, dtype=float).ravel()
-    if reference_arr.shape[0] != unit.shape[0]:
-        raise ValueError("Reference vector must have the same dimension as normal.")
-    if not np.isfinite(reference_arr).all():
-        raise ValueError("Reference vector must contain only finite values.")
-
-    ref_norm = np.linalg.norm(reference_arr)
-    if ref_norm <= tol:
-        raise ValueError("Reference vector norm is too small to determine orientation.")
-
-    dot = float(unit @ reference_arr)
+    unit = n_arr / n_norm
+    dot = float(unit @ delta_arr)
     if np.isnan(dot):
-        raise ValueError("Dot product with reference vector is not finite.")
-    if dot < 0.0:
-        unit = -unit
+        return None, False
 
-    return unit
+    flipped = False
+    if dot < -eps:
+        unit = -unit
+        dot = -dot
+        flipped = True
+
+    return unit, flipped
