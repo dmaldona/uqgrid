@@ -1551,7 +1551,7 @@ if petsc4py:
             This avoids expensive sparse matrix slicing inside the time-stepper.
             """            
             # 1. Create a map where data contains its own index
-            J_idx_map = self.J.copy().astype(np.int32)
+            J_idx_map = self.J.copy()
             J_idx_map.data = np.arange(self.J.nnz, dtype=np.int32)
 
             # 2. Pre-compute for jfast_frozen = J[fast_indices_dif, fast_indices_dif]
