@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 import numpy as np
 
 class IntegrationConfig(BaseModel):
@@ -13,6 +15,21 @@ class IntegrationConfig(BaseModel):
     toff: float = Field(0.4, description="Fault deactivation time.")
     petsc: bool = Field(False, description="Enable PETSc integration.")
     solve_powerflow_dynamics: bool = Field(True, description="Solve power flow before dynamics.")
+    arkimex: bool = Field(False, description="Use ARKIMEX integrator.")
+    arkimex_slow_differential: Optional[List[int]] = Field(
+        default=None,
+        description=(
+            "Optional list with the global indexes of differential equations that"
+            " must be treated as slow in the ARKIMEX fast/slow split."
+        ),
+    )
+    arkimex_fast_differential: Optional[List[int]] = Field(
+        default=None,
+        description=(
+            "Optional list with the global indexes of differential equations that"
+            " must be treated as fast in the ARKIMEX fast/slow split."
+        ),
+    )
 
     @field_validator('tend', 'dt', 'ton', 'toff', mode='after')
     def positive_values(cls, v, info):
@@ -25,6 +42,16 @@ class IntegrationConfig(BaseModel):
         if v < -1:
             raise ValueError("`steps` must be -1 or a non-negative integer.")
         return v
+
+    @model_validator(mode="after")
+    def validate_partition_spec(cls, values):
+        slow = values.arkimex_slow_differential
+        fast = values.arkimex_fast_differential
+        if slow is not None and fast is not None:
+            raise ValueError(
+                "Specify only one of `arkimex_slow_differential` or `arkimex_fast_differential`."
+            )
+        return values
     
 class IntegrationCtx:
     def __init__(self):

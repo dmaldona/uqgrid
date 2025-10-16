@@ -33,6 +33,8 @@ def parse_args():
     parser.add_argument('--ton', type=float, default=0.25, help='Fault activation time.')
     parser.add_argument('--toff', type=float, default=0.4, help='Fault deactivation time.')
     parser.add_argument('--petsc', action='store_true', help='Enable PETSc integration.')
+    parser.add_argument('--arkimex', action='store_true', help='Use ARKIMEX integrator.')
+    parser.add_argument('--plot', action='store_true', help='Plot results after simulation.')
 
     # Parse only the script arguments
     args = parser.parse_args(script_args)
@@ -52,16 +54,17 @@ def parse_args():
             verbose=args.verbose,
             comp_sens=args.comp_sens,
             fsolve=args.fsolve,
-            petsc=args.petsc
+            petsc=args.petsc,
+            arkimex=args.arkimex
         )
     except ValueError as e:
         print(f"Configuration Error: {e}")
         sys.exit(1)
 
-    return args.raw, args.dyr, args.zfault, config
+    return args.raw, args.dyr, args.zfault, config, args.plot
 
 def main():
-    raw, dyr, zfault, config = parse_args()
+    raw, dyr, zfault, config, plot_true = parse_args()
 
     # Check if data files exist
     if not os.path.isfile(raw):
@@ -91,6 +94,9 @@ def main():
 
     # Run integration
     results = integrate_system(psys, config)
+
+    if not plot_true:
+        return
 
     # plot generator speeds
     bus_idx = psys.genspeed_idx_set()
