@@ -39,3 +39,4 @@ Thumbs.db
 # Project specific (from original)
 *.pdf
 *.swo
+site/

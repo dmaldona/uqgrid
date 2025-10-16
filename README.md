@@ -4,6 +4,12 @@
 
 UQGrid is a Python package for performing uncertainty quantification-type computations in power grid systems. It provides tools for integrating differential-algebraic equations (DAEs) and computing first and second-order sensitivities with respect to system parameters.
 
+<p align="left">
+    <a href="docs/index.md" style="display:inline-block;padding:0.6em 1.2em;background:#2563eb;color:#ffffff;border-radius:6px;text-decoration:none;font-weight:600;">
+        Browse Documentation
+    </a>
+</p>
+
 ## Features
 
 - Power system modeling with PSS/E format files
