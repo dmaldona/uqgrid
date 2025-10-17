@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import optimize
 from uqgrid.core.base_models import Motor
 from uqgrid.utils.tools import csr_add_row, csr_set_row
 ws = 2*np.pi*60
