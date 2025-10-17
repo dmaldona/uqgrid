@@ -27,6 +27,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from uqgrid.io.parse import add_dyr, load_psse
+from uqgrid.utils.partition import (
+    extract_runtime_from_log,
+    format_index_list,
+    sample_slow_indices,
+)
 
 DEFAULT_RAW = "data/IEEE39_v33.raw"
 DEFAULT_DYR = "data/IEEE39.dyr"
@@ -34,9 +39,6 @@ DEFAULT_TEND = 1.0
 DEFAULT_DT = 1.0 / 120.0
 DEFAULT_TON = 0.05
 DEFAULT_TOFF = 0.1
-
-TIME_KEY = "Time (sec):"
-
 
 @dataclass
 class ExperimentResult:
@@ -152,46 +154,6 @@ def compute_total_differential_states(raw_path: Path, dyr_path: Path) -> int:
     psys = load_psse(raw_filename=str(raw_path))
     add_dyr(psys, str(dyr_path))
     return psys.num_dof_dif
-
-
-def sample_slow_indices(total_diff: int, min_frac: float, max_frac: float) -> List[int]:
-    if total_diff == 0:
-        return []
-    # Sample desired fraction uniformly within [min_frac, max_frac]
-    fraction = random.uniform(min_frac, max_frac)
-    desired_count = int(round(fraction * total_diff))
-    desired_count = max(0, min(desired_count, total_diff))
-    if desired_count == 0:
-        return []
-    all_indices = list(range(total_diff))
-    return sorted(random.sample(all_indices, desired_count))
-
-
-def format_index_list(indices: Sequence[int]) -> str:
-    if not indices:
-        return ""
-    return ",".join(str(idx) for idx in indices)
-
-
-def extract_runtime_from_log(log_path: Path) -> Optional[float]:
-    if not log_path.is_file():
-        return None
-    try:
-        with log_path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                if TIME_KEY in line:
-                    # Expect format: "Time (sec):  1.234e+00 ..."
-                    parts = line.strip().split()
-                    for token in parts:
-                        try:
-                            return float(token)
-                        except ValueError:
-                            continue
-                    # If we reach here, we failed to parse the float on that line
-                    raise ValueError(f"Failed to parse runtime from line: {line.strip()}")
-    except OSError:
-        return None
-    return None
 
 
 def build_simulation_command(
