@@ -21,6 +21,9 @@ wheels/
 .installed.cfg
 *.egg
 
+# Coverage & reports
+coverage.xml
+
 # Testing
 .pytest_cache/
 .coverage
@@ -32,6 +35,18 @@ htmlcov/
 *.swp
 *.swo
 
+# Profiling and performance artifacts
+*.pstats
+*.lprof
+*.prof
+
+# Experiment outputs
+TS-data*/
+
+# Logs and plots
+*.log
+*.png
+
 # OS
 .DS_Store
 Thumbs.db
@@ -39,3 +54,6 @@ Thumbs.db
 # Project specific (from original)
 *.pdf
 *.swo
+
+# Documentation builds
+site/

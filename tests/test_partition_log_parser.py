@@ -1,6 +1,6 @@
 import random
 
-from bin.arkimex_partition_experiments import (
+from uqgrid.utils.partition import (
     extract_runtime_from_log,
     format_index_list,
     sample_slow_indices,

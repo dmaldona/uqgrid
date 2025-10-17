@@ -6,6 +6,8 @@ Or skip with: pytest test_adjoint.py (skips by default due to speed)
 """
 
 import pytest
+pytest.importorskip("petsc4py", reason="PETSc required for adjoint tests")
+
 import numpy as np
 from uqgrid.core.psydef import Psystem
 from uqgrid.simulation.dynamics import integrate_system, initialize_system
@@ -42,7 +44,7 @@ def test_system():
     add_dyr(psys, "data/ieee9bus.dyr")
     
     zfault = 0.01
-    psys.add_busfault(1, zfault, 0.01)
+    psys.add_busfault(1, zfault)
     psys.createYbusComplex()
     psys.set_load_parameters(np.zeros(psys.nloads))
     
@@ -190,7 +192,7 @@ def test_complete_gradient_validation(test_system, test_config):
         # Create perturbed system - forward
         psys_plus = load_psse(raw_filename="data/ieee9_v33.raw")
         add_dyr(psys_plus, "data/ieee9bus.dyr")
-        psys_plus.add_busfault(1, 0.01, 0.01)
+        psys_plus.add_busfault(1, 0.01)
         psys_plus.createYbusComplex()
         psys_plus.set_load_parameters(np.zeros(psys_plus.nloads))
         
@@ -206,7 +208,7 @@ def test_complete_gradient_validation(test_system, test_config):
         # Create perturbed system - backward
         psys_minus = load_psse(raw_filename="data/ieee9_v33.raw")
         add_dyr(psys_minus, "data/ieee9bus.dyr")
-        psys_minus.add_busfault(1, 0.01, 0.01)
+        psys_minus.add_busfault(1, 0.01)
         psys_minus.createYbusComplex()
         psys_minus.set_load_parameters(np.zeros(psys_minus.nloads))
         
@@ -256,13 +258,10 @@ def test_gradient_consistency(test_system, test_config):
 
 def test_adjoint_dependencies():
     """Quick test that adjoint dependencies are available"""
-    try:
-        import petsc4py
-        import numpy as np
-        from uqgrid.simulation.dynamics import integrate_system
-        assert True
-    except ImportError as e:
-        pytest.fail(f"Required adjoint dependencies not available: {e}")
+    import petsc4py  # noqa: F401
+    from uqgrid.simulation.dynamics import integrate_system
+
+    assert callable(integrate_system)
 
 
 if __name__ == "__main__":

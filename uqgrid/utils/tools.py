@@ -1,7 +1,7 @@
 import numpy as np
-import numba
 from numba import jit
 import sys
+from scipy.sparse import csr_matrix
 
 ###############
 #  ALGEBRA   ##

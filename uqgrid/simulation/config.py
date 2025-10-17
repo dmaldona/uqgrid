@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 import numpy as np
@@ -32,13 +32,13 @@ class IntegrationConfig(BaseModel):
     )
 
     @field_validator('tend', 'dt', 'ton', 'toff', mode='after')
-    def positive_values(cls, v, info):
+    def positive_values(cls, v, info: Any):
         if v < 0:
             raise ValueError(f"`{info.field_name}` must be non-negative.")
         return v
 
     @field_validator('steps', mode='after')
-    def steps_non_negative(cls, v, info):
+    def steps_non_negative(cls, v, info: Any):
         if v < -1:
             raise ValueError("`steps` must be -1 or a non-negative integer.")
         return v

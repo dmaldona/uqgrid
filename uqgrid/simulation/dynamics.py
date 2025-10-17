@@ -1,16 +1,18 @@
 from __future__ import print_function
 
-import numpy as np
-import sys
-from scipy import optimize
-import numdifftools as nd
-from numpy import linalg as LA
-from numba import jit
-from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import spsolve, factorized
-from scipy.sparse._sparsetools import csr_matvec
-import math
 import copy
+import math
+import sys
+from typing import Optional
+
+import numdifftools as nd
+import numpy as np
+from numba import jit
+from numpy import linalg as LA
+from scipy import optimize
+from scipy.sparse import csr_matrix
+from scipy.sparse._sparsetools import csr_matvec
+from scipy.sparse.linalg import factorized, spsolve
 
 import logging
 logger = logging.getLogger(__name__)
@@ -28,6 +30,9 @@ except ImportError:
 from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 from uqgrid.core import Psystem
 from uqgrid.simulation.pflow import runpf, compute_pinj_alt, PowerFlowSolution
+from uqgrid.simulation.gradients import gradient_p, gradient_xp, gradient_pp
+from uqgrid.simulation.residual import residual_function
+from uqgrid.simulation.jacobian import residual_jacobian
 from uqgrid.utils.tools import (
     matprint,
     csr_mult_row,
@@ -46,360 +51,24 @@ TEST_JACOBIAN = False
 VERIFY_HESSIAN = False
 SECONDORDER = True
 
-def gradient_p(psys, z, theta, load_idx=0):
-    """Generates gradient of the r.h.s with respect to a single parameter p.
-    """
-
-    alg_size = psys.num_dof_alg
-    dif_size = psys.num_dof_dif
-    pow_size = 2*psys.nbuses  # power balance equations
-    sys_size = alg_size + dif_size + 2*psys.nbuses
-    dev = alg_size + dif_size
-
-    v = z[dif_size + alg_size:]
-
-    # alocate gradient
-    G = np.zeros(sys_size)
-    psys.loads[load_idx].gradient_alpha(G[alg_size + dif_size:], z, v, theta, dev, psys.power_injection)
-
-    # This gradient is for CIM5 + Z load implementation.
-    # Commenting out until I have a better way to select sensitivity parameters.
-
-    # G = np.zeros(sys_size)
-
-    # if len(psys.loads) == 1:
-    #     ptot = psys.loads[0].pload
-    #     qtot = psys.loads[0].qload
-    # else:
-    #     ptot = psys.loads[0].pload + psys.loads[1].pload
-    #     qtot = psys.loads[0].qload + psys.loads[1].qload
-
-    # v0 = psys.loads[0].v0
-    # vm = v[2]
-
-    # This would be only the derivative of the load w.r.t the weight.
-    # Note that
-    # pinj = (weight)*ptot + (1 - weight)*ptot
-    # but (1 - weight)*ptot = pmot
-    # so we only take derivative w.r.t load.
-
-    # G[alg_size + dif_size + 2] = -(vm/v0)**2.0*ptot
-    # G[alg_size + dif_size + 3] = (vm/v0)**2.0*qtot
-
-    return G
-
-
-def gradient_xp(psys, z, theta, load_idx=0):
-    """Generates matrix of partial derivatives
-
-    GX = [ d^2f_1/dx1dp d^2f_1/dx2dp ...
-           d^2f_2/dx1dp d^2f_2/dx2dp ...
-           ...
-           d^2f_n/dx1dp d^2f_n/dx2dp ...]
-
-    """
-
-    alg_size = psys.num_dof_alg
-    dif_size = psys.num_dof_dif
-    pow_size = 2*psys.nbuses  # power balance equations
-    sys_size = alg_size + dif_size + 2*psys.nbuses
-
-    dev = alg_size + dif_size
-    v = z[dif_size + alg_size:]
-
-    # F_dalpha,dalpha (vector)
-    G = np.zeros(sys_size)
-    # F_dalpha, x
-    GX = np.zeros((sys_size, sys_size))
-
-    psys.loads[load_idx].gradient_pp_alpha(GX, z, v, theta, dev)
-
-    # CIM 5 code
-    ################################
-    # if len(psys.loads) == 1:
-    #     ptot = psys.loads[0].pload
-    #     qtot = psys.loads[0].qload
-    # else:
-    #     ptot = psys.loads[0].pload + psys.loads[1].pload
-    #     qtot = psys.loads[0].qload + psys.loads[1].qload
-
-    # vm_idx = alg_size + dif_size + 2
-    # v0 = psys.loads[0].v0
-    # vm = v[2]
-
-    # GX[vm_idx, vm_idx] =  -2.0*ptot*(vm/v0)**2.0/vm
-    # GX[vm_idx + 1, vm_idx] =  2.0*qtot*(vm/v0)**2.0/vm
-
-    return GX
-
-def gradient_pp(psys, z, theta, idx_a=0, idx_b=0):
-    """Generates matrix of partial derivatives
-    """
-    alg_size = psys.num_dof_alg
-    dif_size = psys.num_dof_dif
-    pow_size = 2*psys.nbuses  # power balance equations
-    sys_size = alg_size + dif_size + 2*psys.nbuses
-
-    # F_dalpha,dalpha (vector)
-    # This is 0 for all load models. regardless
-    G = np.zeros(sys_size)
-
-    return G
-
-def residual_function(F, z, theta, psys):
-
-    F.fill(0.0)
-    # Lock system vector
-    z.flags.writeable = False
-
-    alg_size = psys.num_dof_alg
-    dif_size = psys.num_dof_dif
-    pow_size = 2*psys.nbuses  # power balance equations
-    sys_size = alg_size + dif_size + 2*psys.nbuses
-
-    # Assign vectors
-    x = z[:dif_size]
-    y = z[dif_size:dif_size + alg_size]
-    v = z[dif_size + alg_size:]
-
-    # Network equations
-    if psys.power_injection:
-        compute_pinj_alt(v, F[alg_size + dif_size:], psys.ybus_mat, psys.graph_mat,
-                     psys.nbuses)
-    else:
-        csr_matvec(psys.rybus.shape[0],psys.rybus.shape[1],psys.rybus.indptr,
-                psys.rybus.indices, psys.rybus.data, v, F[alg_size + dif_size:])
-    F[alg_size + dif_size:] = -1.0*F[alg_size + dif_size:]
-
-    idxs = np.zeros(4, dtype=np.int64)
-
-    for i in range(psys.num_devices):
-        idxs[0] = psys.devices[i].dif_ptr
-        idxs[1] = dif_size + psys.devices[i].alg_ptr
-        idxs[2] = psys.devices[i].par_ptr
-        idxs[3] = psys.devices[i].bus
-
-        ctrl_idx = psys.devices[i].ctrl_idx
-        ctrl_var = psys.devices[i].ctrl_var
-
-        psys.devices[i].residual_diff(F, z, v, theta,
-                idxs, ctrl_idx, ctrl_var, psys.power_injection)
-        if psys.power_injection:
-            psys.devices[i].residual_pinj(F[alg_size + dif_size:], z, v, theta,
-                                      idxs)
-        else:
-            psys.devices[i].residual_cinj(F[alg_size + dif_size:], z, v, theta,
-                                      idxs)
-
-    for fault in psys.fault_events:
-        if fault.active:
-            if psys.power_injection:
-                fault.residual_pinj(F[alg_size + dif_size:], v)
-            else:
-                fault.residual_cinj(F[alg_size + dif_size:], v)
-
-    # Restore write access to system vector
-    z.flags.writeable = True
-    return None
-
 
 @jit(nopython=True, cache=True)
-def power_flow_jacobian(ybus_data, ybus_ptr, ybus_idx, J_data, J_ptr, J_idx,
-                        dev, v, nbus):
+def power_flow_hessian(
+    fr,
+    ybus_data,
+    ybus_ptr,
+    ybus_idx,
+    HP_data,
+    HP_ptr,
+    HP_idx,
+    HQ_data,
+    HQ_ptr,
+    HQ_idx,
+    dev,
+    v,
+    nbus,
+):
 
-    # (NOTE) This should be the maximum of n connected nodes. Which I must store as variable
-    val = np.zeros(20)
-    col = np.zeros(20)
-
-    for fr in range(nbus):
-
-        # Self power injection
-        row = dev + 2*fr
-
-        col[0] = dev + 2*fr
-        col[1] = dev + 2*fr + 1
-        val[0] = 0.0
-        val[1] = 0.0
-        csr_set_row(J_data, J_ptr, J_idx, 2, row, col, val)
-
-        # Self power injection
-        row = dev + 2*fr + 1
-        col[0] = dev + 2*fr
-        col[1] = dev + 2*fr + 1
-        val[0] = 0.0
-        val[1] = 0.0
-        csr_set_row(J_data, J_ptr, J_idx, 2, row, col, val)
-
-        conn = ybus_ptr[fr + 1] - ybus_ptr[fr]
-
-        for i in range(conn):
-
-            to = ybus_idx[ybus_ptr[fr] + i]
-            if to == fr:
-
-                gij = ybus_data[ybus_ptr[fr] + i].real
-                bij = ybus_data[ybus_ptr[fr] + i].imag
-
-                # Self power injection
-                row = dev + 2*fr
-
-                col[0] = dev + 2*fr
-                col[1] = dev + 2*fr + 1
-                val[0] = -2*v[2*fr]*gij
-                val[1] = 0.0
-                csr_add_row(J_data, J_ptr, J_idx, 2, row, col, val)
-
-                # Self power injection
-                row = dev + 2*fr + 1
-                col[0] = dev + 2*fr
-                col[1] = dev + 2*fr + 1
-                val[0] = 2*v[2*fr]*bij
-                val[1] = 0.0
-                csr_add_row(J_data, J_ptr, J_idx, 2, row, col, val)
-
-            else:
-                angleij = v[2*fr + 1] - v[2*to + 1]
-
-                gij = ybus_data[ybus_ptr[fr] + i].real
-                bij = ybus_data[ybus_ptr[fr] + i].imag
-
-                # P
-                row = dev + 2*fr
-                col[0] = dev + 2*to
-                col[1] = dev + 2*to + 1
-                val[0] = -v[2*fr]*(gij*np.cos(angleij) + bij*np.sin(angleij))
-                val[1] = -v[2*fr]*v[2*to]*(gij*np.sin(angleij) -
-                                           bij*np.cos(angleij))
-                csr_set_row(J_data, J_ptr, J_idx, 2, row, col, val)
-
-                col[0] = dev + 2*fr
-                col[1] = dev + 2*fr + 1
-                val[0] = -v[2*to]*(gij*np.cos(angleij) + bij*np.sin(angleij))
-                val[1] = -v[2*fr]*v[2*to]*(-gij*np.sin(angleij) +
-                                           bij*np.cos(angleij))
-                csr_add_row(J_data, J_ptr, J_idx, 2, row, col, val)
-
-                # Q
-                row = dev + 2*fr + 1
-                col[0] = dev + 2*to
-                col[1] = dev + 2*to + 1
-                val[0] = -v[2*fr]*(gij*np.sin(angleij) - bij*np.cos(angleij))
-                val[1] = -v[2*fr]*v[2*to]*(-gij*np.cos(angleij) -
-                                           bij*np.sin(angleij))
-                csr_set_row(J_data, J_ptr, J_idx, 2, row, col, val)
-
-                col[0] = dev + 2*fr
-                col[1] = dev + 2*fr + 1
-                val[0] = -v[2*to]*(gij*np.sin(angleij) - bij*np.cos(angleij))
-                val[1] = -v[2*fr]*v[2*to]*(gij*np.cos(angleij) +
-                                           bij*np.sin(angleij))
-                csr_add_row(J_data, J_ptr, J_idx, 2, row, col, val)
-
-@jit(nopython=True, cache=True)
-def current_injection_jacobian(ybus_data, ybus_ptr, ybus_idx,
-        jac_data, jac_ptr, jac_idx, dev):
-    
-    # TODO: This needs to come from the maximum interconnected nodes
-    col = np.zeros(100, dtype=np.int32)
-    val = np.zeros(100, dtype=np.double)
-
-    row_ptr = 0
-    row_ptr_end = 0
-    nvals = 0
-    row = 0
-
-    for row_idx in range(len(ybus_ptr) - 1):
-        row_ptr = ybus_ptr[row_idx]
-        row_ptr_end = ybus_ptr[row_idx + 1]
-
-        nvals = row_ptr_end - row_ptr
-        row = row_idx + dev
-
-        for j in range(nvals):
-            col[j] = ybus_idx[row_ptr + j] + dev
-            val[j] = -ybus_data[row_ptr + j]
-
-        csr_set_row(jac_data, jac_ptr, jac_idx, nvals, row, col, val)
-
-@jit(nopython=True, cache=True)
-def _jacobian_diagonal_zeros(J_data, J_ptr, J_idx, ndim, NDIFFEQ):
-    col = np.array([0])
-    data = np.array([0.0])
-    for i in range(NDIFFEQ):
-        col[0] = i
-        csr_set_row(J_data, J_ptr, J_idx, 1, i, col, data)
-
-def residual_jacobian(J, z, theta, psys):
-
-    # Lock system vector
-    z.flags.writeable = False
-
-    alg_size = psys.num_dof_alg
-    dif_size = psys.num_dof_dif
-    pow_size = 2*psys.nbuses  # power balance equations
-    sys_size = alg_size + dif_size + 2*psys.nbuses
-
-    # Initialize Jacobian matrix to 0s
-    #J.data.fill(0.0)
-    _jacobian_diagonal_zeros(J.data, J.indptr, J.indices, J.shape[0], dif_size)
-
-    # Assign vectors
-    x = z[:dif_size]
-    y = z[dif_size:dif_size + alg_size]
-    v = z[dif_size + alg_size:]
-
-    dev = alg_size + dif_size
-    
-    if psys.power_injection:
-        power_flow_jacobian(psys.ybus_spa.data, psys.ybus_spa.indptr,
-                            psys.ybus_spa.indices, J.data, J.indptr, J.indices,
-                            dev, v, psys.nbuses)
-    else:
-        current_injection_jacobian(psys.rybus.data, psys.rybus.indptr,
-                                   psys.rybus.indices, J.data, J.indptr,
-                                   J.indices, dev)
-        #for row_idx in range(len(psys.rybus.indptr) - 1):
-        #    row_ptr = psys.rybus.indptr[row_idx]
-        #    row_ptr_end = psys.rybus.indptr[row_idx + 1]
-        #    nvals = row_ptr_end - row_ptr
-        #    row = row_idx + dev
-        #    col = psys.rybus.indices[row_ptr:row_ptr_end] + dev
-        #    val = -psys.rybus.data[row_ptr:row_ptr_end]
-
-        #    csr_set_row(J.data, J.indptr, J.indices, nvals, row, col, val)
-
-    # DEVICES
-    idxs = np.zeros(5, dtype=np.int64)
-
-    for i in range(psys.num_devices):
-
-        idxs[0] = psys.devices[i].dif_ptr
-        idxs[1] = dif_size + psys.devices[i].alg_ptr
-        idxs[2] = alg_size + dif_size
-        idxs[3] = psys.devices[i].par_ptr
-        idxs[4] = psys.devices[i].bus
-
-        ctrl_idx = psys.devices[i].ctrl_idx
-        ctrl_var = psys.devices[i].ctrl_var
-
-        psys.devices[i].residual_jac(J, z, v, theta, idxs, ctrl_idx,
-                ctrl_var, psys.power_injection)
-
-    for fault in psys.fault_events:
-        if fault.active:
-            fault.residual_jac(J, z, v, theta, dev, psys.power_injection)
-
-    # Restore write access to system vector
-    z.flags.writeable = True
-
-    return None
-
-
-@jit(nopython=True, cache=True)
-def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
-                       HP_idx, HQ_data, HQ_ptr, HQ_idx, dev, v, nbus):
-
-    # TODO: See residual jacobian
     val = np.zeros(20)
     col = np.zeros(20)
 
@@ -421,54 +90,47 @@ def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
         if to == fr:
             gij = ybus_data[ybus_ptr[fr] + i].real
             bij = ybus_data[ybus_ptr[fr] + i].imag
-            pinj_vf_vf += -2*gij
-            qinj_vf_vf += 2*bij
+            pinj_vf_vf += -2 * gij
+            qinj_vf_vf += 2 * bij
 
         else:
-            # compute quantities
-            angleij = v[2*fr + 1] - v[2*to + 1]
+            angleij = v[2 * fr + 1] - v[2 * to + 1]
             gij = ybus_data[ybus_ptr[fr] + i].real
             bij = ybus_data[ybus_ptr[fr] + i].imag
 
-            gsin = gij*np.sin(angleij)
-            bsin = bij*np.sin(angleij)
-            gcos = gij*np.cos(angleij)
-            bcos = bij*np.cos(angleij)
+            gsin = gij * np.sin(angleij)
+            bsin = bij * np.sin(angleij)
+            gcos = gij * np.cos(angleij)
+            bcos = bij * np.cos(angleij)
 
-            # first, accumulate terms into the fr, fr
-            pinj_vf_af -= v[2*to]*(-gsin + bcos)
-            pinj_af_af -= v[2*fr]*v[2*to]*(-gcos - bsin)
+            pinj_vf_af -= v[2 * to] * (-gsin + bcos)
+            pinj_af_af -= v[2 * fr] * v[2 * to] * (-gcos - bsin)
 
-            qinj_vf_af -= v[2*to]*(gcos + bsin)
-            qinj_af_af -= v[2*fr]*v[2*to]*(-gsin + bcos)
+            qinj_vf_af -= v[2 * to] * (gcos + bsin)
+            qinj_af_af -= v[2 * fr] * v[2 * to] * (-gsin + bcos)
 
-            # self terms
             pinj_vt_vt = 0.0
-            pinj_vt_at = -v[2*fr]*(gsin - bcos)
-            pinj_at_at = -v[2*fr]*v[2*to]*(-gcos - bsin)
+            pinj_vt_at = -v[2 * fr] * (gsin - bcos)
+            pinj_at_at = -v[2 * fr] * v[2 * to] * (-gcos - bsin)
 
             qinj_vt_vt = 0.0
-            qinj_vt_at = -v[2*fr]*(-gcos - bsin)
-            qinj_at_at = -v[2*fr]*v[2*to]*(-gsin + bcos)
+            qinj_vt_at = -v[2 * fr] * (-gcos - bsin)
+            qinj_at_at = -v[2 * fr] * v[2 * to] * (-gsin + bcos)
 
-            # off terms
             pinj_vt_vf = -(gcos + bsin)
-            pinj_vt_af = -v[2*fr]*(-gsin + bcos)
-            pinj_vf_at = -v[2*to]*(gsin - bcos)
-            pinj_at_af = -v[2*fr]*v[2*to]*(gcos + bsin)
+            pinj_vt_af = -v[2 * fr] * (-gsin + bcos)
+            pinj_vf_at = -v[2 * to] * (gsin - bcos)
+            pinj_at_af = -v[2 * fr] * v[2 * to] * (gcos + bsin)
 
             qinj_vt_vf = -(gsin - bcos)
-            qinj_vt_af = -v[2*fr]*(gcos + bsin)
-            qinj_vf_at = -v[2*to]*(-gcos - bsin)
-            qinj_at_af = -v[2*fr]*v[2*to]*(gsin - bcos)
+            qinj_vt_af = -v[2 * fr] * (gcos + bsin)
+            qinj_vf_at = -v[2 * to] * (-gcos - bsin)
+            qinj_at_af = -v[2 * fr] * v[2 * to] * (gsin - bcos)
 
-            # assemble matrices
+            row = dev + 2 * fr
 
-            # VF, (VT, AT)
-            row = dev + 2*fr
-
-            col[0] = dev + 2*to
-            col[1] = dev + 2*to + 1
+            col[0] = dev + 2 * to
+            col[1] = dev + 2 * to + 1
 
             val[0] = pinj_vt_vf
             val[1] = pinj_vf_at
@@ -477,8 +139,7 @@ def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
             val[1] = qinj_vf_at
             csr_set_row(HQ_data, HQ_ptr, HQ_idx, 2, row, col, val)
 
-            # AF, (VT, AT)
-            row = dev + 2*fr + 1
+            row = dev + 2 * fr + 1
             val[0] = pinj_vt_af
             val[1] = pinj_at_af
             csr_set_row(HP_data, HP_ptr, HP_idx, 2, row, col, val)
@@ -486,11 +147,10 @@ def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
             val[1] = qinj_at_af
             csr_set_row(HQ_data, HQ_ptr, HQ_idx, 2, row, col, val)
 
-            # VT, (VF, AF)
-            row = dev + 2*to
+            row = dev + 2 * to
 
-            col[0] = dev + 2*fr
-            col[1] = dev + 2*fr + 1
+            col[0] = dev + 2 * fr
+            col[1] = dev + 2 * fr + 1
 
             val[0] = pinj_vt_vf
             val[1] = pinj_vt_af
@@ -499,8 +159,7 @@ def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
             val[1] = qinj_vt_af
             csr_set_row(HQ_data, HQ_ptr, HQ_idx, 2, row, col, val)
 
-            # AT, (VF, AF)
-            row = dev + 2*to + 1
+            row = dev + 2 * to + 1
             val[0] = pinj_vf_at
             val[1] = pinj_at_af
             csr_set_row(HP_data, HP_ptr, HP_idx, 2, row, col, val)
@@ -508,11 +167,10 @@ def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
             val[1] = qinj_at_af
             csr_set_row(HQ_data, HQ_ptr, HQ_idx, 2, row, col, val)
 
-            # VT, (VT, AT)
-            row = dev + 2*to
+            row = dev + 2 * to
 
-            col[0] = dev + 2*to
-            col[1] = dev + 2*to + 1
+            col[0] = dev + 2 * to
+            col[1] = dev + 2 * to + 1
 
             val[0] = pinj_vt_vt
             val[1] = pinj_vt_at
@@ -521,8 +179,7 @@ def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
             val[1] = qinj_vt_at
             csr_set_row(HQ_data, HQ_ptr, HQ_idx, 2, row, col, val)
 
-            # AT, (VT, AT)
-            row = dev + 2*to + 1
+            row = dev + 2 * to + 1
             val[0] = pinj_vt_at
             val[1] = pinj_at_at
             csr_set_row(HP_data, HP_ptr, HP_idx, 2, row, col, val)
@@ -530,11 +187,10 @@ def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
             val[1] = qinj_at_at
             csr_set_row(HQ_data, HQ_ptr, HQ_idx, 2, row, col, val)
 
-    # VF, (VF, AF)
-    row = dev + 2*fr
+    row = dev + 2 * fr
 
-    col[0] = dev + 2*fr
-    col[1] = dev + 2*fr + 1
+    col[0] = dev + 2 * fr
+    col[1] = dev + 2 * fr + 1
 
     val[0] = pinj_vf_vf
     val[1] = pinj_vf_af
@@ -543,8 +199,7 @@ def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
     val[1] = qinj_vf_af
     csr_set_row(HQ_data, HQ_ptr, HQ_idx, 2, row, col, val)
 
-    # AF, (VF, AF)
-    row = dev + 2*fr + 1
+    row = dev + 2 * fr + 1
     val[0] = pinj_vf_af
     val[1] = pinj_af_af
     csr_set_row(HP_data, HP_ptr, HP_idx, 2, row, col, val)
@@ -555,8 +210,10 @@ def power_flow_hessian(fr, ybus_data, ybus_ptr, ybus_idx, HP_data, HP_ptr,
 
 def residual_hessian(H, z, theta, psys):
 
-    # Lock system vector
-    z.flags.writeable = False
+    # Lock system vector locally when necessary
+    if z.flags.writeable:
+        z = z.view()
+        z.flags.writeable = False
 
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
@@ -627,8 +284,7 @@ def residual_hessian(H, z, theta, psys):
             else:
                 print("True")
 
-    # Restore write access to system vector
-    z.flags.writeable = True
+    # No need to restore write access because a local read-only view was used
 
     return None
 ###################################
@@ -749,8 +405,10 @@ def residual_jacobian_parameters(Jp, z, theta, psys):
         theta: Parameter vector
         psys: Power system object
     """
-    # Lock system vector
-    z.flags.writeable = False
+    # Lock system vector locally when necessary
+    if z.flags.writeable:
+        z = z.view()
+        z.flags.writeable = False
     
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
@@ -774,8 +432,7 @@ def residual_jacobian_parameters(Jp, z, theta, psys):
 
         jac_load_params(z, v, theta, idxs, Jp.data, Jp.indptr, Jp.indices, i)
     
-    # Restore write access to system vector
-    z.flags.writeable = True
+    # No need to restore write access because a local read-only view was used
     
     return None
 
@@ -1890,7 +1547,9 @@ def generate_default_partition_indices(psys, slow_diff_indices=None, fast_diff_i
 
     return slow_indices, fast_indices, fast_indices_alg, fast_indices_dif, ndiff_fast
 
-def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationCtx = None) -> dict:
+def integrate_system(
+    psys: Psystem, config: IntegrationConfig, ctx: Optional[IntegrationCtx] = None
+) -> dict:
     """Integrate power system dynamics
 
     Args:

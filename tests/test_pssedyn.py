@@ -52,7 +52,7 @@ def test_two_bus_system(data_dir):
     # Load power system from PSSE raw file
     psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
     psys.createYbusComplex()
-    psys.add_busfault(1, zfault, fault_time)
+    psys.add_busfault(1, zfault)
 
     # Add generator dynamics
     psys.add_gen_dynamics(

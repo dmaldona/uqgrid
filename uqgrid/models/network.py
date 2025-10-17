@@ -1,6 +1,5 @@
 import sys
 import numpy as np
-import cmath
 import scipy.io as sio
 import networkx as nx
 from scipy.sparse import csr_matrix

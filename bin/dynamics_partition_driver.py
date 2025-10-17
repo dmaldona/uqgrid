@@ -88,7 +88,7 @@ def parse_args(argv: List[str]):
 def _prepare_system(raw_path: str, dyr_path: str, zfault: float) -> Psystem:
     psys = load_psse(raw_filename=raw_path)
     add_dyr(psys, dyr_path)
-    psys.add_busfault(1, zfault, 0.01)
+    psys.add_busfault(1, zfault)
     psys.createYbusComplex()
     return psys
 
