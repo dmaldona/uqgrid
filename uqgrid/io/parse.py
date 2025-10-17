@@ -1,5 +1,6 @@
 from uqgrid.core.psydef import Psystem
 from uqgrid.models import GenGENROU, ExcESDC1A, GovIEESGO
+from uqgrid.models.cim5_imp import MotCIM5
 from uqgrid.io.parse_psse import read_raw
 import scipy.io as sio
 import numpy as np
@@ -50,8 +51,8 @@ def load_psse(raw_filename):
             r12 = tran.r*(volt2)**2.0
             x12 = tran.x*(volt2)**2.0
         elif tran.CZ == 2:
-            r12 = tran.r*(basemva/case.sbase12)*(volt2)**2.0
-            x12 = tran.x*(basemva/case.sbase12)*(volt2)**2.0
+            r12 = tran.r*(baseMVA/case.sbase12)*(volt2)**2.0
+            x12 = tran.x*(baseMVA/case.sbase12)*(volt2)**2.0
         elif tran.CZ == 3:
             assert False, "Not implemented yet"
 
@@ -124,9 +125,9 @@ def load_psse(raw_filename):
             r23 = (tran.r23 / pow(10,6)) / tran.sbase23
             r13 = (tran.r13 / pow(10,6)) / tran.sbase13
 
-            x12 = sqrt(pow(tran.x12, 2) - pow(r12, 2))
-            x23 = sqrt(pow(tran.x23, 2) - pow(r23, 2))
-            x13 = sqrt(pow(tran.x13, 2) - pow(r13, 2))
+            x12 = np.sqrt(pow(tran.x12, 2) - pow(r12, 2))
+            x23 = np.sqrt(pow(tran.x23, 2) - pow(r23, 2))
+            x13 = np.sqrt(pow(tran.x13, 2) - pow(r13, 2))
 
             r12 = r12*(baseMVA/tran.sbase12)
             r23 = r23*(baseMVA/tran.sbase23)
@@ -346,7 +347,7 @@ def add_dyr(psys, dyr_filename, verbose=False):
             gen_id = str(device[2])
 
             if verbose:
-                print("Adding ESDC1A at bus %d. LOADID %s." % (int(device[0]), load_id))
+                print("Adding ESDC1A at bus %d. GENID %s." % (int(device[0]), gen_id))
 
             TR = float(device[3])
             KA = float(device[4])
