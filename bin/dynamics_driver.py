@@ -81,7 +81,7 @@ def main():
     add_dyr(psys, dyr)
 
     # Add fault and create initial data structures
-    psys.add_busfault(1, zfault, 0.01)
+    psys.add_busfault(1, zfault)
     psys.createYbusComplex()
 
     # Set up parameters

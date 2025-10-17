@@ -21,7 +21,7 @@ psys = load_psse(raw_filename="../data/IEEE39_v33.raw")
 add_dyr(psys, "../data/IEEE39.dyr")
 
 # add fault and create initial data structures
-psys.add_busfault(1, zfault, 0.01)
+psys.add_busfault(1, zfault)
 psys.createYbusComplex()
 v, Sinj = runpf(psys, verbose=True)
 

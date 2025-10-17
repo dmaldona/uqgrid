@@ -45,7 +45,7 @@ psys = uqgrid.load_psse("data/ieee9_v33.raw")
 uqgrid.add_dyr(psys, "data/ieee9bus.dyr")
 
 # Add a fault
-psys.add_busfault(1, 0.01, 0.01)
+psys.add_busfault(1, 0.01)
 psys.createYbusComplex()
 psys.set_load_parameters(np.zeros(psys.nloads))
 

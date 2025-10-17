@@ -42,7 +42,7 @@ def test_system():
     add_dyr(psys, "data/ieee9bus.dyr")
     
     zfault = 0.01
-    psys.add_busfault(1, zfault, 0.01)
+    psys.add_busfault(1, zfault)
     psys.createYbusComplex()
     psys.set_load_parameters(np.zeros(psys.nloads))
     
@@ -190,7 +190,7 @@ def test_complete_gradient_validation(test_system, test_config):
         # Create perturbed system - forward
         psys_plus = load_psse(raw_filename="data/ieee9_v33.raw")
         add_dyr(psys_plus, "data/ieee9bus.dyr")
-        psys_plus.add_busfault(1, 0.01, 0.01)
+        psys_plus.add_busfault(1, 0.01)
         psys_plus.createYbusComplex()
         psys_plus.set_load_parameters(np.zeros(psys_plus.nloads))
         
@@ -206,7 +206,7 @@ def test_complete_gradient_validation(test_system, test_config):
         # Create perturbed system - backward
         psys_minus = load_psse(raw_filename="data/ieee9_v33.raw")
         add_dyr(psys_minus, "data/ieee9bus.dyr")
-        psys_minus.add_busfault(1, 0.01, 0.01)
+        psys_minus.add_busfault(1, 0.01)
         psys_minus.createYbusComplex()
         psys_minus.set_load_parameters(np.zeros(psys_minus.nloads))
         

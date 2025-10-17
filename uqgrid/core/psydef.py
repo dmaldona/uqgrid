@@ -250,11 +250,10 @@ class Shunt(object):
         self.bsh = bsh/basemva
 
 class BusFault(object):
-    def __init__(self, bus, rfault, time):
+    def __init__(self, bus, rfault):
 
         self.bus = bus
         self.rfault = rfault
-        self.time = time
         self.active = False
 
     def apply(self):
@@ -478,8 +477,8 @@ class Psystem:
         self.gens.append(Generator(bus, idx_name, psch, qsch, self.basemva, self.ngens, mbase=mbase))
         self.ngens += 1
 
-    def add_busfault(self, bus, rfault, time):
-        self.fault_events.append(BusFault(bus, rfault, time))
+    def add_busfault(self, bus, rfault):
+        self.fault_events.append(BusFault(bus, rfault))
 
     def add_gen_dynamics(self, gen, gendynamics):
         assert isinstance(gen, Generator)
