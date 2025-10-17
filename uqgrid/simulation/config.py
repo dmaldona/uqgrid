@@ -32,19 +32,19 @@ class IntegrationConfig(BaseModel):
     )
 
     @field_validator('tend', 'dt', 'ton', 'toff', mode='after')
-    def positive_values(cls, v, info):
+    def positive_values(_cls, v, info):
         if v < 0:
             raise ValueError(f"`{info.field_name}` must be non-negative.")
         return v
 
     @field_validator('steps', mode='after')
-    def steps_non_negative(cls, v, info):
+    def steps_non_negative(_cls, v, info):
         if v < -1:
             raise ValueError("`steps` must be -1 or a non-negative integer.")
         return v
 
     @model_validator(mode="after")
-    def validate_partition_spec(cls, values):
+    def validate_partition_spec(_cls, values):
         slow = values.arkimex_slow_differential
         fast = values.arkimex_fast_differential
         if slow is not None and fast is not None:

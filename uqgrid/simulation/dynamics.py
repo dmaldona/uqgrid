@@ -135,6 +135,7 @@ def gradient_xp(psys, z, theta, load_idx=0):
 def gradient_pp(psys, z, theta, idx_a=0, idx_b=0):
     """Generates matrix of partial derivatives
     """
+    del idx_a, idx_b
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
     pow_size = 2*psys.nbuses  # power balance equations

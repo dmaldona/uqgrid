@@ -1,6 +1,5 @@
 # IMPLEMENTATION OF LOAD MODELS
 import numpy as np
-import numba
 from numba import jit
 from uqgrid.utils.tools import csr_add_row, csr_set_row
 
