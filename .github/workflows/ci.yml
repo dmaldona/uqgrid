@@ -30,7 +30,7 @@ jobs:
 
       - name: Lint
         run: |
-          make lint
+          python -m ruff check .
 
       - name: Run tests with coverage
         run: |
