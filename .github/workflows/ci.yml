@@ -23,6 +23,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - name: Install PETSc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y petsc-dev python3-petsc4py
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
