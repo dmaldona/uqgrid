@@ -57,6 +57,11 @@ testpaths = ["tests"]
 markers = [
     "adjoint: marks tests as adjoint validation tests (slow)",
 ]
+filterwarnings = [
+    "ignore:pkg_resources is deprecated as an API:DeprecationWarning",
+    "ignore:Deprecated call to `pkg_resources.declare_namespace:DeprecationWarning",
+    "ignore:Transformer Magnetizing Impedance not Implemented:UserWarning",
+]
 
 [tool.coverage.run]
 branch = true

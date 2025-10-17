@@ -208,8 +208,10 @@ def power_flow_hessian(
 
 def residual_hessian(H, z, theta, psys):
 
-    # Lock system vector
-    z.flags.writeable = False
+    # Lock system vector locally when necessary
+    if z.flags.writeable:
+        z = z.view()
+        z.flags.writeable = False
 
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
@@ -280,8 +282,7 @@ def residual_hessian(H, z, theta, psys):
             else:
                 print("True")
 
-    # Restore write access to system vector
-    z.flags.writeable = True
+    # No need to restore write access because a local read-only view was used
 
     return None
 ###################################
@@ -402,8 +403,10 @@ def residual_jacobian_parameters(Jp, z, theta, psys):
         theta: Parameter vector
         psys: Power system object
     """
-    # Lock system vector
-    z.flags.writeable = False
+    # Lock system vector locally when necessary
+    if z.flags.writeable:
+        z = z.view()
+        z.flags.writeable = False
     
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
@@ -427,8 +430,7 @@ def residual_jacobian_parameters(Jp, z, theta, psys):
 
         jac_load_params(z, v, theta, idxs, Jp.data, Jp.indptr, Jp.indices, i)
     
-    # Restore write access to system vector
-    z.flags.writeable = True
+    # No need to restore write access because a local read-only view was used
     
     return None
 

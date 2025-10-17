@@ -129,7 +129,9 @@ def _jacobian_diagonal_zeros(J_data, J_ptr, J_idx, ndim, ndiffeq):
 def residual_jacobian(J, z, theta, psys):
     """Top-level residual Jacobian assembly entry point."""
 
-    z.flags.writeable = False
+    if z.flags.writeable:
+        z = z.view()
+        z.flags.writeable = False
 
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
@@ -180,5 +182,3 @@ def residual_jacobian(J, z, theta, psys):
     for fault in psys.fault_events:
         if fault.active:
             fault.residual_jac(J, z, v, theta, dev, psys.power_injection)
-
-    z.flags.writeable = True

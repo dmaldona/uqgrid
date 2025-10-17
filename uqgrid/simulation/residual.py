@@ -12,7 +12,9 @@ def residual_function(F: np.ndarray, z: np.ndarray, theta: np.ndarray, psys) -> 
     """Populate the residual vector for the coupled DAE system."""
 
     F.fill(0.0)
-    z.flags.writeable = False
+    if z.flags.writeable:
+        z = z.view()
+        z.flags.writeable = False
 
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
@@ -71,5 +73,3 @@ def residual_function(F: np.ndarray, z: np.ndarray, theta: np.ndarray, psys) -> 
                 fault.residual_pinj(F[alg_size + dif_size :], v)
             else:
                 fault.residual_cinj(F[alg_size + dif_size :], v)
-
-    z.flags.writeable = True
