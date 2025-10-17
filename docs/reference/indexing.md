@@ -56,12 +56,12 @@ components.
 Every dynamic device derives from `DeviceModel`. When `Psystem.add_device` is
 called, the model receives **pointers** into the global vectors:
 
-| Attribute | Meaning |
-| --- | --- |
-| `dif_ptr` | Offset of the device's differential block within `x`. |
-| `alg_ptr` | Offset of the device's algebraic block within `y`. |
-| `par_ptr` | Offset of the device's parameters within the `theta` vector. |
-| `ndev`    | Sequential device number (useful for diagnostics). |
+Attribute | Meaning
+--- | ---
+`dif_ptr` | Offset of the device's differential block within `x`.
+`alg_ptr` | Offset of the device's algebraic block within `y`.
+`par_ptr` | Offset of the device's parameters within the `theta` vector.
+`ndev`    | Sequential device number (useful for diagnostics).
 
 These pointers are contiguous and never overlap because UQGrid increments the
 running totals (`num_dof_dif`, `num_dof_alg`, `num_pars`) every time a device is
@@ -76,7 +76,7 @@ for device in psys.devices:
 
 Output might look like:
 
-ernor  6   4   10
+```text
 ```text
 generator 0   0   0
 governor  6   4   10

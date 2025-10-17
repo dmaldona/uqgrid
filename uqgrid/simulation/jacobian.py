@@ -118,7 +118,7 @@ def current_injection_jacobian(ybus_data, ybus_ptr, ybus_idx, jac_data, jac_ptr,
 
 
 @jit(nopython=True, cache=True)
-def _jacobian_diagonal_zeros(J_data, J_ptr, J_idx, ndim, ndiffeq):
+def _jacobian_diagonal_zeros(J_data, J_ptr, J_idx, ndiffeq):
     col = np.array([0])
     data = np.array([0.0])
     for i in range(ndiffeq):
@@ -136,7 +136,7 @@ def residual_jacobian(J, z, theta, psys):
     alg_size = psys.num_dof_alg
     dif_size = psys.num_dof_dif
 
-    _jacobian_diagonal_zeros(J.data, J.indptr, J.indices, J.shape[0], dif_size)
+    _jacobian_diagonal_zeros(J.data, J.indptr, J.indices, dif_size)
 
     v = z[dif_size + alg_size :]
 

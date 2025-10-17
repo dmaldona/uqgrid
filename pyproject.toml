@@ -20,7 +20,7 @@ dependencies = [
     "numba>=0.56.0",
     "matplotlib>=3.5.0",
     "networkx>=2.6.0",
-    "pydantic>=1.8.0",
+    "pydantic>=2.0.0",
     "numdifftools>=0.9.41",
 ]
 

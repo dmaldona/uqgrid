@@ -1,16 +1,18 @@
 from __future__ import print_function
 
-import numpy as np
-import sys
-from scipy import optimize
-import numdifftools as nd
-from numpy import linalg as LA
-from numba import jit
-from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import spsolve, factorized
-from scipy.sparse._sparsetools import csr_matvec
-import math
 import copy
+import math
+import sys
+from typing import Optional
+
+import numdifftools as nd
+import numpy as np
+from numba import jit
+from numpy import linalg as LA
+from scipy import optimize
+from scipy.sparse import csr_matrix
+from scipy.sparse._sparsetools import csr_matvec
+from scipy.sparse.linalg import factorized, spsolve
 
 import logging
 logger = logging.getLogger(__name__)
@@ -1545,7 +1547,9 @@ def generate_default_partition_indices(psys, slow_diff_indices=None, fast_diff_i
 
     return slow_indices, fast_indices, fast_indices_alg, fast_indices_dif, ndiff_fast
 
-def integrate_system(psys: Psystem, config: IntegrationConfig, ctx: IntegrationCtx = None) -> dict:
+def integrate_system(
+    psys: Psystem, config: IntegrationConfig, ctx: Optional[IntegrationCtx] = None
+) -> dict:
     """Integrate power system dynamics
 
     Args:
