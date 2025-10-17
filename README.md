@@ -1,8 +1,15 @@
 # UQGrid
 
+[![CI](https://img.shields.io/github/actions/workflow/status/dmaldona/uqgrid/ci.yml?branch=main&label=CI)](https://github.com/dmaldona/uqgrid/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue)](https://dmaldona.github.io/uqgrid/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **Uncertainty quantification for the electrical grid.**
 
-UQGrid is a Python package for performing uncertainty quantification-type computations in power grid systems. It provides tools for integrating differential-algebraic equations (DAEs) and computing first and second-order sensitivities with respect to system parameters.
+UQGrid is a Python framework for transient-stability simulation, adjoint-based
+sensitivities, and probabilistic analysis of PSS®E-style power-system models.
+Documentation is now available at
+[dmaldona.github.io/uqgrid](https://dmaldona.github.io/uqgrid/).
 
 ## Features
 
@@ -14,80 +21,87 @@ UQGrid is a Python package for performing uncertainty quantification-type comput
 
 ## Installation
 
-### For Development
-
 ```bash
 git clone https://github.com/dmaldona/uqgrid.git
 cd uqgrid
+python -m pip install --upgrade pip
 pip install -e .
 ```
 
-### With PETSc Support (for adjoint sensitivity analysis)
+Optional extras:
 
-```bash
-pip install -e ".[petsc]"
-```
-
-### With Development Tools
-
-```bash
-pip install -e ".[dev]"
-```
+- `pip install -e ".[dev]"` — linting, testing, and profiling tools.
+- `pip install -e ".[petsc]"` — PETSc/TS integrator and adjoint sensitivities.
+- `pip install -e ".[docs]"` — MkDocs + mkdocstrings documentation toolchain.
 
 ## Quick Start
 
 ```python
 import numpy as np
-import uqgrid
+from uqgrid.io.parse import load_psse, add_dyr
+from uqgrid.simulation.config import IntegrationConfig
+from uqgrid.simulation.dynamics import integrate_system
 
-# Load a power system
-psys = uqgrid.load_psse("data/ieee9_v33.raw")
-uqgrid.add_dyr(psys, "data/ieee9bus.dyr")
+# Load a power system and attach dynamics
+psys = load_psse("data/ieee9_v33.raw")
+add_dyr(psys, "data/ieee9bus.dyr")
 
-# Add a fault
+# Add a shunt fault at bus 1
 psys.add_busfault(1, 0.01)
 psys.createYbusComplex()
 psys.set_load_parameters(np.zeros(psys.nloads))
 
-# Configure and run simulation
-config = uqgrid.IntegrationConfig(
+# Configure and run the simulation
+config = IntegrationConfig(
     tend=2.0,
-    dt=1.0/120.0,
-    ton=0.1,    # fault on time
-    toff=0.15,  # fault off time
-    petsc=True  # use PETSc for adjoint (if available)
+    dt=1.0 / 120.0,
+    ton=0.10,
+    toff=0.15,
+    petsc=True,
 )
 
-results = uqgrid.integrate_system(psys, config)
+results = integrate_system(psys, config)
 ```
 
 ## Examples
 
-The `/bin/` directory contains examples:
-- IEEE 9-bus test case
-- New England test case  
-- Sensitivity analysis examples
+Explore the `/bin/` directory for runnable scripts:
+
+- `dynamics_driver.py` — Full PETSc-based workflow with plotting hooks.
+- `generate_scenarios.py` — Monte Carlo batch execution utilities.
+
+Each script accepts `--help` for usage details.
+
+## Documentation
+
+The MkDocs site hosts tutorials, developer guides, and reference material:
+
+- **Online**: [dmaldona.github.io/uqgrid](https://dmaldona.github.io/uqgrid/)
+- **Local build**:
+
+    ```bash
+    pip install -e ".[docs]"
+    make docs-serve
+    ```
+
+The site rebuilds automatically during development and is deployed from the
+`main` branch via GitHub Actions.
 
 ## Testing
 
 ```bash
-# Run all tests
-make test
-
-# Run fast tests only (skip slow adjoint tests)
-make test-fast
+make test        # full pytest suite
+make test-fast   # skip PETSc-heavy adjoint tests
 ```
 
-For adjoint tests (requires PETSc):
-```bash
-pytest --adjoint-tests
-```
+Adjoint tests require PETSc (`pip install -e ".[petsc]"`).
 
 ## Requirements
 
 - Python 3.8+
 - NumPy, SciPy, Numba, NetworkX, Matplotlib, Pydantic
 - PETSc4py (optional, for adjoint sensitivity analysis)
+- MkDocs + mkdocs-material (optional, for documentation builds)
 
 ## License
 

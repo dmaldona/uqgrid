@@ -1,6 +1,6 @@
 # Simple Makefile for UQGrid development
 
-.PHONY: help install install-dev install-petsc test test-fast clean lint coverage ci
+.PHONY: help install install-dev install-petsc test test-fast clean lint coverage ci docs docs-serve docs-deploy
 
 help:
 	@echo "Available commands:"
@@ -12,6 +12,9 @@ help:
 	@echo "  lint          - Run static analysis checks"
 	@echo "  coverage      - Run tests with coverage reporting"
 	@echo "  ci            - Run local continuous-integration suite"
+	@echo "  docs          - Build MkDocs site (requires [docs] extras)"
+	@echo "  docs-serve    - Serve docs locally with live reload"
+	@echo "  docs-deploy   - Deploy docs to GitHub Pages"
 	@echo "  clean         - Clean build artifacts"
 
 # Installation
@@ -39,6 +42,15 @@ coverage:
 	python3 -m pytest --cov=uqgrid --cov-report=term-missing
 
 ci: lint coverage
+
+docs:
+	mkdocs build --strict
+
+docs-serve:
+	mkdocs serve
+
+docs-deploy:
+	mkdocs gh-deploy --force
 
 # Clean up
 clean:

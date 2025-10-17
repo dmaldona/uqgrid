@@ -54,3 +54,6 @@ Thumbs.db
 # Project specific (from original)
 *.pdf
 *.swo
+
+# Documentation builds
+site/
