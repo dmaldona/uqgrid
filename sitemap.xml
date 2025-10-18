@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://dmaldona.github.io/uqgrid/</loc>
+         <lastmod>2025-10-18</lastmod>
+    </url>
+    <url>
+         <loc>https://dmaldona.github.io/uqgrid/getting-started/</loc>
+         <lastmod>2025-10-18</lastmod>
+    </url>
+    <url>
+         <loc>https://dmaldona.github.io/uqgrid/developer-guide/contributing/</loc>
+         <lastmod>2025-10-18</lastmod>
+    </url>
+    <url>
+         <loc>https://dmaldona.github.io/uqgrid/developer-guide/quality/</loc>
+         <lastmod>2025-10-18</lastmod>
+    </url>
+    <url>
+         <loc>https://dmaldona.github.io/uqgrid/reference/api/</loc>
+         <lastmod>2025-10-18</lastmod>
+    </url>
+    <url>
+         <loc>https://dmaldona.github.io/uqgrid/reference/indexing/</loc>
+         <lastmod>2025-10-18</lastmod>
+    </url>
+    <url>
+         <loc>https://dmaldona.github.io/uqgrid/user-guide/dynamics-simulation/</loc>
+         <lastmod>2025-10-18</lastmod>
+    </url>
+</urlset>
