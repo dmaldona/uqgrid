@@ -80,11 +80,21 @@ def test_two_bus_system(data_dir):
     # Extract simulation history
     history = res["history"]
 
-    # Calculate relative errors
-    error_volt1 = np.linalg.norm(np.abs((volt1_p - history[12, :]) / history[12, :]))
-    error_volt2 = np.linalg.norm(np.abs((volt2_p - history[14, :]) / history[14, :]))
-    error_eqp = np.linalg.norm(np.abs((eq_p - history[0, :]) / history[0, :]))
-    error_speed = np.linalg.norm(np.abs((speed - history[4, :]) / (history[4, :] + 1)))
+    gen = psys.gendyn[0]
+    dif_ptr = gen.dif_ptr
+
+    eqp_idx = dif_ptr  # e_qp
+    speed_idx = dif_ptr + 4
+
+    busmag_idx = psys.busmag_idx_set()
+    volt1_idx = busmag_idx[0]
+    volt2_idx = busmag_idx[1]
+
+    # Calculate relative errors using programmatic indices
+    error_volt1 = np.linalg.norm(np.abs((volt1_p - history[volt1_idx, :]) / history[volt1_idx, :]))
+    error_volt2 = np.linalg.norm(np.abs((volt2_p - history[volt2_idx, :]) / history[volt2_idx, :]))
+    error_eqp = np.linalg.norm(np.abs((eq_p - history[eqp_idx, :]) / history[eqp_idx, :]))
+    error_speed = np.linalg.norm(np.abs((speed - history[speed_idx, :]) / (history[speed_idx, :] + 1)))
 
     # Assertions to verify simulation accuracy
     assert error_volt1 < 0.01, 'Voltage 1 trajectory differs'

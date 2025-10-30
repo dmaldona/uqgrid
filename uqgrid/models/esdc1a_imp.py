@@ -85,7 +85,7 @@ class ExcESDC1A(Exciter):
         theta[idx + 7] = self.Ae
         theta[idx + 8] = self.Be
 
-    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_diff(self, F, z, v, theta, idxs, power_injection):
 
         dp = idxs[0]
         ap = idxs[1]
@@ -154,7 +154,7 @@ class ExcESDC1A(Exciter):
 
         return coord
 
-    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_jac(self, J, z, v, theta, idxs, power_injection):
         dp = idxs[0]
         ap = idxs[1]
         dev = idxs[2]
@@ -242,7 +242,7 @@ class ExcESDC1A(Exciter):
         h_nnz[dp + 2]['rows'].append(vm)
         h_nnz[dp + 2]['cols'].append([e_fd, vm])
 
-    def residual_hess(self, HESS, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_hess(self, HESS, z, v, theta, idxs):
 
         dp = idxs[0]
         ap = idxs[1]

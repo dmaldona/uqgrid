@@ -174,10 +174,12 @@ def residual_jacobian(J, z, theta, psys):
         idxs[3] = device.par_ptr
         idxs[4] = device.bus
 
-        ctrl_idx = device.ctrl_idx
-        ctrl_var = device.ctrl_var
+        device.residual_jac(J, z, v, theta, idxs, psys.power_injection)
 
-        device.residual_jac(J, z, v, theta, idxs, ctrl_idx, ctrl_var, psys.power_injection)
+    for gen in getattr(psys, "gendyn", []):
+        idxs[0] = gen.dif_ptr
+        idxs[1] = dif_size + gen.alg_ptr
+        gen.residual_blend_jac(J, z, v, theta, idxs, psys)
 
     for fault in psys.fault_events:
         if fault.active:

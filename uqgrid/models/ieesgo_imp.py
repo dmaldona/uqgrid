@@ -95,7 +95,7 @@ class GovIEESGO(Governor):
         theta[idx + 7] = self.K2
         theta[idx + 8] = self.K3
 
-    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
+    def residual_diff(self, F, z, v, theta, idxs, power_injection):
 
         dp = idxs[0]
         ap = idxs[1]
@@ -194,11 +194,10 @@ class GovIEESGO(Governor):
         # Function is linear
         pass
 
-    def residual_hess(self, HESS, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_hess(self, HESS, z, v, theta, idxs):
         pass
 
-    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var,
-            power_injection):
+    def residual_jac(self, J, z, v, theta, idxs, power_injection):
         dp = idxs[0]
         ap = idxs[1]
         dev = idxs[2]
