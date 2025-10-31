@@ -121,6 +121,9 @@ class ExcESDC1A(Exciter):
     def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
         return None
 
+    def residual_cinj(self, F, z, v, theta, idxs, alpha=False):
+        return None
+
     def preallocate_jacobian(self, idxs, psys):
 
         coord = []
