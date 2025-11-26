@@ -171,7 +171,7 @@ class MotCIM5(Motor):
 
         return None
 
-    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_diff(self, F, z, v, theta, idxs, power_injection):
 
         dp = idxs[0]
         ap = idxs[1]
@@ -283,7 +283,7 @@ class MotCIM5(Motor):
 
         return coord
 
-    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_jac(self, J, z, v, theta, idxs, power_injection):
 
         dp = idxs[0]
         ap = idxs[1]
@@ -512,7 +512,7 @@ class MotCIM5(Motor):
         h_nnz[dev + 2*self.bus + 1]['rows'].append(va)
         h_nnz[dev + 2*self.bus + 1]['cols'].append([i_dm, i_qm, vm, va])
 
-    def residual_hess(self, HESS, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_hess(self, HESS, z, v, theta, idxs):
 
         dp = idxs[0]
         ap = idxs[1]

@@ -49,23 +49,36 @@ def residual_function(F: np.ndarray, z: np.ndarray, theta: np.ndarray, psys) -> 
         idxs[2] = device.par_ptr
         idxs[3] = device.bus
 
-        ctrl_idx = device.ctrl_idx
-        ctrl_var = device.ctrl_var
-
         device.residual_diff(
             F,
             z,
             v,
             theta,
             idxs,
-            ctrl_idx,
-            ctrl_var,
             psys.power_injection,
         )
         if psys.power_injection:
             device.residual_pinj(F[alg_size + dif_size :], z, v, theta, idxs)
         else:
             device.residual_cinj(F[alg_size + dif_size :], z, v, theta, idxs)
+
+    # Gather controller outputs into generator-aligned buffers
+    if getattr(psys, "gendyn", None):
+        psys.p_m_ctrl_aligned.fill(0.0)
+        for gi, col in enumerate(psys.gen_pm_ctrl_col):
+            if col >= 0:
+                psys.p_m_ctrl_aligned[gi] = z[col]
+
+        psys.e_fd_ctrl_aligned.fill(0.0)
+        for gi, col in enumerate(psys.gen_efd_ctrl_col):
+            if col >= 0:
+                psys.e_fd_ctrl_aligned[gi] = z[col]
+
+        # Apply blend equations for each generator
+        for gen in psys.gendyn:
+            idxs[0] = gen.dif_ptr
+            idxs[1] = dif_size + gen.alg_ptr
+            gen.residual_blend(F, z, v, theta, idxs, psys)
 
     for fault in psys.fault_events:
         if fault.active:

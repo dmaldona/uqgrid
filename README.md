@@ -18,6 +18,7 @@ Documentation is now available at
 - First and second-order parameter sensitivities
 - Adjoint methods for efficient gradient computation (requires PETSc)
 - Generator, exciter, governor, and load models
+- Masked generator/controller blend architecture for vectorization-friendly coupling
 
 ## Installation
 
@@ -83,6 +84,9 @@ The MkDocs site hosts tutorials, developer guides, and reference material:
     pip install -e ".[docs]"
     make docs-serve
     ```
+
+- **Controller blend overview**: see *Developer Guide → Controller Blend Architecture* for the new
+    generator/controller coupling layout.
 
 The site rebuilds automatically during development and is deployed from the
 `main` branch via GitHub Actions.

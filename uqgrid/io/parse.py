@@ -166,6 +166,8 @@ def load_psse(raw_filename):
 
     # add generators
     for gen in case.gens:
+        if gen.status == 0:
+            continue
         bus = psse_to_int[int(gen.busn)]
         psys.add_gen(bus, gen.name, gen.pg, gen.qg, mbase=gen.mbase)
 
@@ -316,8 +318,7 @@ def add_dyr(psys, dyr_filename, verbose=False):
                     break
 
             if not found_match:
-                print("Cannot pair GENROU with bus %d and idx %s" % (bus, idx))
-                assert False
+                print("Cannot pair GENROU with bus %d and idx %s. Skipping." % (bus, idx))
 
         if 'IEESGO' in device[1]:
             bus = psys.ext2int[int(device[0])]

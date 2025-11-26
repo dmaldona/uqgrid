@@ -120,8 +120,7 @@ class Load(DeviceModel):
     def preallocate_hessian(self, h_nnz, idxs, psys):
         pass
 
-    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx,
-                      ctrl_var, power_injection):
+    def residual_diff(self, F, z, v, theta, idxs, power_injection):
         pass
 
     def residual_pinj(self, F, z, v, theta, idxs):
@@ -139,12 +138,10 @@ class Load(DeviceModel):
     def residual_cinj(self, F, z, v, theta, idx):
         cinj_load(F, z, v, theta, idx)
 
-    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var,
-            power_injection):
-        jac_load(z, v, theta, idxs, ctrl_idx, ctrl_var, J.data, J.indptr,
-                   J.indices, power_injection)
+    def residual_jac(self, J, z, v, theta, idxs, power_injection):
+        jac_load(z, v, theta, idxs, J.data, J.indptr, J.indices, power_injection)
 
-    def residual_hess(self, H, z, v, theta, idxs, ctrl_idx, ctrl_var):
+    def residual_hess(self, H, z, v, theta, idxs):
         # (TODO) Need to refactor and fit residual_hes into residual_hess. But I remember
         # i needed to call the hessian of the load before the rest of the objects to avoid
         # an issue? Make sure it is correct
@@ -337,7 +334,7 @@ class COI(DeviceModel):
         coord.append([row, cols])
         return coord
     
-    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx, ctrl_var, power_injection):
+    def residual_diff(self, F, z, v, theta, idxs, power_injection):
         ap = idxs[1]
         wsum = np.dot(self.H, z[self.w_idx])
         hsum = np.sum(self.H)
@@ -347,8 +344,7 @@ class COI(DeviceModel):
     def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
         pass
     
-    def residual_jac(self, J, z, v, theta, idxs, ctrl_idx, ctrl_var,
-            power_injection):
+    def residual_jac(self, J, z, v, theta, idxs, power_injection):
         
         ap = idxs[1]
         ngens = self.H.shape[0]
@@ -627,21 +623,71 @@ class Psystem:
         self.add_device(self.COI[-1])
 
     def initialize(self):
-        # survey generators and assign indexes
-        for gen in self.gendyn:
-            if gen.exciter:
-                exc = gen.exciter
-                gen.efd_idx = self.device_to_global(exc, exc.efd_idx)
-                gen.set_efd_idx(self.device_to_global(exc, exc.efd_idx))
+        ng = len(self.gendyn)
+        dif = self.num_dof_dif
 
-            if gen.governor:
-                gov = gen.governor
-                gen.pm_idx = self.device_to_global(gov,
-                                                   gov.state_list.index('p_m'))
-                gen.set_pm_idx(
-                    self.device_to_global(gov, gov.state_list.index('p_m')))
-                gov.w_idx = self.device_to_global(gen,
-                                                  gen.state_list.index('w'))
+        self.gen_pm_ref_idx = np.zeros(ng, dtype=np.int32)
+        self.gen_efd_ref_idx = np.zeros(ng, dtype=np.int32)
+        self.gen_pm_out_idx = np.zeros(ng, dtype=np.int32)
+        self.gen_efd_out_idx = np.zeros(ng, dtype=np.int32)
+
+        self.gen_pm_ctrl_col = np.full(ng, -1, dtype=np.int32)
+        self.gen_efd_ctrl_col = np.full(ng, -1, dtype=np.int32)
+
+        self.gov_devices = []
+        self.exc_devices = []
+
+        for gi, gen in enumerate(self.gendyn):
+            gen.device_index = gi
+            gen.has_governor = False
+            gen.has_exciter = False
+
+            self.gen_pm_ref_idx[gi] = gen.dif_ptr + 6
+            self.gen_efd_ref_idx[gi] = gen.dif_ptr + 7
+            self.gen_pm_out_idx[gi] = dif + gen.alg_ptr + 4
+            self.gen_efd_out_idx[gi] = dif + gen.alg_ptr + 5
+
+        for gov in self.gov:
+            mapped = False
+            for gi, gen in enumerate(self.gendyn):
+                if gen.governor is gov:
+                    gen.has_governor = True
+                    gov.gen_index = gi
+                    gov.w_idx = gen.dif_ptr + 4
+                    self.gen_pm_ctrl_col[gi] = dif + gov.alg_ptr + 0
+                    self.gov_devices.append(gov)
+                    mapped = True
+                    break
+            if not mapped:
+                raise AssertionError("Governor is not attached to any generator")
+
+        for exc in self.exc:
+            mapped = False
+            for gi, gen in enumerate(self.gendyn):
+                if gen.exciter is exc:
+                    gen.has_exciter = True
+                    exc.gen_index = gi
+                    self.gen_efd_ctrl_col[gi] = exc.dif_ptr + 2
+                    self.exc_devices.append(exc)
+                    mapped = True
+                    break
+            if not mapped:
+                raise AssertionError("Exciter is not attached to any generator")
+
+        self.gov_mask = np.array([1.0 if gen.has_governor else 0.0
+                                  for gen in self.gendyn], dtype=np.float64)
+        self.exc_mask = np.array([1.0 if gen.has_exciter else 0.0
+                                  for gen in self.gendyn], dtype=np.float64)
+
+        self.p_m_ctrl_aligned = np.zeros(ng, dtype=np.float64)
+        self.e_fd_ctrl_aligned = np.zeros(ng, dtype=np.float64)
+
+        for gen in self.gendyn:
+            ap = dif + gen.alg_ptr
+            gen.pm_idx = ap + 4
+            gen.set_pm_idx(ap + 4)
+            gen.efd_idx = ap + 5
+            gen.set_efd_idx(ap + 5)
 
         self.init_flag = True
         self.first_jacobian_evaluation = True

@@ -29,8 +29,6 @@ class DeviceModel(ABC):
         self.id_tag = id_tag
         self.model_type = model_type
         self.bus = -1
-        self.ctrl_idx = -1
-        self.ctrl_var = -1
         self.rhs_funs = []
 
     def getdim(self):
@@ -72,8 +70,7 @@ class DeviceModel(ABC):
         pass
 
     @abstractmethod
-    def residual_diff(self, F, z, v, theta, idxs, ctrl_idx,
-                      ctrl_var, power_injection):
+    def residual_diff(self, F, z, v, theta, idxs, power_injection):
         pass
 
 class DynamicGenerator(DeviceModel):
@@ -95,13 +92,11 @@ class DynamicGenerator(DeviceModel):
         # attached devices
         self.exciter = False
         self.governor = False
-
         # indexes for control devices (-1 if not present)
         self.pm_idx = -1
         self.efd_idx = -1
-
-        self.ctrl_idx = np.array([-1, -1], dtype=np.int32)
-        self.ctrl_var = np.array([0.0, 0.0])
+        self.pm_initial = 0.0
+        self.efd_initial = 0.0
 
     def set_static_gen_idx(self, idx):
         assert idx >= 0
@@ -109,17 +104,17 @@ class DynamicGenerator(DeviceModel):
 
     def set_pm_idx(self, idx):
         assert idx >= 0
-        self.ctrl_idx[0] = idx
+        self.pm_idx = idx
 
     def set_efd_idx(self, idx):
         assert idx >= 0
-        self.ctrl_idx[1] = idx
+        self.efd_idx = idx
 
     def set_pm_val(self, val):
-        self.ctrl_var[0] = val
+        self.pm_initial = val
 
     def set_efd_val(self, val):
-        self.ctrl_var[1] = val
+        self.efd_initial = val
 
     def set_initpow(self, p0, q0):
         # set initial power, from power flow solution.

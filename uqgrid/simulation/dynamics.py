@@ -252,10 +252,7 @@ def residual_hessian(H, z, theta, psys):
         idxs[3] = psys.devices[i].par_ptr
         idxs[4] = psys.devices[i].bus
 
-        ctrl_idx = psys.devices[i].ctrl_idx
-        ctrl_var = psys.devices[i].ctrl_var
-
-        psys.devices[i].residual_hess(H, z, v, theta, idxs, ctrl_idx, ctrl_var)
+        psys.devices[i].residual_hess(H, z, v, theta, idxs)
 
     for fault in psys.fault_events:
         if fault.active:
