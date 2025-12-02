@@ -47,7 +47,7 @@ class Bus(object):
 class Branch(object):
     """ Generic branch class """
 
-    def __init__(self, i, j, r, x, sh=0.0, tap=0.0, shift=0.0):
+    def __init__(self, i, j, r, x, sh=0.0, tap=0.0, shift=0.0, rateA=0.0, rateB=0.0, rateC=0.0):
         self.fr = i
         self.to = j
         self.r = r  # resistance (p.u)
@@ -55,6 +55,9 @@ class Branch(object):
         self.sh = sh  # shunt reactance (p.u)
         self.tap = tap
         self.shift = shift
+        self.rateA = rateA  # line rating A (MVA)
+        self.rateB = rateB  # line rating B (MVA)
+        self.rateC = rateC  # line rating C (MVA)
 
 
 class Load(DeviceModel):
@@ -221,11 +224,15 @@ class Load(DeviceModel):
         GX[vm_idx + 1, vm_idx] = 2.0*Ql*(vm/v0)**2.0/vm
 
 class Generator(object):
-    def __init__(self, bus, idx_name, psch, qsch, basemva, internal_id, mbase):
+    def __init__(self, bus, idx_name, psch, qsch, pgub, pglb, qgub, qglb, basemva, internal_id, mbase):
         self.bus = bus
         self.idx = idx_name
         self.psch = psch/basemva
         self.qsch = qsch/basemva
+        self.pgub = pgub/basemva
+        self.pglb = pglb/basemva
+        self.qgub = qgub/basemva
+        self.qglb = qglb/basemva
         self.has_dynamic_model = False
         self.internal_id = internal_id
 
@@ -465,12 +472,12 @@ class Psystem:
         self.shunts.append(Shunt(bus, gsh, bsh, self.basemva))
         self.nshunts += 1
 
-    def add_branch(self, i, j, r, x, sh=0.0, tap=0.0, shift=0.0):
-        self.branches.append(Branch(i, j, r, x, sh=sh, tap=tap, shift=shift))
+    def add_branch(self, i, j, r, x, sh=0.0, tap=0.0, shift=0.0, rateA=0.0, rateB=0.0, rateC=0.0):
+        self.branches.append(Branch(i, j, r, x, sh=sh, tap=tap, shift=shift, rateA=rateA, rateB=rateB, rateC=rateC))
         self.nbranches += 1
 
-    def add_gen(self, bus, idx_name, psch, qsch, mbase=-1):
-        self.gens.append(Generator(bus, idx_name, psch, qsch, self.basemva, self.ngens, mbase=mbase))
+    def add_gen(self, bus, idx_name, psch, qsch, pgub=0.0, pglb=0.0, qgub=0.0, qglb=0.0, mbase=-1):
+        self.gens.append(Generator(bus, idx_name, psch, qsch, pgub, pglb, qgub, qglb, self.basemva, self.ngens, mbase=mbase))
         self.ngens += 1
 
     def add_busfault(self, bus, rfault):
@@ -771,6 +778,205 @@ class Psystem:
         for i, load in enumerate(self.loads):
             load.pload = p_load[i]
             load.qload = q_load[i]
+
+    def get_gen_pq(self):
+        """Returns two numpy arrays containing the scheduled real and reactive power generation values.
+        
+        Returns:
+            tuple: (p_gen, q_gen) where each is a numpy array of length ngens
+        """
+        import numpy as np
+        p_gen = np.zeros(self.ngens)
+        q_gen = np.zeros(self.ngens)
+        
+        for i, gen in enumerate(self.gens):
+            p_gen[i] = gen.psch
+            q_gen[i] = gen.qsch
+            
+        return p_gen, q_gen
+
+    def set_gen_pq(self, p_gen, q_gen):
+        """Sets the scheduled real and reactive power generation values.
+        
+        Args:
+            p_gen (numpy.ndarray): Array of real power generation values
+            q_gen (numpy.ndarray): Array of reactive power generation values
+        """
+        import numpy as np
+        assert len(p_gen) == self.ngens, f"p_gen length ({len(p_gen)}) must match ngens ({self.ngens})"
+        assert len(q_gen) == self.ngens, f"q_gen length ({len(q_gen)}) must match ngens ({self.ngens})"
+        
+        for i, gen in enumerate(self.gens):
+            gen.psch = p_gen[i]
+            gen.qsch = q_gen[i]
+
+    def get_pgen_bounds(self):
+        """Returns two numpy arrays containing the real power generation lower and upper bounds.
+        
+        Returns:
+            tuple: (pg_lb, pg_ub) where each is a numpy array of length ngens
+        """
+        import numpy as np
+        pg_lb = np.zeros(self.ngens)
+        pg_ub = np.zeros(self.ngens)
+        
+        for i, gen in enumerate(self.gens):
+            pg_lb[i] = gen.pglb
+            pg_ub[i] = gen.pgub
+            
+        return pg_lb, pg_ub
+
+    def set_pgen_bounds(self, pg_lb, pg_ub):
+        """Sets the real power generation lower and upper bounds.
+        
+        Args:
+            pg_lb (numpy.ndarray): Array of real power generation lower bounds
+            pg_ub (numpy.ndarray): Array of real power generation upper bounds
+        """
+        import numpy as np
+        assert len(pg_lb) == self.ngens, f"pg_lb length ({len(pg_lb)}) must match ngens ({self.ngens})"
+        assert len(pg_ub) == self.ngens, f"pg_ub length ({len(pg_ub)}) must match ngens ({self.ngens})"
+        
+        for i, gen in enumerate(self.gens):
+            gen.pglb = pg_lb[i]
+            gen.pgub = pg_ub[i]
+
+    def get_qgen_bounds(self):
+        """Returns two numpy arrays containing the reactive power generation lower and upper bounds.
+        
+        Returns:
+            tuple: (qg_lb, qg_ub) where each is a numpy array of length ngens
+        """
+        import numpy as np
+        qg_lb = np.zeros(self.ngens)
+        qg_ub = np.zeros(self.ngens)
+        
+        for i, gen in enumerate(self.gens):
+            qg_lb[i] = gen.qglb
+            qg_ub[i] = gen.qgub
+            
+        return qg_lb, qg_ub
+
+    def set_qgen_bounds(self, qg_lb, qg_ub):
+        """Sets the reactive power generation lower and upper bounds.
+        
+        Args:
+            qg_lb (numpy.ndarray): Array of reactive power generation lower bounds
+            qg_ub (numpy.ndarray): Array of reactive power generation upper bounds
+        """
+        import numpy as np
+        assert len(qg_lb) == self.ngens, f"qg_lb length ({len(qg_lb)}) must match ngens ({self.ngens})"
+        assert len(qg_ub) == self.ngens, f"qg_ub length ({len(qg_ub)}) must match ngens ({self.ngens})"
+        
+        for i, gen in enumerate(self.gens):
+            gen.qglb = qg_lb[i]
+            gen.qgub = qg_ub[i]
+
+    def get_gen_properties(self):
+        """Returns a dictionary containing generator properties.
+        
+        Returns:
+            dict: Dictionary with generator properties including:
+                - 'p_gen': scheduled real power generation
+                - 'q_gen': scheduled reactive power generation
+                - 'pg_lb': real power generation lower bound
+                - 'pg_ub': real power generation upper bound
+                - 'qg_lb': reactive power generation lower bound
+                - 'qg_ub': reactive power generation upper bound
+                - 'mbase': machine base MVA
+                - 'bus': bus number for each generator
+        """
+        import numpy as np
+        p_gen, q_gen = self.get_gen_pq()
+        pg_lb, pg_ub = self.get_pgen_bounds()
+        qg_lb, qg_ub = self.get_qgen_bounds()
+        
+        mbase = np.array([gen.mbase for gen in self.gens])
+        bus = np.array([gen.bus for gen in self.gens])
+        
+        return {
+            'p_gen': p_gen,
+            'q_gen': q_gen,
+            'pg_lb': pg_lb,
+            'pg_ub': pg_ub,
+            'qg_lb': qg_lb,
+            'qg_ub': qg_ub,
+            'mbase': mbase,
+            'bus': bus
+        }
+
+    def get_branch_properties(self):
+        """Returns a dictionary containing branch properties.
+        
+        Returns:
+            dict: Dictionary with branch properties including:
+                - 'fr': from bus number for each branch
+                - 'to': to bus number for each branch
+                - 'r': resistance (p.u.)
+                - 'x': reactance (p.u.)
+                - 'sh': shunt reactance (p.u.)
+                - 'tap': tap ratio
+                - 'shift': phase shift
+                - 'rateA': line rating A (MVA)
+                - 'rateB': line rating B (MVA)
+                - 'rateC': line rating C (MVA)
+        """
+        import numpy as np
+        
+        fr = np.array([branch.fr for branch in self.branches])
+        to = np.array([branch.to for branch in self.branches])
+        r = np.array([branch.r for branch in self.branches])
+        x = np.array([branch.x for branch in self.branches])
+        sh = np.array([branch.sh for branch in self.branches])
+        tap = np.array([branch.tap for branch in self.branches])
+        shift = np.array([branch.shift for branch in self.branches])
+        rateA = np.array([branch.rateA for branch in self.branches])
+        rateB = np.array([branch.rateB for branch in self.branches])
+        rateC = np.array([branch.rateC for branch in self.branches])
+        
+        return {
+            'fr': fr,
+            'to': to,
+            'r': r,
+            'x': x,
+            'sh': sh,
+            'tap': tap,
+            'shift': shift,
+            'rateA': rateA,
+            'rateB': rateB,
+            'rateC': rateC
+        }
+
+    def get_branch_ratings(self):
+        """Returns three numpy arrays containing the branch ratings (A, B, C).
+        
+        Returns:
+            tuple: (rateA, rateB, rateC) where each is a numpy array of length nbranches
+        """
+        import numpy as np
+        rateA = np.array([branch.rateA for branch in self.branches])
+        rateB = np.array([branch.rateB for branch in self.branches])
+        rateC = np.array([branch.rateC for branch in self.branches])
+        
+        return rateA, rateB, rateC
+
+    def set_branch_ratings(self, rateA, rateB, rateC):
+        """Sets the branch ratings (A, B, C).
+        
+        Args:
+            rateA (numpy.ndarray): Array of line rating A values (MVA)
+            rateB (numpy.ndarray): Array of line rating B values (MVA)
+            rateC (numpy.ndarray): Array of line rating C values (MVA)
+        """
+        import numpy as np
+        assert len(rateA) == self.nbranches, f"rateA length ({len(rateA)}) must match nbranches ({self.nbranches})"
+        assert len(rateB) == self.nbranches, f"rateB length ({len(rateB)}) must match nbranches ({self.nbranches})"
+        assert len(rateC) == self.nbranches, f"rateC length ({len(rateC)}) must match nbranches ({self.nbranches})"
+        
+        for i, branch in enumerate(self.branches):
+            branch.rateA = rateA[i]
+            branch.rateB = rateB[i]
+            branch.rateC = rateC[i]
 
     def network_distance(self, bus_fr, bus_to, distance="shortest_path"):
 

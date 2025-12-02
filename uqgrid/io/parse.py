@@ -32,7 +32,7 @@ def load_psse(raw_filename):
         to_internal = psse_to_int[int(branch.tbus)]
 
         psys.add_branch(fr_internal, to_internal, branch.r, branch.x, 
-                sh=branch.b)
+                sh=branch.b, rateA=branch.rateA, rateB=branch.rateB, rateC=branch.rateC)
     # add transformers
     for tran in case.transformers:
         
@@ -169,7 +169,9 @@ def load_psse(raw_filename):
         if gen.status == 0:
             continue
         bus = psse_to_int[int(gen.busn)]
-        psys.add_gen(bus, gen.name, gen.pg, gen.qg, mbase=gen.mbase)
+        psys.add_gen(bus, gen.name, gen.pg, gen.qg, 
+                     pgub=gen.pt, pglb=gen.pb, qgub=gen.qt, qglb=gen.qb,
+                     mbase=gen.mbase)
 
     # add loads
     for i in range(nloads):
@@ -230,14 +232,26 @@ def load_matpower(mat_file):
 
     for i in range(ngens):
         bus = mat_to_int[int(mat_gens[i, 0])]
-        psys.add_gen(bus, "id", mat_gens[i, 1], mat_gens[i, 2])
+        # MATPOWER gen columns: bus, Pg, Qg, Qmax, Qmin, Vg, mBase, status, Pmax, Pmin
+        pg = mat_gens[i, 1]
+        qg = mat_gens[i, 2]
+        qmax = mat_gens[i, 3] if mat_gens.shape[1] > 3 else 0.0
+        qmin = mat_gens[i, 4] if mat_gens.shape[1] > 4 else 0.0
+        pmax = mat_gens[i, 8] if mat_gens.shape[1] > 8 else 0.0
+        pmin = mat_gens[i, 9] if mat_gens.shape[1] > 9 else 0.0
+        psys.add_gen(bus, "id", pg, qg, pgub=pmax, pglb=pmin, qgub=qmax, qglb=qmin)
 
     for i in range(nbranch):
         fr_internal = mat_to_int[int(mat_branches[i, 0])]
         to_internal = mat_to_int[int(mat_branches[i, 1])]
+        # MATPOWER branch columns: fbus, tbus, r, x, b, rateA, rateB, rateC, ratio, angle
+        rateA = mat_branches[i, 5] if mat_branches.shape[1] > 5 else 0.0
+        rateB = mat_branches[i, 6] if mat_branches.shape[1] > 6 else 0.0
+        rateC = mat_branches[i, 7] if mat_branches.shape[1] > 7 else 0.0
 
         psys.add_branch(fr_internal, to_internal, mat_branches[i, 2], mat_branches[i, 3], 
-                sh=mat_branches[i, 4], tap=mat_branches[i, 8], shift=mat_branches[i, 9])
+                sh=mat_branches[i, 4], tap=mat_branches[i, 8], shift=mat_branches[i, 9],
+                rateA=rateA, rateB=rateB, rateC=rateC)
 
     psys.add_ext2int(mat_to_int)
     psys.assemble()
