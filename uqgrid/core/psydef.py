@@ -785,7 +785,6 @@ class Psystem:
         Returns:
             tuple: (p_gen, q_gen) where each is a numpy array of length ngens
         """
-        import numpy as np
         p_gen = np.zeros(self.ngens)
         q_gen = np.zeros(self.ngens)
         
@@ -802,7 +801,6 @@ class Psystem:
             p_gen (numpy.ndarray): Array of real power generation values
             q_gen (numpy.ndarray): Array of reactive power generation values
         """
-        import numpy as np
         assert len(p_gen) == self.ngens, f"p_gen length ({len(p_gen)}) must match ngens ({self.ngens})"
         assert len(q_gen) == self.ngens, f"q_gen length ({len(q_gen)}) must match ngens ({self.ngens})"
         
@@ -816,7 +814,6 @@ class Psystem:
         Returns:
             tuple: (pg_lb, pg_ub) where each is a numpy array of length ngens
         """
-        import numpy as np
         pg_lb = np.zeros(self.ngens)
         pg_ub = np.zeros(self.ngens)
         
@@ -833,7 +830,6 @@ class Psystem:
             pg_lb (numpy.ndarray): Array of real power generation lower bounds
             pg_ub (numpy.ndarray): Array of real power generation upper bounds
         """
-        import numpy as np
         assert len(pg_lb) == self.ngens, f"pg_lb length ({len(pg_lb)}) must match ngens ({self.ngens})"
         assert len(pg_ub) == self.ngens, f"pg_ub length ({len(pg_ub)}) must match ngens ({self.ngens})"
         
@@ -847,7 +843,6 @@ class Psystem:
         Returns:
             tuple: (qg_lb, qg_ub) where each is a numpy array of length ngens
         """
-        import numpy as np
         qg_lb = np.zeros(self.ngens)
         qg_ub = np.zeros(self.ngens)
         
@@ -864,7 +859,6 @@ class Psystem:
             qg_lb (numpy.ndarray): Array of reactive power generation lower bounds
             qg_ub (numpy.ndarray): Array of reactive power generation upper bounds
         """
-        import numpy as np
         assert len(qg_lb) == self.ngens, f"qg_lb length ({len(qg_lb)}) must match ngens ({self.ngens})"
         assert len(qg_ub) == self.ngens, f"qg_ub length ({len(qg_ub)}) must match ngens ({self.ngens})"
         
@@ -886,7 +880,6 @@ class Psystem:
                 - 'mbase': machine base MVA
                 - 'bus': bus number for each generator
         """
-        import numpy as np
         p_gen, q_gen = self.get_gen_pq()
         pg_lb, pg_ub = self.get_pgen_bounds()
         qg_lb, qg_ub = self.get_qgen_bounds()
@@ -921,8 +914,6 @@ class Psystem:
                 - 'rateB': line rating B (MVA)
                 - 'rateC': line rating C (MVA)
         """
-        import numpy as np
-        
         fr = np.array([branch.fr for branch in self.branches])
         to = np.array([branch.to for branch in self.branches])
         r = np.array([branch.r for branch in self.branches])
@@ -953,7 +944,6 @@ class Psystem:
         Returns:
             tuple: (rateA, rateB, rateC) where each is a numpy array of length nbranches
         """
-        import numpy as np
         rateA = np.array([branch.rateA for branch in self.branches])
         rateB = np.array([branch.rateB for branch in self.branches])
         rateC = np.array([branch.rateC for branch in self.branches])
@@ -968,7 +958,6 @@ class Psystem:
             rateB (numpy.ndarray): Array of line rating B values (MVA)
             rateC (numpy.ndarray): Array of line rating C values (MVA)
         """
-        import numpy as np
         assert len(rateA) == self.nbranches, f"rateA length ({len(rateA)}) must match nbranches ({self.nbranches})"
         assert len(rateB) == self.nbranches, f"rateB length ({len(rateB)}) must match nbranches ({self.nbranches})"
         assert len(rateC) == self.nbranches, f"rateC length ({len(rateC)}) must match nbranches ({self.nbranches})"
