@@ -1,4 +1,185 @@
+#!/usr/bin/env python
+r"""
+Power Grid Scenario Generation with Perturbation and Simulation.
+
+This module generates perturbed operating scenarios for power grid transient
+stability simulations. It applies stochastic perturbations to load and
+generation setpoints, runs dynamic simulations for various fault conditions,
+and saves the results for subsequent analysis.
+
+Overview
+--------
+The scenario generation pipeline consists of:
+
+1. **Perturbation**: Apply multiplicative noise to base load/generation values
+2. **Clamping**: Enforce generator limits on active and reactive power
+3. **Rebalancing**: Adjust total generation to match total load
+4. **Simulation**: Run transient stability analysis for each fault scenario
+5. **Storage**: Save time-series results and metadata for analysis
+
+Mathematical Framework
+----------------------
+
+Multiplicative Perturbation Model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Given a base power value $P_{base}$, the perturbed value is computed as:
+
+    $P_{scaled} = P_{base} \cdot (1 + \epsilon)$
+
+where $\epsilon$ is a zero-mean random variable drawn from the specified
+distribution.
+
+Noise Distributions
+~~~~~~~~~~~~~~~~~~~
+Two noise distributions are supported:
+
+**Normal Distribution**:
+    $\epsilon \sim \mathcal{N}(0, \sigma^2)$
+
+    where $\sigma$ is the ``var`` parameter (interpreted as standard deviation).
+
+**Uniform Distribution**:
+    $\epsilon \sim \mathcal{U}(-a, a)$
+
+    where $a = \sqrt{3 \cdot \sigma^2}$ is chosen such that
+    $\text{Var}(\epsilon) = \sigma^2$.
+
+    This follows from $\text{Var}(\mathcal{U}(-a,a)) = \frac{a^2}{3}$.
+
+Power Factor Preservation
+~~~~~~~~~~~~~~~~~~~~~~~~~
+When ``preserve_power_factor=True``, reactive power is adjusted to maintain
+the original power factor. For a bus with base values $(P_{base}, Q_{base})$:
+
+    $\text{pf} = \frac{Q_{base}}{P_{base}}$ (power factor ratio)
+
+    $Q_{scaled} = \text{pf} \cdot P_{scaled}$
+
+This ensures that $\frac{Q_{scaled}}{P_{scaled}} = \frac{Q_{base}}{P_{base}}$.
+
+Special cases:
+- If $P_{base} = 0$ and $Q_{base} \neq 0$ (purely reactive load), the same
+  multiplicative noise is applied: $Q_{scaled} = Q_{base} \cdot (1 + \epsilon)$
+- If both $P_{base} = 0$ and $Q_{base} = 0$, no perturbation is applied.
+
+Generator Clamping
+~~~~~~~~~~~~~~~~~~
+When ``clamp_gens=True``, generator outputs are constrained to their limits:
+
+    $P_g^{clamped} = \text{clip}(P_g, P_g^{min}, P_g^{max})$
+
+    $Q_g^{clamped} = \text{clip}(Q_g, Q_g^{min}, Q_g^{max})$
+
+where $\text{clip}(x, a, b) = \max(a, \min(x, b))$.
+
+Active Power Rebalancing
+~~~~~~~~~~~~~~~~~~~~~~~~
+When ``balance_generation=True``, total generation is adjusted to match total
+load while respecting generator limits. Given:
+
+- Current generation: $P_g = [P_{g,1}, ..., P_{g,n}]$
+- Generator limits: $P_g^{min}, P_g^{max}$
+- Target total: $P_{target} = \sum_i P_{L,i}$ (total load)
+- Mismatch: $\Delta = P_{target} - \sum_i P_{g,i}$
+
+**If $\Delta > 0$ (need to increase generation)**:
+
+    For each generator with headroom $h_i = P_{g,i}^{max} - P_{g,i} > 0$:
+
+    $P_{g,i}^{new} = P_{g,i} + h_i \cdot \min\left(1, \frac{\Delta}{\sum_j h_j}\right)$
+
+**If $\Delta < 0$ (need to decrease generation)**:
+
+    For each generator with downward margin $d_i = P_{g,i} - P_{g,i}^{min} > 0$:
+
+    $P_{g,i}^{new} = P_{g,i} - d_i \cdot \min\left(1, \frac{|\Delta|}{\sum_j d_j}\right)$
+
+This distributes the adjustment proportionally to available headroom/margin.
+
+Features
+--------
+- Multiplicative perturbations with configurable noise distributions
+- Independent control over load and generator perturbations
+- Power factor preservation for realistic P/Q patterns
+- Generator limit enforcement (clamping)
+- Generation-load balance maintenance
+- Parallel execution with joblib
+- Checkpointing for long-running simulations
+- Automatic recovery from failed scenarios
+
+Environment Variables
+---------------------
+The module sets thread count environment variables to prevent oversubscription
+when running parallel simulations:
+
+- OMP_NUM_THREADS=1
+- MKL_NUM_THREADS=1
+- OPENBLAS_NUM_THREADS=1
+- NUMEXPR_NUM_THREADS=1
+
+Usage
+-----
+Command-line execution::
+
+    $ python gs.py
+
+Programmatic usage::
+
+    from gs import (
+        sample_scenarios,
+        generate_metadata,
+        run_simulation_driver_batched
+    )
+
+    # Define scenario space
+    scenarios = sample_scenarios(
+        n_samples=100,
+        fault_locations=[0, 1, 2, 3],
+        fault_impedances=[0.00001, 0.0001]
+    )
+    metadata = generate_metadata(scenarios)
+
+    # Run simulations
+    log = run_simulation_driver_batched(
+        raw="model.raw",
+        dyr="model.dyr",
+        scenarios_metadata=metadata,
+        noise_type="normal",
+        noise_var=0.1,
+        balance_generation=True
+    )
+
+Output Files
+------------
+- simulation_data/scenario_*.npz : Per-scenario simulation results
+- simulation_log.json : Simulation outcomes and metadata
+- scenario_metadata.json : Scenario parameter definitions
+- simulation_checkpoint.json : Checkpoint for recovery (removed on completion)
+
+Dependencies
+------------
+- numpy : Numerical operations
+- joblib : Parallel execution
+- uqgrid : Power system simulation library
+
+See Also
+--------
+- TSI_analysis.py : Analyzes simulation results to compute stability indices
+- recovery_tool.py : Recovery utilities for failed simulations
+- monitor.py : Real-time simulation progress monitoring
+
+Author
+------
+Power Grid Simulation Team
+"""
+
 import os
+
+# -----------------------------------------------------------------------------
+# Environment Configuration
+# -----------------------------------------------------------------------------
+# Disable multi-threading in numerical libraries to prevent thread contention
+# when running multiple simulation processes in parallel.
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -16,119 +197,639 @@ from datetime import timedelta
 from joblib import Parallel, delayed
 
 from uqgrid.simulation.dynamics import integrate_system
-from uqgrid.simulation.config   import IntegrationConfig
-from uqgrid.io.parse            import load_psse, add_dyr
+from uqgrid.simulation.config import IntegrationConfig
+from uqgrid.io.parse import load_psse, add_dyr
 
 
-def generate_perturbations(base_p, base_q,
-                                *,
-                                noise_type="normal", var=0.1,
-                                rng=None, return_noise=False):
-    """
-    Apply per-bus noise -> return scaled loads.
-    If return_noise=True, also return (p_noise, q_noise)
+# =============================================================================
+# Noise Generation Utilities
+# =============================================================================
 
-        P_scaled = base_p * (1 + p_noise)
-        Q_scaled = base_q * (1 + q_noise)
+def _draw_noise(shape, *, noise_type="normal", var=0.1, rng=None):
+    r"""
+    Draw zero-mean multiplicative noise for power perturbations.
+
+    Generates noise values $\epsilon$ such that perturbed quantities can be
+    computed as:
+
+        $P_{scaled} = P_{base} \cdot (1 + \epsilon)$
+
+    Parameters
+    ----------
+    shape : tuple
+        Shape of the output noise array.
+    noise_type : {'normal', 'uniform', 'none'}
+        Distribution type:
+
+        - 'normal': $\epsilon \sim \mathcal{N}(0, \sigma^2)$ where
+          $\sigma$ = ``var``
+        - 'uniform': $\epsilon \sim \mathcal{U}(-a, a)$ where
+          $a = \sqrt{3 \cdot var}$ to achieve $\text{Var}(\epsilon) = var$
+        - 'none': Returns zeros (no perturbation)
+
+    var : float, default=0.1
+        Distribution parameter. For 'normal', this is the standard deviation
+        $\sigma$. For 'uniform', the half-width is computed as
+        $a = \sqrt{3 \cdot var}$ so that the variance equals ``var``.
+    rng : numpy.random.Generator, optional
+        Random number generator. If None, creates a new default generator.
+
+    Returns
+    -------
+    numpy.ndarray
+        Noise array $\epsilon$ with the specified shape.
+
+    Notes
+    -----
+    The uniform distribution half-width formula derives from:
+
+        $\text{Var}(\mathcal{U}(-a, a)) = \frac{(a - (-a))^2}{12} = \frac{a^2}{3}$
+
+    Setting this equal to ``var`` and solving: $a = \sqrt{3 \cdot var}$
+
+    Examples
+    --------
+    >>> rng = np.random.default_rng(42)
+    >>> eps = _draw_noise((100,), noise_type='normal', var=0.1, rng=rng)
+    >>> print(f"Mean: {eps.mean():.3f}, Std: {eps.std():.3f}")
     """
     rng = np.random.default_rng() if rng is None else rng
 
     if noise_type == "normal":
-        p_noise = rng.normal(0.0, var, size=base_p.shape)
-        q_noise = rng.normal(0.0, var, size=base_q.shape)
+        # Normal: var parameter is standard deviation
+        return rng.normal(0.0, var, size=shape)
+
     elif noise_type == "uniform":
-        half = np.sqrt(3 * var)              # Var(U[-a,a]) = var
-        p_noise = rng.uniform(-half, half, size=base_p.shape)
-        q_noise = rng.uniform(-half, half, size=base_q.shape)
+        # Uniform: compute half-width to achieve desired variance
+        # Var(U[-a,a]) = a^2/3 = var  =>  a = sqrt(3*var)
+        half = np.sqrt(3 * var)
+        return rng.uniform(-half, half, size=shape)
+
     elif noise_type == "none":
-        p_noise = q_noise = np.zeros_like(base_p)
+        return np.zeros(shape, dtype=float)
+
     else:
         raise ValueError(f"Unknown noise_type '{noise_type}'")
 
+
+def _relative_noise(scaled, base, eps=1e-8):
+    r"""
+    Compute the relative noise from scaled and base values.
+
+    Given $P_{scaled} = P_{base} \cdot (1 + \epsilon)$, this function
+    recovers $\epsilon$ in a numerically safe way:
+
+        $\epsilon = \frac{P_{scaled}}{P_{base}} - 1$
+
+    Parameters
+    ----------
+    scaled : array-like
+        Scaled (perturbed) values.
+    base : array-like
+        Original base values.
+    eps : float, default=1e-8
+        Threshold for considering base values as zero. Values with
+        $|P_{base}| < \epsilon$ are assigned zero noise.
+
+    Returns
+    -------
+    numpy.ndarray
+        Relative noise array $\epsilon$.
+
+    Notes
+    -----
+    This function handles the case where $P_{base} = 0$ by returning
+    $\epsilon = 0$ for those elements, avoiding division by zero.
+    """
+    scaled = np.asarray(scaled, dtype=float)
+    base = np.asarray(base, dtype=float)
+
+    noise = np.zeros_like(base)
+    mask = np.abs(base) > eps
+    noise[mask] = scaled[mask] / base[mask] - 1.0
+
+    return noise
+
+
+# =============================================================================
+# Power Rebalancing
+# =============================================================================
+
+def _rebalance_active_power(p_gen, pg_lb, pg_ub, target_total):
+    r"""
+    Rebalance generator active power to match a target total.
+
+    Redistributes generation to achieve $\sum_i P_{g,i} = P_{target}$ while
+    respecting generator limits. The adjustment is distributed proportionally
+    to each generator's available headroom (for increases) or margin (for
+    decreases).
+
+    Parameters
+    ----------
+    p_gen : array-like
+        Current generator active power setpoints $P_g$.
+    pg_lb : array-like or None
+        Lower bounds $P_g^{min}$ for each generator. If None, falls back
+        to simple scaling.
+    pg_ub : array-like or None
+        Upper bounds $P_g^{max}$ for each generator. If None, falls back
+        to simple scaling.
+    target_total : float or None
+        Target total generation. If None, returns unchanged values.
+
+    Returns
+    -------
+    numpy.ndarray
+        Rebalanced generator setpoints $P_g^{new}$.
+
+    Notes
+    -----
+    **Algorithm for increasing generation** ($\Delta > 0$):
+
+    1. Compute headroom: $h_i = P_{g,i}^{max} - P_{g,i}$
+    2. Compute participation factor: $\alpha = \min(1, \Delta / \sum_j h_j)$
+    3. Update: $P_{g,i}^{new} = P_{g,i} + \alpha \cdot h_i$
+
+    **Algorithm for decreasing generation** ($\Delta < 0$):
+
+    1. Compute margin: $d_i = P_{g,i} - P_{g,i}^{min}$
+    2. Compute participation factor: $\alpha = \min(1, |\Delta| / \sum_j d_j)$
+    3. Update: $P_{g,i}^{new} = P_{g,i} - \alpha \cdot d_i$
+
+    If bounds are not provided, simple uniform scaling is applied:
+
+        $P_g^{new} = P_g \cdot \frac{P_{target}}{\sum_i P_{g,i}}$
+    """
+    p_gen = np.asarray(p_gen, dtype=float)
+
+    if target_total is None:
+        return p_gen
+
+    current_total = np.sum(p_gen)
+    mismatch = target_total - current_total
+
+    # No rebalancing needed if already at target
+    if np.isclose(mismatch, 0.0):
+        return p_gen
+
+    # Fall back to uniform scaling if no bounds available
+    if pg_lb is None or pg_ub is None:
+        if current_total != 0.0:
+            return p_gen * (target_total / current_total)
+        return p_gen
+
+    pg_lb = np.asarray(pg_lb, dtype=float)
+    pg_ub = np.asarray(pg_ub, dtype=float)
+
+    if mismatch > 0.0:
+        # Need to increase generation - use upward headroom
+        headroom = pg_ub - p_gen
+        mask = headroom > 1e-9
+        total_headroom = np.sum(headroom[mask])
+
+        if total_headroom <= 0.0:
+            # Already at upper limits everywhere
+            return p_gen
+
+        # Participation factor (capped at 1.0)
+        factor = min(1.0, mismatch / total_headroom)
+        p_new = p_gen.copy()
+        p_new[mask] += headroom[mask] * factor
+
+    else:
+        # Need to decrease generation - use downward margin
+        down_margin = p_gen - pg_lb
+        mask = down_margin > 1e-9
+        total_down = np.sum(down_margin[mask])
+
+        if total_down <= 0.0:
+            # Already at lower limits everywhere
+            return p_gen
+
+        # Participation factor (capped at 1.0)
+        factor = min(1.0, -mismatch / total_down)
+        p_new = p_gen.copy()
+        p_new[mask] -= down_margin[mask] * factor
+
+    return p_new
+
+
+# =============================================================================
+# Perturbation Generation
+# =============================================================================
+
+def generate_perturbations(base_p, base_q,
+                           *,
+                           noise_type="normal", var=0.1,
+                           rng=None, return_noise=False,
+                           preserve_power_factor=True):
+    r"""
+    Apply multiplicative perturbations to active and reactive power.
+
+    Generates perturbed power values using the multiplicative noise model:
+
+        $P_{scaled} = P_{base} \cdot (1 + \epsilon_P)$
+
+    For reactive power, the behavior depends on ``preserve_power_factor``.
+
+    Parameters
+    ----------
+    base_p : array-like
+        Base active power values $P_{base}$.
+    base_q : array-like
+        Base reactive power values $Q_{base}$.
+    noise_type : {'normal', 'uniform', 'none'}, default='normal'
+        Noise distribution type. See :func:`_draw_noise` for details.
+    var : float, default=0.1
+        Noise variance parameter.
+    rng : numpy.random.Generator, optional
+        Random number generator for reproducibility.
+    return_noise : bool, default=False
+        If True, also return the noise arrays $(\epsilon_P, \epsilon_Q)$.
+    preserve_power_factor : bool, default=True
+        If True, adjust reactive power to maintain the original power factor
+        ratio $Q/P$. If False, perturb P and Q independently.
+
+    Returns
+    -------
+    p_scaled : numpy.ndarray
+        Perturbed active power values.
+    q_scaled : numpy.ndarray
+        Perturbed reactive power values.
+    p_noise : numpy.ndarray (only if return_noise=True)
+        Active power noise $\epsilon_P$.
+    q_noise : numpy.ndarray (only if return_noise=True)
+        Reactive power noise $\epsilon_Q$.
+
+    Notes
+    -----
+    **Power Factor Preservation** (``preserve_power_factor=True``):
+
+    For buses where $|P_{base}| > 0$:
+
+        $\text{ratio} = \frac{Q_{base}}{P_{base}}$
+
+        $Q_{scaled} = \text{ratio} \cdot P_{scaled}$
+
+    This ensures $\frac{Q_{scaled}}{P_{scaled}} = \frac{Q_{base}}{P_{base}}$.
+
+    For purely reactive buses ($P_{base} = 0$, $Q_{base} \neq 0$):
+
+        $Q_{scaled} = Q_{base} \cdot (1 + \epsilon_P)$
+
+    **Independent Perturbation** (``preserve_power_factor=False``):
+
+    Both P and Q receive independent noise:
+
+        $P_{scaled} = P_{base} \cdot (1 + \epsilon_P)$
+        $Q_{scaled} = Q_{base} \cdot (1 + \epsilon_Q)$
+
+    Examples
+    --------
+    >>> base_p = np.array([100.0, 50.0, 0.0])
+    >>> base_q = np.array([30.0, 15.0, 10.0])
+    >>> p_new, q_new = generate_perturbations(base_p, base_q, var=0.1)
+    """
+    rng = np.random.default_rng() if rng is None else rng
+
+    # Generate active power noise and apply perturbation
+    p_noise = _draw_noise(base_p.shape, noise_type=noise_type, var=var, rng=rng)
     p_scaled = base_p * (1.0 + p_noise)
-    q_scaled = base_q * (1.0 + q_noise)
+
+    if preserve_power_factor:
+        # Initialize Q from base values
+        q_scaled = np.array(base_q, copy=True, dtype=float)
+
+        # For buses with non-zero P: maintain Q/P ratio
+        mask_p_nonzero = np.abs(base_p) > 1e-8
+        if np.any(mask_p_nonzero):
+            ratio = np.zeros_like(base_p, dtype=float)
+            ratio[mask_p_nonzero] = base_q[mask_p_nonzero] / base_p[mask_p_nonzero]
+            q_scaled[mask_p_nonzero] = ratio[mask_p_nonzero] * p_scaled[mask_p_nonzero]
+
+        # For purely reactive buses (P=0, Q!=0): apply same noise factor
+        mask_p_zero_q_nonzero = (~mask_p_nonzero) & (np.abs(base_q) > 1e-8)
+        if np.any(mask_p_zero_q_nonzero):
+            q_scaled[mask_p_zero_q_nonzero] = base_q[mask_p_zero_q_nonzero] * (
+                1.0 + p_noise[mask_p_zero_q_nonzero]
+            )
+
+        # Compute effective Q noise for logging
+        q_noise = _relative_noise(q_scaled, base_q)
+
+    else:
+        # Independent perturbation: draw separate noise for Q
+        q_noise = _draw_noise(base_q.shape, noise_type=noise_type, var=var, rng=rng)
+        q_scaled = base_q * (1.0 + q_noise)
 
     if return_noise:
         return p_scaled, q_scaled, p_noise, q_noise
     return p_scaled, q_scaled
 
 
+# =============================================================================
+# Scenario Sampling and Metadata
+# =============================================================================
+
 def sample_scenarios(n_samples, fault_locations, fault_impedances):
+    """
+    Generate all combinations of samples, fault locations, and impedances.
+
+    Creates the Cartesian product of scenario parameters to define the
+    complete simulation campaign.
+
+    Parameters
+    ----------
+    n_samples : int
+        Number of perturbation samples per fault configuration.
+    fault_locations : list of int
+        Bus indices where faults will be applied.
+    fault_impedances : list of float
+        Fault impedance values in per-unit.
+
+    Returns
+    -------
+    list of tuple
+        List of (sample_idx, fault_location, fault_impedance) tuples
+        representing all scenario combinations.
+
+    Examples
+    --------
+    >>> scenarios = sample_scenarios(2, [0, 1], [0.001])
+    >>> len(scenarios)
+    4
+    >>> scenarios
+    [(0, 0, 0.001), (0, 1, 0.001), (1, 0, 0.001), (1, 1, 0.001)]
+    """
     return list(itertools.product(range(n_samples), fault_locations, fault_impedances))
 
 
 def generate_metadata(scenarios):
     """
-    Creates one UUID per scenario.
+    Generate unique identifiers and metadata for each scenario.
+
+    Creates a metadata dictionary mapping UUID scenario IDs to their
+    parameters and saves it to 'scenario_metadata.json'.
+
+    Parameters
+    ----------
+    scenarios : list of tuple
+        List of (sample_idx, fault_location, fault_impedance) tuples
+        from :func:`sample_scenarios`.
+
+    Returns
+    -------
+    dict
+        Dictionary mapping scenario UUIDs to parameter dictionaries
+        containing 'sample_idx', 'fault_location', and 'fault_impedance'.
+
+    Side Effects
+    ------------
+    Creates 'scenario_metadata.json' in the current directory.
     """
     metadata = {}
+
     for sample_idx, floc, fz in scenarios:
         sid = str(uuid.uuid4())
         metadata[sid] = {
-            "sample_idx"     : sample_idx,
-            "fault_location" : floc,
+            "sample_idx": sample_idx,
+            "fault_location": floc,
             "fault_impedance": fz,
         }
+
     with open("scenario_metadata.json", "w") as f:
         json.dump(metadata, f, indent=4)
+
     return metadata
 
+
+# =============================================================================
+# Simulation Worker
+# =============================================================================
 
 def run_single_scenario_worker(
         raw_file, dyr_file, scenario, scenario_id,
         noise_type="normal", noise_var=0.1,
         global_seed=0,
-        balance_generation=False):
+        balance_generation=False,
+        perturb_loads=True,
+        perturb_gens=True,
+        load_noise_type=None,
+        gen_noise_type=None,
+        load_noise_var=None,
+        gen_noise_var=None,
+        keep_power_factor=True,
+        clamp_gens=True):
+    r"""
+    Worker function for single-scenario simulation.
+
+    Generates a perturbed operating point and runs the transient stability
+    simulation for one fault scenario. This function is designed to be
+    called in parallel worker processes.
+
+    Parameters
+    ----------
+    raw_file : str
+        Path to PSS/E RAW file containing network data.
+    dyr_file : str
+        Path to PSS/E DYR file containing dynamic model data.
+    scenario : dict
+        Scenario parameters with keys 'sample_idx', 'fault_location',
+        and 'fault_impedance'.
+    scenario_id : str
+        Unique identifier for this scenario.
+    noise_type : str, default='normal'
+        Default noise distribution type for both loads and generators.
+    noise_var : float, default=0.1
+        Default noise variance for both loads and generators.
+    global_seed : int, default=0
+        Base seed for random number generation. Combined with sample_idx
+        to create reproducible but independent random streams.
+    balance_generation : bool, default=False
+        If True, rebalance total generation to match total load after
+        applying perturbations.
+    perturb_loads : bool, default=True
+        If True, apply perturbations to load P and Q values.
+    perturb_gens : bool, default=True
+        If True, apply perturbations to generator P values.
+    load_noise_type : str, optional
+        Override noise type for loads. If None, uses ``noise_type``.
+    gen_noise_type : str, optional
+        Override noise type for generators. If None, uses ``noise_type``.
+    load_noise_var : float, optional
+        Override noise variance for loads. If None, uses ``noise_var``.
+    gen_noise_var : float, optional
+        Override noise variance for generators. If None, uses ``noise_var``.
+    keep_power_factor : bool, default=True
+        If True, adjust Q to maintain original Q/P ratio when perturbing.
+    clamp_gens : bool, default=True
+        If True, clamp generator P and Q to their operational limits.
+
+    Returns
+    -------
+    dict
+        Result dictionary containing:
+
+        - 'file': str or None, path to saved results
+        - 'diverged': bool, True if simulation failed to converge
+        - 'error': str (only present if an exception occurred)
+
+    Notes
+    -----
+    **Perturbation Pipeline**:
+
+    1. Load base values: $(P_L, Q_L, P_G, Q_G)$ from power system model
+    2. Retrieve generator limits: $(P_G^{min}, P_G^{max}, Q_G^{min}, Q_G^{max})$
+    3. Initialize independent RNG streams for loads and generators
+    4. Perturb loads: $P_L' = P_L(1+\epsilon_L)$, preserve power factor for $Q_L'$
+    5. Perturb generators: $P_G' = P_G(1+\epsilon_G)$
+    6. Clamp: $P_G' = \text{clip}(P_G', P_G^{min}, P_G^{max})$
+    7. Rebalance: adjust $P_G'$ so $\sum P_G' = \sum P_L'$
+    8. Compute $Q_G'$ from power factor (if enabled)
+    9. Clamp: $Q_G' = \text{clip}(Q_G', Q_G^{min}, Q_G^{max})$
+    10. Run dynamic simulation with fault
+
+    **Output File Contents** (simulation_data/scenario_*.npz):
+
+    - history: State variable time series (n_states, n_timesteps)
+    - tvec: Time vector
+    - p_load_scaled, q_load_scaled: Perturbed load values
+    - p_gen_scaled, q_gen_scaled: Perturbed generator values
+    - p_load_noise, q_load_noise: Load perturbation factors
+    - p_gen_noise, q_gen_noise: Generator perturbation factors
+
+    **Random Number Generation**:
+
+    Uses numpy's SeedSequence to create independent RNG streams for loads
+    and generators from a combined (global_seed, sample_idx) seed. This
+    ensures reproducibility while avoiding correlation between load and
+    generator perturbations.
     """
-    Modified to load the model inside the worker process to avoid MPI issues.
-    Each worker loads its own copy of the model.
-    """
-    
     try:
-        # Load fresh model in worker process - fix MPI communicator issues
+        # Load fresh model in worker process to avoid MPI communicator issues
         psys = load_psse(raw_file)
         add_dyr(psys, dyr_file)
-        
-        # Get base loads and generation
+
+        # Get base load and generation setpoints
         base_p_load, base_q_load = psys.get_load_pq()
         base_p_gen, base_q_gen = psys.get_gen_pq()
-        
-        # Set up RNG
+
+        # Retrieve generator limits (may not exist in older model versions)
+        try:
+            pg_lb, pg_ub = psys.get_pgen_bounds()
+        except AttributeError:
+            pg_lb = pg_ub = None
+
+        try:
+            qg_lb, qg_ub = psys.get_qgen_bounds()
+        except AttributeError:
+            qg_lb = qg_ub = None
+
+        # Create independent RNG streams for loads and generators
         ss = np.random.SeedSequence([global_seed, scenario["sample_idx"]])
         rng_load, rng_gen = [np.random.default_rng(s) for s in ss.spawn(2)]
-        
-        # Draw noise and obtain scaled loads
-        pL_scaled, qL_scaled, pL_noise, qL_noise = generate_perturbations(
-            base_p_load, base_q_load,
-            noise_type=noise_type, var=noise_var, rng=rng_load,
-            return_noise=True)
-        
-        pG_scaled, qG_scaled, pG_noise, qG_noise = generate_perturbations(
-            base_p_gen, base_q_gen,
-            noise_type=noise_type, var=noise_var, rng=rng_gen,
-            return_noise=True)
-        
+
+        # Resolve per-type noise parameters (use defaults if not specified)
+        load_noise_type = load_noise_type or noise_type
+        gen_noise_type = gen_noise_type or noise_type
+        load_noise_var = load_noise_var if load_noise_var is not None else noise_var
+        gen_noise_var = gen_noise_var if gen_noise_var is not None else noise_var
+
+        # -----------------------------------------------------------------
+        # Step 1: Perturb loads
+        # -----------------------------------------------------------------
+        if perturb_loads and base_p_load.size:
+            pL_scaled, qL_scaled, pL_noise, qL_noise = generate_perturbations(
+                base_p_load, base_q_load,
+                noise_type=load_noise_type, var=load_noise_var, rng=rng_load,
+                return_noise=True, preserve_power_factor=keep_power_factor
+            )
+        else:
+            # Keep base values unchanged
+            pL_scaled = np.array(base_p_load, copy=True)
+            qL_scaled = np.array(base_q_load, copy=True)
+            pL_noise = np.zeros_like(base_p_load, dtype=float)
+            qL_noise = np.zeros_like(base_q_load, dtype=float)
+
+        # -----------------------------------------------------------------
+        # Step 2: Perturb generator active power
+        # -----------------------------------------------------------------
+        if perturb_gens and base_p_gen.size:
+            pG_noise_raw = _draw_noise(
+                base_p_gen.shape,
+                noise_type=gen_noise_type,
+                var=gen_noise_var,
+                rng=rng_gen,
+            )
+            pG_scaled = base_p_gen * (1.0 + pG_noise_raw)
+        else:
+            pG_scaled = np.array(base_p_gen, copy=True)
+
+        # -----------------------------------------------------------------
+        # Step 3: Clamp generator active power to limits
+        # -----------------------------------------------------------------
+        if clamp_gens and pg_lb is not None and pg_ub is not None and pG_scaled.size:
+            pG_scaled = np.clip(pG_scaled, pg_lb, pg_ub)
+
+        # -----------------------------------------------------------------
+        # Step 4: Rebalance generation to match load
+        # -----------------------------------------------------------------
         if balance_generation:
-            sum_pL = np.sum(pL_scaled)
-            sum_qL = np.sum(qL_scaled)
-            sum_pG = np.sum(pG_scaled)
-            sum_qG = np.sum(qG_scaled)
-            
-            if sum_pG != 0: pG_scaled *= (sum_pL / sum_pG)
-            if sum_qG != 0: qG_scaled *= (sum_qL / sum_qG)
-        
+            sum_pL = float(np.sum(pL_scaled))
+            pG_scaled = _rebalance_active_power(pG_scaled, pg_lb, pg_ub, sum_pL)
+
+        # -----------------------------------------------------------------
+        # Step 5: Compute generator reactive power
+        # -----------------------------------------------------------------
+        if keep_power_factor:
+            # Adjust Q to maintain original power factor
+            qG_scaled = np.array(base_q_gen, copy=True, dtype=float)
+
+            mask_pg_nonzero = np.abs(base_p_gen) > 1e-8
+            if np.any(mask_pg_nonzero):
+                ratio = np.zeros_like(base_p_gen, dtype=float)
+                ratio[mask_pg_nonzero] = base_q_gen[mask_pg_nonzero] / base_p_gen[mask_pg_nonzero]
+                qG_scaled[mask_pg_nonzero] = ratio[mask_pg_nonzero] * pG_scaled[mask_pg_nonzero]
+
+            # For purely reactive units (P=0, Q!=0): keep original Q
+            mask_pg_zero_q_nonzero = (~mask_pg_nonzero) & (np.abs(base_q_gen) > 1e-8)
+            if np.any(mask_pg_zero_q_nonzero):
+                qG_scaled[mask_pg_zero_q_nonzero] = base_q_gen[mask_pg_zero_q_nonzero]
+        else:
+            # Keep original Q schedule unchanged
+            qG_scaled = np.array(base_q_gen, copy=True, dtype=float)
+
+        # -----------------------------------------------------------------
+        # Step 6: Clamp generator reactive power to limits
+        # -----------------------------------------------------------------
+        if clamp_gens and qg_lb is not None and qg_ub is not None and qG_scaled.size:
+            qG_scaled = np.clip(qG_scaled, qg_lb, qg_ub)
+
+        # Compute effective perturbation factors for logging
+        pG_noise = _relative_noise(pG_scaled, base_p_gen)
+        qG_noise = _relative_noise(qG_scaled, base_q_gen)
+
+        # -----------------------------------------------------------------
+        # Step 7: Run dynamic simulation
+        # -----------------------------------------------------------------
         psys.set_load_pq(pL_scaled, qL_scaled)
         psys.set_gen_pq(pG_scaled, qG_scaled)
-        
-        psys.add_busfault(scenario["fault_location"],
-                          scenario["fault_impedance"])
+
+        # Apply fault at specified location
+        psys.add_busfault(scenario["fault_location"], scenario["fault_impedance"])
         psys.createYbusComplex()
-        
+
+        # Configure integration parameters
         cfg = IntegrationConfig(
-            tend=10.0, dt=1/120.0, power_injection=False,
-            ton=0.25, toff=0.4, verbose=False, petsc=True
+            tend=10.0,           # Simulation end time [s]
+            dt=1/120.0,          # Time step [s]
+            power_injection=False,
+            ton=0.25,            # Fault onset time [s]
+            toff=0.4,            # Fault clearing time [s]
+            verbose=False,
+            petsc=True
         )
-        
+
         try:
             sim = integrate_system(psys, cfg)
             diverged = False
@@ -136,51 +837,141 @@ def run_single_scenario_worker(
             print(f"Simulation failed for scenario {scenario_id}: {str(e)}")
             sim = {"history": None, "tvec": None}
             diverged = True
-        
-        # Save results
+
+        # -----------------------------------------------------------------
+        # Step 8: Save results
+        # -----------------------------------------------------------------
         os.makedirs("simulation_data", exist_ok=True)
         fn = f"simulation_data/scenario_{scenario_id}.npz"
+
         np.savez_compressed(
             fn,
+            # Time series data
             history=sim["history"],
             tvec=sim["tvec"],
-            # loads
+            # Load values and perturbations
             p_load_scaled=pL_scaled, q_load_scaled=qL_scaled,
             p_load_noise=pL_noise, q_load_noise=qL_noise,
-            # generators
+            # Generator values and perturbations
             p_gen_scaled=pG_scaled, q_gen_scaled=qG_scaled,
             p_gen_noise=pG_noise, q_gen_noise=qG_noise,
         )
-        
-        # Clean up - important for PETSc/MPI resources
+
+        # Clean up resources (important for PETSc/MPI)
         del sim
         del psys
         gc.collect()
-        
+
         return {"file": fn, "diverged": diverged}
-        
+
     except Exception as e:
         print(f"Worker error for scenario {scenario_id}: {str(e)}")
         traceback.print_exc()
         return {"file": None, "diverged": True, "error": str(e)}
 
 
+# =============================================================================
+# Batch Simulation Driver
+# =============================================================================
+
 def run_simulation_driver_batched(
         raw, dyr, scenarios_metadata,
         *, noise_type="normal", noise_var=0.1,
         balance_generation=True,
-        n_jobs=-1, batch_size=10, 
-        checkpoint_interval=100):
+        n_jobs=-1, batch_size=10,
+        checkpoint_interval=100,
+        perturb_loads=True,
+        perturb_gens=True,
+        load_noise_type=None,
+        gen_noise_type=None,
+        load_noise_var=None,
+        gen_noise_var=None,
+        keep_power_factor=True,
+        clamp_gens=True):
     """
-    Batched driver with error handling and checkpointing.
+    Batched simulation driver with checkpointing and error handling.
+
+    Orchestrates parallel execution of multiple scenarios with automatic
+    checkpointing, progress tracking, and recovery from failures.
+
+    Parameters
+    ----------
+    raw : str
+        Path to PSS/E RAW file.
+    dyr : str
+        Path to PSS/E DYR file.
+    scenarios_metadata : dict
+        Dictionary mapping scenario IDs to parameter dictionaries,
+        as returned by :func:`generate_metadata`.
+    noise_type : str, default='normal'
+        Default noise distribution type.
+    noise_var : float, default=0.1
+        Default noise variance.
+    balance_generation : bool, default=True
+        If True, rebalance generation to match load.
+    n_jobs : int, default=-1
+        Number of parallel jobs. -1 uses all available cores.
+    batch_size : int, default=10
+        Number of scenarios per batch.
+    checkpoint_interval : int, default=100
+        Save checkpoint every N batches.
+    perturb_loads : bool, default=True
+        Enable load perturbations.
+    perturb_gens : bool, default=True
+        Enable generator perturbations.
+    load_noise_type : str, optional
+        Override noise type for loads.
+    gen_noise_type : str, optional
+        Override noise type for generators.
+    load_noise_var : float, optional
+        Override noise variance for loads.
+    gen_noise_var : float, optional
+        Override noise variance for generators.
+    keep_power_factor : bool, default=True
+        Maintain power factor when perturbing.
+    clamp_gens : bool, default=True
+        Enforce generator limits.
+
+    Returns
+    -------
+    dict
+        Simulation log mapping scenario IDs to result dictionaries
+        containing scenario parameters and simulation outcomes.
+
+    Notes
+    -----
+    **Checkpointing**:
+
+    Progress is saved periodically to enable recovery from interruptions:
+
+    - simulation_log.json: Updated after each batch
+    - simulation_checkpoint.json: Full checkpoint at specified intervals
+
+    On restart, the driver automatically resumes from the last checkpoint.
+
+    **Error Handling**:
+
+    - Individual scenario failures are recorded but don't stop execution
+    - Batch-level failures mark all scenarios in the batch as failed
+    - The 'loky' backend provides timeout protection (600s per batch)
+
+    **Memory Management**:
+
+    - Garbage collection runs between batches
+    - Power system models are loaded fresh for each batch
+    - State metadata is exported once per batch
+
+    See Also
+    --------
+    run_single_scenario_worker : Worker function for individual scenarios
     """
-    
     scenario_ids = list(scenarios_metadata.keys())
     simulation_log = {}
-    
-    # Load checkpoint if it exists
+
+    # Load checkpoint if it exists (for resuming interrupted runs)
     checkpoint_file = "simulation_checkpoint.json"
     start_batch = 0
+
     if os.path.exists(checkpoint_file):
         try:
             with open(checkpoint_file, "r") as f:
@@ -190,57 +981,65 @@ def run_simulation_driver_batched(
                 print(f"Resuming from batch {start_batch}")
         except Exception as e:
             print(f"Failed to load checkpoint: {e}")
-    
+
     t0 = time.time()
     total_batches = int(np.ceil(len(scenario_ids) / batch_size))
-    
-    for batch_idx, batch_start in enumerate(range(start_batch * batch_size, 
-                                                   len(scenario_ids), 
-                                                   batch_size), 
-                                             start=start_batch):
-        batch_ids = scenario_ids[batch_start : batch_start + batch_size]
-        
-        # Progress tracking
+
+    # Process batches
+    for batch_idx, batch_start in enumerate(
+            range(start_batch * batch_size, len(scenario_ids), batch_size),
+            start=start_batch):
+
+        batch_ids = scenario_ids[batch_start: batch_start + batch_size]
+
+        # Progress tracking with ETA estimation
         elapsed = time.time() - t0
         if batch_idx > start_batch:
             est_total = elapsed * (total_batches - start_batch) / (batch_idx - start_batch)
             remaining = max(0.0, est_total - elapsed)
         else:
             est_total = remaining = 0
-        
+
         print(
             f"Processing batch {batch_idx + 1} / {total_batches} | "
             f"elapsed {timedelta(seconds=int(elapsed))} | "
             f"est total {timedelta(seconds=int(est_total))} | "
             f"ETA {timedelta(seconds=int(remaining))}"
         )
-        
+
         # Export state metadata once per batch (outside parallel region)
         base_psys = load_psse(raw)
         add_dyr(base_psys, dyr)
         base_psys.export_state_metadata()
-        del base_psys  # Clean up immediately
-        
-        # Prepare arguments for parallel execution
+        del base_psys
+
+        # Prepare worker arguments
         batch_args = [
             (raw, dyr, scenarios_metadata[sid], sid,
-             noise_type, noise_var, 1234, balance_generation)
+             noise_type, noise_var, 1234, balance_generation,
+             perturb_loads, perturb_gens,
+             load_noise_type, gen_noise_type,
+             load_noise_var, gen_noise_var,
+             keep_power_factor, clamp_gens)
             for sid in batch_ids
         ]
-        
+
         try:
-            #TODO make surethe timeout does not limit the scenario run
-            # Use loky backend with timeout protection
+            # Execute batch in parallel with timeout protection
+            # TODO: Ensure timeout doesn't prematurely terminate long scenarios
             batch_out = Parallel(n_jobs=n_jobs, backend='loky', timeout=600)(
-                delayed(run_single_scenario_worker)(*args) for args in batch_args)
-            
-            # Update log
+                delayed(run_single_scenario_worker)(*args) for args in batch_args
+            )
+
+            # Update simulation log with results
             for sid, out in zip(batch_ids, batch_out):
                 simulation_log[sid] = {**scenarios_metadata[sid], **out}
-            
+
         except Exception as e:
-            print(f"Batch {batch_idx + 1} failed: {str(e)}")
-            # Mark failed scenarios
+            print(f"Batch {batch_idx + 1} failed with error: {e}")
+            traceback.print_exc()
+
+            # Mark all scenarios in failed batch
             for sid in batch_ids:
                 if sid not in simulation_log:
                     simulation_log[sid] = {
@@ -249,12 +1048,12 @@ def run_simulation_driver_batched(
                         "diverged": True,
                         "error": f"Batch failure: {str(e)}"
                     }
-        
-        # Save progress
+
+        # Save progress after each batch
         with open("simulation_log.json", "w") as f:
             json.dump(simulation_log, f, indent=4)
-        
-        # Checkpoint periodically
+
+        # Periodic checkpointing
         if (batch_idx + 1) % checkpoint_interval == 0:
             with open(checkpoint_file, "w") as f:
                 json.dump({
@@ -262,29 +1061,49 @@ def run_simulation_driver_batched(
                     "simulation_log": simulation_log
                 }, f, indent=4)
             print(f"Checkpoint saved at batch {batch_idx + 1}")
-        
+
         # Force garbage collection between batches
         gc.collect()
-    
-    # Clean up checkpoint on completion
+
+    # Clean up checkpoint file on successful completion
     if os.path.exists(checkpoint_file):
         os.remove(checkpoint_file)
-    
+
     return simulation_log
 
 
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
 def main():
+    """
+    Main entry point for scenario generation.
+
+    Configures and runs a complete simulation campaign for the specified
+    power grid model.
+    """
+    # -------------------------------------------------------------------------
+    # Model Selection
+    # -------------------------------------------------------------------------
     PowerGridModel = "IEEE-9"
-    
-    # Scenario sampling configuration
-    SAMPLES_PER_FAULT_LOCATION = 5     # Samples per fault location
-    FAULT_IMPEDANCES = [0.00001]         # Fault impedance values [p.u]
-    
-    # ADJUSTED PARAMETERS FOR STABILITY
-    N_JOBS = 5                           
-    BATCH_SIZE = 10                       
-    CHECKPOINT_INTERVAL = 5              # Save checkpoint every 50 batches
-    
+
+    # -------------------------------------------------------------------------
+    # Scenario Sampling Configuration
+    # -------------------------------------------------------------------------
+    SAMPLES_PER_FAULT_LOCATION = 5   # Number of perturbation samples per fault
+    FAULT_IMPEDANCES = [0.00001]     # Fault impedance values [p.u.]
+
+    # -------------------------------------------------------------------------
+    # Execution Parameters
+    # -------------------------------------------------------------------------
+    N_JOBS = 5                       # Parallel workers
+    BATCH_SIZE = 10                  # Scenarios per batch
+    CHECKPOINT_INTERVAL = 5          # Checkpoint every N batches
+
+    # -------------------------------------------------------------------------
+    # Model-Specific Paths
+    # -------------------------------------------------------------------------
     if PowerGridModel == "IEEE-9":
         raw = "../data/ieee9_v33.raw"
         dyr = "../data/ieee9bus_gov.dyr"
@@ -303,10 +1122,10 @@ def main():
         n_bus = 500
     else:
         raise RuntimeError(f"{PowerGridModel} is an invalid model!")
-    
+
     fault_locations = list(range(0, n_bus))
-    
-    # Calculate total scenarios
+
+    # Print configuration summary
     total_scenarios = SAMPLES_PER_FAULT_LOCATION * len(fault_locations) * len(FAULT_IMPEDANCES)
     print(f"Configuration: {total_scenarios} total scenarios")
     print(f"  - {SAMPLES_PER_FAULT_LOCATION} noise samples per fault location")
@@ -314,22 +1133,49 @@ def main():
     print(f"  - {len(FAULT_IMPEDANCES)} fault impedances: {FAULT_IMPEDANCES}")
     print(f"  - N_JOBS: {N_JOBS}, BATCH_SIZE: {BATCH_SIZE}")
     print(f"  - Checkpoint interval: {CHECKPOINT_INTERVAL} batches")
-    
-    scenarios = sample_scenarios(
-        SAMPLES_PER_FAULT_LOCATION, fault_locations, FAULT_IMPEDANCES)
+
+    # Generate scenario definitions
+    scenarios = sample_scenarios(SAMPLES_PER_FAULT_LOCATION, fault_locations, FAULT_IMPEDANCES)
     metadata = generate_metadata(scenarios)
-    
-    # Noise settings
+
+    # -------------------------------------------------------------------------
+    # Perturbation Configuration
+    # -------------------------------------------------------------------------
+    # Global defaults (used if per-type values are None)
     noise_type = "normal"
     noise_var = 0.25
-    balance_generation = True
-    
+
+    # Optional separate settings for loads vs generators
+    load_noise_type = noise_type
+    load_noise_var = noise_var
+    gen_noise_type = noise_type
+    gen_noise_var = noise_var
+
+    # Power balance and limiting options
+    balance_generation = True    # Rebalance total Pg to match total Pl
+    perturb_loads = True         # Apply perturbations to loads
+    perturb_gens = True          # Apply perturbations to generators
+    keep_power_factor = True     # Maintain Q/P ratio where possible
+    clamp_gens = True            # Enforce Pg/Qg limits
+
+    # -------------------------------------------------------------------------
+    # Execute Simulation Campaign
+    # -------------------------------------------------------------------------
     run_simulation_driver_batched(
         raw, dyr, metadata,
         noise_type=noise_type, noise_var=noise_var,
         balance_generation=balance_generation,
         n_jobs=N_JOBS, batch_size=BATCH_SIZE,
-        checkpoint_interval=CHECKPOINT_INTERVAL)
+        checkpoint_interval=CHECKPOINT_INTERVAL,
+        perturb_loads=perturb_loads,
+        perturb_gens=perturb_gens,
+        load_noise_type=load_noise_type,
+        gen_noise_type=gen_noise_type,
+        load_noise_var=load_noise_var,
+        gen_noise_var=gen_noise_var,
+        keep_power_factor=keep_power_factor,
+        clamp_gens=clamp_gens
+    )
 
 
 if __name__ == "__main__":
