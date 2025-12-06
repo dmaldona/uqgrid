@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""
+r"""
 Transient Stability Index (TSI) Analysis for Power Grid Simulations.
 
 This module provides comprehensive tools for computing and analyzing the Transient
@@ -9,9 +9,9 @@ as faults.
 
 The TSI is computed based on generator rotor angle deviations (delta states):
 
-    TSI = (2π - Δ_max) / (2π + Δ_max) × 100
+    $$TSI = (2\pi - \Delta_max) / (2\pi + \Delta_max) x 100$$
 
-Where Δ_max is the maximum spread between generator rotor angles. A positive TSI
+Where $\Delta_max$ is the maximum spread between generator rotor angles. A positive TSI
 indicates stable operation, while a negative TSI indicates instability.
 
 Features
@@ -62,11 +62,21 @@ Dependencies
 
 Usage
 -----
-Command-line execution::
+Command-line execution with default settings (final TSI)::
 
     $ python TSI_analysis.py
 
-This will run the default pipeline which exports a probabilistic ML dataset.
+Use minimum TSI across all time steps::
+
+    $ python TSI_analysis.py --tsi-mode min
+
+Custom output path::
+
+    $ python TSI_analysis.py -o my_dataset.npz --tsi-mode min
+
+Show all CLI options::
+
+    $ python TSI_analysis.py --help
 
 Programmatic usage::
 
@@ -75,11 +85,12 @@ Programmatic usage::
     # Compute TSI for all scenarios
     post_data = ComputeTSI_fast()
 
-    # Export dataset for ML
+    # Export dataset for ML (using final TSI - default)
     result = export_probml_dataset(
         out_path="my_dataset.npz",
         require_complete_grid=False,
-        concat_generators_and_loads=True
+        concat_generators_and_loads=True,
+        tsi_mode="final"  # or "min" for minimum TSI over time
     )
 
 Performance Notes
@@ -1261,6 +1272,7 @@ def export_probml_dataset(
     concat_generators_and_loads: bool = True,
     return_X_flat: bool = True,
     verbose: bool = True,
+    tsi_mode: str = "final",
 ) -> Dict[str, Any]:
     """
     Build a dataset suitable for probabilistic ML models.
@@ -1287,6 +1299,14 @@ def export_probml_dataset(
         If True (and concat=True), also save flattened input array X_flat.
     verbose : bool, default=True
         Print detailed progress and summary information.
+    tsi_mode : str, default='final'
+        Method for extracting the scalar TSI value from the time series:
+        
+        - 'final': Use TSI at the last time step (default)
+        - 'min': Use minimum TSI across all time steps (most conservative)
+        
+        The 'min' mode captures the worst-case stability during the entire
+        simulation, while 'final' captures the steady-state stability.
 
     Returns
     -------
@@ -1312,12 +1332,12 @@ def export_probml_dataset(
         - X_load : float64 (N, 2, Nload) - load [Pl, Ql]
 
     Always saved:
-        - Y : float64 (N, F, Z) - TSI at last time step
+        - Y : float64 (N, F, Z) - TSI value (mode depends on tsi_mode parameter)
         - sample_idx : int (N,) - sample indices
         - fault_locations : int (F,) - fault bus numbers
         - fault_impedances : float64 (Z,) - impedance values
         - scenario_ids : object (N, F, Z) - scenario ID lookup
-        - meta : dict - metadata including array shapes and meanings
+        - meta : dict - metadata including array shapes, meanings, and tsi_mode
 
     Notes
     -----
@@ -1420,6 +1440,42 @@ def export_probml_dataset(
             return float(np.asarray(last).reshape(-1)[0])
         # If extra axes remain, average over them (fallback)
         return float(np.nanmean(last))
+
+    def _min_tsi(ts) -> float:
+        """
+        Extract minimum TSI value across all time steps.
+
+        This represents the worst-case stability during the simulation,
+        which is more conservative than using the final value.
+
+        Parameters
+        ----------
+        ts : array-like
+            TSI time series.
+
+        Returns
+        -------
+        float
+            Minimum TSI value across all time steps.
+        """
+        arr = np.asarray(ts)
+        return float(np.nanmin(arr))
+
+    # Select TSI extraction function based on mode
+    valid_tsi_modes = {"final", "min"}
+    if tsi_mode not in valid_tsi_modes:
+        raise ValueError(
+            f"Invalid tsi_mode '{tsi_mode}'. Must be one of: {valid_tsi_modes}"
+        )
+    
+    tsi_extractor = _last_tsi if tsi_mode == "final" else _min_tsi
+    tsi_mode_description = (
+        "TSI at last time step" if tsi_mode == "final" 
+        else "Minimum TSI across all time steps"
+    )
+    
+    if verbose:
+        print(f"  TSI extraction mode: '{tsi_mode}' ({tsi_mode_description})")
 
     # Get available scenarios (those with computed TSI)
     available_sids = set(tsi_ts_per_scenario.keys())
@@ -1536,7 +1592,7 @@ def export_probml_dataset(
             X_rows_gen.append(np.stack([pg_vec, qg_vec], axis=0))   # (2, Ngen)
             X_rows_load.append(np.stack([pl_vec, ql_vec], axis=0))  # (2, Nload)
 
-        # Build output array: TSI at last time step for each (floc, fz)
+        # Build output array: TSI for each (floc, fz) using selected mode
         Y = np.full((F, Z), np.nan, dtype=float)
         for i in range(F):
             for j in range(Z):
@@ -1544,7 +1600,7 @@ def export_probml_dataset(
                 if sid is None:
                     continue
                 tsi_ts = tsi_ts_per_scenario[sid]
-                Y[i, j] = _last_tsi(tsi_ts)
+                Y[i, j] = tsi_extractor(tsi_ts)
 
         Y_rows.append(Y)
         SID_grid_rows.append(sid_grid.copy())
@@ -1616,7 +1672,8 @@ def export_probml_dataset(
             "require_complete_grid": bool(require_complete_grid),
             "concat_generators_and_loads": bool(concat_generators_and_loads),
             "return_X_flat": bool(return_X_flat),
-            "meaning_Y": "TSI at last time step for each (fault_location, fault_impedance)",
+            "tsi_mode": tsi_mode,
+            "meaning_Y": f"{tsi_mode_description} for each (fault_location, fault_impedance)",
             "axes_Y": {"axis0": "fault_location", "axis1": "fault_impedance"},
         }], dtype=object),
     })
@@ -1658,32 +1715,115 @@ def export_probml_dataset(
 # Main Entry Point
 # =============================================================================
 
-if __name__ == "__main__":
+def main():
+    """
+    Main entry point for TSI analysis.
+
+    Supports command-line arguments for configuring the analysis.
+
+    Command-line Arguments
+    ----------------------
+    --output, -o : str
+        Output file path (default: tsi_probml_fullinputs.npz)
+    --tsi-mode : str
+        TSI extraction mode: 'final' (default) or 'min'
+    --require-complete-grid : flag
+        Only include samples with complete fault grids
+    --no-concat : flag
+        Save separate X_gen and X_load arrays instead of concatenated X
+    --no-flat : flag
+        Don't save flattened X_flat array
+
+    Examples
+    --------
+    Use final TSI (default)::
+
+        $ python TSI_analysis.py
+
+    Use minimum TSI across all time steps::
+
+        $ python TSI_analysis.py --tsi-mode min
+
+    Custom output path with minimum TSI::
+
+        $ python TSI_analysis.py -o my_dataset.npz --tsi-mode min
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="TSI Analysis - Compute and export Transient Stability Index datasets",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+TSI Modes:
+  final   Use TSI at the last time step (steady-state stability)
+  min     Use minimum TSI across all time steps (worst-case stability)
+
+Examples:
+  python TSI_analysis.py                          # Default: final TSI
+  python TSI_analysis.py --tsi-mode min           # Minimum TSI
+  python TSI_analysis.py -o output.npz --tsi-mode min
+        """
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default="tsi_probml_fullinputs.npz",
+        help="Output file path (default: tsi_probml_fullinputs.npz)"
+    )
+    parser.add_argument(
+        "--tsi-mode",
+        choices=["final", "min"],
+        default="final",
+        help="TSI extraction mode: 'final' (last time step) or 'min' (minimum over time)"
+    )
+    parser.add_argument(
+        "--require-complete-grid",
+        action="store_true",
+        help="Only include samples where all fault combinations converged"
+    )
+    parser.add_argument(
+        "--no-concat",
+        action="store_true",
+        help="Save separate X_gen and X_load arrays instead of concatenated X"
+    )
+    parser.add_argument(
+        "--no-flat",
+        action="store_true",
+        help="Don't save flattened X_flat array"
+    )
+    parser.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Reduce output verbosity"
+    )
+
+    args = parser.parse_args()
+
     print("\n" + "=" * 70)
     print("TSI ANALYSIS - STARTING")
     print("=" * 70)
+    print(f"  Output file: {args.output}")
+    print(f"  TSI mode: {args.tsi_mode}")
+    print(f"  Require complete grid: {args.require_complete_grid}")
+    print(f"  Concatenate gen/load: {not args.no_concat}")
+    print(f"  Return X_flat: {not args.no_flat}")
+    print("=" * 70)
+    
     overall_start = time.time()
 
-    # Example usage options (uncomment as needed):
-    # 
-    # Option 1: Extract and plot generator speed deviations
-    # example_gen1_speed_deviation()
-    #
-    # Option 2: Compute TSI and create MATLAB training samples
-    # post_data = ComputeTSI()
-    # create_training_samples(post_data)
-    #
-    # Option 3: Export probabilistic ML dataset (default)
-
     ret = export_probml_dataset(
-        out_path="tsi_probml_fullinputs.npz",
-        require_complete_grid=False,       # Include samples with missing fault combos
-        concat_generators_and_loads=True,  # X shape: (N, 2, Ngen+Nload)
-        return_X_flat=True,                # Also save X_flat: (N, 2*(Ngen+Nload))
-        verbose=True
+        out_path=args.output,
+        require_complete_grid=args.require_complete_grid,
+        concat_generators_and_loads=not args.no_concat,
+        return_X_flat=not args.no_flat,
+        verbose=not args.quiet,
+        tsi_mode=args.tsi_mode,
     )
 
     print("\n" + "=" * 70)
     print(f"TSI ANALYSIS - COMPLETE")
     print(f"Total runtime: {format_time(time.time() - overall_start)}")
     print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()
