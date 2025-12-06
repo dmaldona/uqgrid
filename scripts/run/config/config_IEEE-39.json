@@ -1,0 +1,29 @@
+{
+    "model": {
+        "name": "IEEE-39",
+        "raw": "../data/IEEE39_v33.raw",
+        "dyr": "../data/IEEE39_gov.dyr",
+        "n_bus": 39
+    },
+    "scenarios": {
+        "samples_per_fault_location": 5,
+        "fault_impedances": [0.00001],
+        "fault_locations": "all"
+    },
+    "execution": {
+        "n_jobs": 5,
+        "batch_size": 10,
+        "checkpoint_interval": 5
+    },
+    "perturbation": {
+        "load_noise_type": "normal",
+        "load_noise_var": 0.25,
+        "gen_noise_type": "normal",
+        "gen_noise_var": 0.25,
+        "balance_generation": true,
+        "perturb_loads": true,
+        "perturb_gens": true,
+        "keep_power_factor": true,
+        "clamp_gens": true
+    }
+}
