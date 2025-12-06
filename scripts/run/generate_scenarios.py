@@ -119,9 +119,17 @@ when running parallel simulations:
 
 Usage
 -----
-Command-line execution::
+Command-line execution with a configuration file::
 
-    $ python gs.py
+    $ python generate_scenarios.py config/config_IEEE-9.json
+
+Generate default configuration files for all models::
+
+    $ python generate_scenarios.py --generate-configs
+
+Run with default IEEE-9 configuration::
+
+    $ python generate_scenarios.py
 
 Programmatic usage::
 
@@ -1073,100 +1081,407 @@ def run_simulation_driver_batched(
 
 
 # =============================================================================
+# Configuration Loading
+# =============================================================================
+
+def load_config(config_path: str) -> dict:
+    """
+    Load simulation configuration from a JSON file.
+
+    Parameters
+    ----------
+    config_path : str
+        Path to the JSON configuration file.
+
+    Returns
+    -------
+    dict
+        Configuration dictionary with the following structure:
+
+        - model: Model configuration (raw, dyr, n_bus paths)
+        - scenarios: Scenario sampling parameters
+        - execution: Parallel execution parameters
+        - perturbation: Noise and perturbation settings
+
+    Raises
+    ------
+    FileNotFoundError
+        If the configuration file does not exist.
+    json.JSONDecodeError
+        If the configuration file is not valid JSON.
+
+    Examples
+    --------
+    >>> config = load_config("config_IEEE9.json")
+    >>> print(config["model"]["n_bus"])
+    9
+    """
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+    with open(config_path, "r") as f:
+        config = json.load(f)
+
+    print(f"Loaded configuration from: {config_path}")
+    return config
+
+
+def get_default_config(model_name: str) -> dict:
+    """
+    Get the default configuration for a specified power grid model.
+
+    Parameters
+    ----------
+    model_name : str
+        Name of the power grid model. Supported values:
+        'IEEE-9', 'IEEE-39', 'ACTIVSg200', 'ACTIVSg500'
+
+    Returns
+    -------
+    dict
+        Default configuration dictionary for the specified model.
+
+    Raises
+    ------
+    ValueError
+        If the model name is not recognized.
+
+    Notes
+    -----
+    The returned configuration includes:
+
+    - Model paths (raw, dyr files) and bus count
+    - Default scenario sampling parameters
+    - Default execution parameters (n_jobs, batch_size)
+    - Default perturbation settings (noise type, variance, flags)
+    """
+    # Model-specific paths and bus counts
+    model_configs = {
+        "IEEE-9": {
+            "raw": "../data/ieee9_v33.raw",
+            "dyr": "../data/ieee9bus_gov.dyr",
+            "n_bus": 9
+        },
+        "IEEE-39": {
+            "raw": "data/IEEE39_v33.raw",
+            "dyr": "data/IEEE39_gov.dyr",
+            "n_bus": 39
+        },
+        "ACTIVSg200": {
+            "raw": "data/ACTIVSg200.raw",
+            "dyr": "data/ACTIVSg200.dyr",
+            "n_bus": 200
+        },
+        "ACTIVSg500": {
+            "raw": "data/ACTIVSg500.raw",
+            "dyr": "data/ACTIVSg500.dyr",
+            "n_bus": 500
+        }
+    }
+
+    if model_name not in model_configs:
+        raise ValueError(
+            f"Unknown model '{model_name}'. "
+            f"Supported models: {list(model_configs.keys())}"
+        )
+
+    model_info = model_configs[model_name]
+
+    config = {
+        # Model configuration
+        "model": {
+            "name": model_name,
+            "raw": model_info["raw"],
+            "dyr": model_info["dyr"],
+            "n_bus": model_info["n_bus"]
+        },
+
+        # Scenario sampling configuration
+        "scenarios": {
+            "samples_per_fault_location": 5,
+            "fault_impedances": [0.00001],
+            "fault_locations": "all"  # "all" means list(range(n_bus)), or specify list
+        },
+
+        # Execution parameters
+        "execution": {
+            "n_jobs": 5,
+            "batch_size": 10,
+            "checkpoint_interval": 5
+        },
+
+        # Perturbation configuration
+        "perturbation": {
+            # Noise settings for loads
+            "load_noise_type": "normal",
+            "load_noise_var": 0.25,
+
+            # Noise settings for generators
+            "gen_noise_type": "normal",
+            "gen_noise_var": 0.25,
+
+            # Control flags
+            "balance_generation": True,
+            "perturb_loads": True,
+            "perturb_gens": True,
+            "keep_power_factor": True,
+            "clamp_gens": True
+        }
+    }
+
+    return config
+
+
+def save_config(config: dict, config_path: str) -> None:
+    """
+    Save a configuration dictionary to a JSON file.
+
+    Parameters
+    ----------
+    config : dict
+        Configuration dictionary to save.
+    config_path : str
+        Output path for the JSON file.
+    """
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=4)
+    print(f"Configuration saved to: {config_path}")
+
+
+def generate_default_configs(output_dir: str = ".") -> None:
+    """
+    Generate default configuration files for all supported models.
+
+    Creates JSON configuration files for IEEE-9, IEEE-39, ACTIVSg200,
+    and ACTIVSg500 models in the specified output directory.
+
+    Parameters
+    ----------
+    output_dir : str, default='.'
+        Directory where configuration files will be saved.
+
+    Side Effects
+    ------------
+    Creates the following files:
+        - config_IEEE-9.json
+        - config_IEEE-39.json
+        - config_ACTIVSg200.json
+        - config_ACTIVSg500.json
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    models = ["IEEE-9", "IEEE-39", "ACTIVSg200", "ACTIVSg500"]
+
+    for model_name in models:
+        config = get_default_config(model_name)
+        config_path = os.path.join(output_dir, f"config_{model_name}.json")
+        save_config(config, config_path)
+
+    print(f"\nGenerated {len(models)} configuration files in: {output_dir}")
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
-def main():
+def main(config_path: str = None):
     """
     Main entry point for scenario generation.
 
-    Configures and runs a complete simulation campaign for the specified
-    power grid model.
+    Loads configuration from a JSON file and runs a complete simulation
+    campaign for the specified power grid model.
+
+    Parameters
+    ----------
+    config_path : str, optional
+        Path to the JSON configuration file. If not provided, looks for
+        a config file specified via command-line argument, or uses the
+        default IEEE-9 configuration.
+
+    Configuration File Structure
+    ----------------------------
+    The JSON configuration file should have the following structure::
+
+        {
+            "model": {
+                "name": "IEEE-9",
+                "raw": "path/to/model.raw",
+                "dyr": "path/to/model.dyr",
+                "n_bus": 9
+            },
+            "scenarios": {
+                "samples_per_fault_location": 5,
+                "fault_impedances": [0.00001],
+                "fault_locations": "all"  // or [0, 1, 2, ...]
+            },
+            "execution": {
+                "n_jobs": 5,
+                "batch_size": 10,
+                "checkpoint_interval": 5
+            },
+            "perturbation": {
+                "load_noise_type": "normal",
+                "load_noise_var": 0.25,
+                "gen_noise_type": "normal",
+                "gen_noise_var": 0.25,
+                "balance_generation": true,
+                "perturb_loads": true,
+                "perturb_gens": true,
+                "keep_power_factor": true,
+                "clamp_gens": true
+            }
+        }
+
+    Examples
+    --------
+    Run with a specific configuration file::
+
+        $ python generate_scenarios.py config_IEEE-9.json
+
+    Generate default configuration files::
+
+        $ python generate_scenarios.py --generate-configs
+
+    Run with default IEEE-9 configuration::
+
+        $ python generate_scenarios.py
     """
-    # -------------------------------------------------------------------------
-    # Model Selection
-    # -------------------------------------------------------------------------
-    PowerGridModel = "IEEE-9"
+    import argparse
 
-    # -------------------------------------------------------------------------
-    # Scenario Sampling Configuration
-    # -------------------------------------------------------------------------
-    SAMPLES_PER_FAULT_LOCATION = 5   # Number of perturbation samples per fault
-    FAULT_IMPEDANCES = [0.00001]     # Fault impedance values [p.u.]
+    parser = argparse.ArgumentParser(
+        description="Power Grid Scenario Generation with Perturbation and Simulation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python generate_scenarios.py config_IEEE-9.json    Run with config file
+  python generate_scenarios.py --generate-configs    Generate default configs
+  python generate_scenarios.py                       Run with default IEEE-9 config
+        """
+    )
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default=None,
+        help="Path to JSON configuration file"
+    )
+    parser.add_argument(
+        "--generate-configs",
+        action="store_true",
+        help="Generate default configuration files for all models and exit"
+    )
+    parser.add_argument(
+        "--config-dir",
+        default=".",
+        help="Output directory for generated config files (default: current directory)"
+    )
 
-    # -------------------------------------------------------------------------
-    # Execution Parameters
-    # -------------------------------------------------------------------------
-    N_JOBS = 5                       # Parallel workers
-    BATCH_SIZE = 10                  # Scenarios per batch
-    CHECKPOINT_INTERVAL = 5          # Checkpoint every N batches
+    args = parser.parse_args()
 
-    # -------------------------------------------------------------------------
-    # Model-Specific Paths
-    # -------------------------------------------------------------------------
-    if PowerGridModel == "IEEE-9":
-        raw = "../data/ieee9_v33.raw"
-        dyr = "../data/ieee9bus_gov.dyr"
-        n_bus = 9
-    elif PowerGridModel == "IEEE-39":
-        raw = "data/IEEE39_v33.raw"
-        dyr = "data/IEEE39_gov.dyr"
-        n_bus = 39
-    elif PowerGridModel == "ACTIVSg200":
-        raw = "data/ACTIVSg200.raw"
-        dyr = "data/ACTIVSg200.dyr"
-        n_bus = 200
-    elif PowerGridModel == "ACTIVSg500":
-        raw = "data/ACTIVSg500.raw"
-        dyr = "data/ACTIVSg500.dyr"
-        n_bus = 500
+    # Handle config generation mode
+    if args.generate_configs:
+        generate_default_configs(args.config_dir)
+        return
+
+    # Load configuration
+    if args.config is not None:
+        config = load_config(args.config)
+    elif config_path is not None:
+        config = load_config(config_path)
     else:
-        raise RuntimeError(f"{PowerGridModel} is an invalid model!")
+        print("No configuration file specified. Using default IEEE-9 configuration.")
+        config = get_default_config("IEEE-9")
 
-    fault_locations = list(range(0, n_bus))
+    # -------------------------------------------------------------------------
+    # Extract configuration values
+    # -------------------------------------------------------------------------
 
+    # Model configuration
+    model_cfg = config["model"]
+    raw = model_cfg["raw"]
+    dyr = model_cfg["dyr"]
+    n_bus = model_cfg["n_bus"]
+
+    # Scenario configuration
+    scenario_cfg = config["scenarios"]
+    samples_per_fault = scenario_cfg["samples_per_fault_location"]
+    fault_impedances = scenario_cfg["fault_impedances"]
+
+    # Handle fault_locations: "all" means all buses, otherwise use the list
+    fault_locations_cfg = scenario_cfg["fault_locations"]
+    if fault_locations_cfg == "all":
+        fault_locations = list(range(n_bus))
+    else:
+        fault_locations = fault_locations_cfg
+
+    # Execution configuration
+    exec_cfg = config["execution"]
+    n_jobs = exec_cfg["n_jobs"]
+    batch_size = exec_cfg["batch_size"]
+    checkpoint_interval = exec_cfg["checkpoint_interval"]
+
+    # Perturbation configuration
+    pert_cfg = config["perturbation"]
+    load_noise_type = pert_cfg["load_noise_type"]
+    load_noise_var = pert_cfg["load_noise_var"]
+    gen_noise_type = pert_cfg["gen_noise_type"]
+    gen_noise_var = pert_cfg["gen_noise_var"]
+    balance_generation = pert_cfg["balance_generation"]
+    perturb_loads = pert_cfg["perturb_loads"]
+    perturb_gens = pert_cfg["perturb_gens"]
+    keep_power_factor = pert_cfg["keep_power_factor"]
+    clamp_gens = pert_cfg["clamp_gens"]
+
+    # -------------------------------------------------------------------------
     # Print configuration summary
-    total_scenarios = SAMPLES_PER_FAULT_LOCATION * len(fault_locations) * len(FAULT_IMPEDANCES)
-    print(f"Configuration: {total_scenarios} total scenarios")
-    print(f"  - {SAMPLES_PER_FAULT_LOCATION} noise samples per fault location")
-    print(f"  - {len(fault_locations)} fault locations.")
-    print(f"  - {len(FAULT_IMPEDANCES)} fault impedances: {FAULT_IMPEDANCES}")
-    print(f"  - N_JOBS: {N_JOBS}, BATCH_SIZE: {BATCH_SIZE}")
-    print(f"  - Checkpoint interval: {CHECKPOINT_INTERVAL} batches")
+    # -------------------------------------------------------------------------
+    total_scenarios = samples_per_fault * len(fault_locations) * len(fault_impedances)
 
+    print("\n" + "=" * 60)
+    print("SIMULATION CONFIGURATION")
+    print("=" * 60)
+    print(f"Model: {model_cfg.get('name', 'Unknown')}")
+    print(f"  - RAW file: {raw}")
+    print(f"  - DYR file: {dyr}")
+    print(f"  - Buses: {n_bus}")
+    print()
+    print(f"Scenarios: {total_scenarios:,} total")
+    print(f"  - Samples per fault location: {samples_per_fault}")
+    print(f"  - Fault locations: {len(fault_locations)}")
+    print(f"  - Fault impedances: {fault_impedances}")
+    print()
+    print(f"Execution:")
+    print(f"  - Parallel jobs: {n_jobs}")
+    print(f"  - Batch size: {batch_size}")
+    print(f"  - Checkpoint interval: {checkpoint_interval} batches")
+    print()
+    print(f"Perturbation:")
+    print(f"  - Load noise: {load_noise_type} (var={load_noise_var})")
+    print(f"  - Gen noise: {gen_noise_type} (var={gen_noise_var})")
+    print(f"  - Balance generation: {balance_generation}")
+    print(f"  - Perturb loads: {perturb_loads}")
+    print(f"  - Perturb generators: {perturb_gens}")
+    print(f"  - Keep power factor: {keep_power_factor}")
+    print(f"  - Clamp generators: {clamp_gens}")
+    print("=" * 60 + "\n")
+
+    # -------------------------------------------------------------------------
     # Generate scenario definitions
-    scenarios = sample_scenarios(SAMPLES_PER_FAULT_LOCATION, fault_locations, FAULT_IMPEDANCES)
+    # -------------------------------------------------------------------------
+    scenarios = sample_scenarios(samples_per_fault, fault_locations, fault_impedances)
     metadata = generate_metadata(scenarios)
-
-    # -------------------------------------------------------------------------
-    # Perturbation Configuration
-    # -------------------------------------------------------------------------
-    # Global defaults (used if per-type values are None)
-    noise_type = "normal"
-    noise_var = 0.25
-
-    # Optional separate settings for loads vs generators
-    load_noise_type = noise_type
-    load_noise_var = noise_var
-    gen_noise_type = noise_type
-    gen_noise_var = noise_var
-
-    # Power balance and limiting options
-    balance_generation = True    # Rebalance total Pg to match total Pl
-    perturb_loads = True         # Apply perturbations to loads
-    perturb_gens = True          # Apply perturbations to generators
-    keep_power_factor = True     # Maintain Q/P ratio where possible
-    clamp_gens = True            # Enforce Pg/Qg limits
 
     # -------------------------------------------------------------------------
     # Execute Simulation Campaign
     # -------------------------------------------------------------------------
+    # Use the more general noise_type/noise_var as fallback (set to load values)
     run_simulation_driver_batched(
         raw, dyr, metadata,
-        noise_type=noise_type, noise_var=noise_var,
+        noise_type=load_noise_type,
+        noise_var=load_noise_var,
         balance_generation=balance_generation,
-        n_jobs=N_JOBS, batch_size=BATCH_SIZE,
-        checkpoint_interval=CHECKPOINT_INTERVAL,
+        n_jobs=n_jobs,
+        batch_size=batch_size,
+        checkpoint_interval=checkpoint_interval,
         perturb_loads=perturb_loads,
         perturb_gens=perturb_gens,
         load_noise_type=load_noise_type,
