@@ -131,6 +131,14 @@ Run with default IEEE-9 configuration::
 
     $ python generate_scenarios.py
 
+Continue from existing simulation, adding more samples::
+
+    $ python generate_scenarios.py config.json --continue --additional-samples 10
+
+This will load existing scenario_metadata.json and simulation_log.json,
+then generate 10 additional samples per fault location, starting from
+sample_idx = max_existing + 1. Results are merged with existing data.
+
 Programmatic usage::
 
     from gs import (
@@ -895,7 +903,8 @@ def run_simulation_driver_batched(
         load_noise_var=None,
         gen_noise_var=None,
         keep_power_factor=True,
-        clamp_gens=True):
+        clamp_gens=True,
+        existing_log=None):
     """
     Batched simulation driver with checkpointing and error handling.
 
@@ -939,6 +948,10 @@ def run_simulation_driver_batched(
         Maintain power factor when perturbing.
     clamp_gens : bool, default=True
         Enforce generator limits.
+    existing_log : dict, optional
+        Existing simulation log to merge results into. Used for continuation
+        mode (--continue) to append new scenarios to previous runs. If None,
+        starts with an empty log.
 
     Returns
     -------
@@ -974,7 +987,9 @@ def run_simulation_driver_batched(
     run_single_scenario_worker : Worker function for individual scenarios
     """
     scenario_ids = list(scenarios_metadata.keys())
-    simulation_log = {}
+    
+    # Initialize log, optionally starting from existing data (for --continue mode)
+    simulation_log = dict(existing_log) if existing_log else {}
 
     # Load checkpoint if it exists (for resuming interrupted runs)
     checkpoint_file = "simulation_checkpoint.json"
@@ -1281,6 +1296,110 @@ def generate_default_configs(output_dir: str = ".") -> None:
 
 
 # =============================================================================
+# Continuation Support
+# =============================================================================
+
+def load_existing_state(metadata_file="scenario_metadata.json", 
+                        log_file="simulation_log.json"):
+    """
+    Load existing simulation state for continuation mode.
+
+    Reads existing metadata and simulation log files to enable adding
+    new samples to a previous simulation run.
+
+    Parameters
+    ----------
+    metadata_file : str, default='scenario_metadata.json'
+        Path to existing scenario metadata file.
+    log_file : str, default='simulation_log.json'
+        Path to existing simulation log file.
+
+    Returns
+    -------
+    tuple of (dict, dict, int)
+        - existing_metadata : dict
+            Previously generated scenario metadata (empty if file not found).
+        - existing_log : dict
+            Previous simulation results (empty if file not found).
+        - max_sample_idx : int
+            Highest sample_idx in existing data (-1 if no existing data).
+
+    Notes
+    -----
+    This function is used by the --continue CLI option to determine where
+    to start numbering new samples and to merge results with existing data.
+    """
+    existing_metadata = {}
+    existing_log = {}
+    max_sample_idx = -1
+
+    if os.path.exists(metadata_file):
+        with open(metadata_file, 'r') as f:
+            existing_metadata = json.load(f)
+        # Find the highest sample_idx to continue from
+        for scenario in existing_metadata.values():
+            idx = scenario.get('sample_idx', -1)
+            max_sample_idx = max(max_sample_idx, idx)
+        print(f"Loaded existing metadata: {len(existing_metadata):,} scenarios, "
+              f"max sample_idx={max_sample_idx}")
+
+    if os.path.exists(log_file):
+        with open(log_file, 'r') as f:
+            existing_log = json.load(f)
+        print(f"Loaded existing log: {len(existing_log):,} entries")
+
+    return existing_metadata, existing_log, max_sample_idx
+
+
+def generate_metadata_continued(scenarios, existing_metadata=None,
+                                metadata_file="scenario_metadata.json"):
+    """
+    Generate metadata for new scenarios and merge with existing metadata.
+
+    Creates unique identifiers for new scenarios and optionally merges
+    them with existing metadata from a previous run.
+
+    Parameters
+    ----------
+    scenarios : list of tuple
+        List of (sample_idx, fault_location, fault_impedance) tuples
+        from :func:`sample_scenarios`.
+    existing_metadata : dict, optional
+        Existing metadata to merge with. If None, starts fresh.
+    metadata_file : str, default='scenario_metadata.json'
+        Output path for the merged metadata file.
+
+    Returns
+    -------
+    dict
+        Dictionary mapping scenario UUIDs to parameter dictionaries,
+        including both existing and new scenarios.
+
+    Side Effects
+    ------------
+    Creates or overwrites the metadata file with merged metadata.
+    """
+    # Start with existing metadata if provided
+    metadata = dict(existing_metadata) if existing_metadata else {}
+    new_count = 0
+
+    for sample_idx, floc, fz in scenarios:
+        sid = str(uuid.uuid4())
+        metadata[sid] = {
+            "sample_idx": sample_idx,
+            "fault_location": floc,
+            "fault_impedance": fz,
+        }
+        new_count += 1
+
+    with open(metadata_file, "w") as f:
+        json.dump(metadata, f, indent=4)
+
+    print(f"Generated {new_count:,} new scenarios (total: {len(metadata):,})")
+    return metadata
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
@@ -1356,6 +1475,8 @@ Examples:
   python generate_scenarios.py config_IEEE-9.json    Run with config file
   python generate_scenarios.py --generate-configs    Generate default configs
   python generate_scenarios.py                       Run with default IEEE-9 config
+  python generate_scenarios.py config.json --continue --additional-samples 10
+                                                     Add 10 more samples to existing run
         """
     )
     parser.add_argument(
@@ -1374,6 +1495,18 @@ Examples:
         default=".",
         help="Output directory for generated config files (default: current directory)"
     )
+    parser.add_argument(
+        "--continue",
+        dest="continue_run",
+        action="store_true",
+        help="Continue from existing simulation, adding more samples"
+    )
+    parser.add_argument(
+        "--additional-samples",
+        type=int,
+        default=None,
+        help="Number of additional samples per fault location (required with --continue)"
+    )
 
     args = parser.parse_args()
 
@@ -1381,6 +1514,10 @@ Examples:
     if args.generate_configs:
         generate_default_configs(args.config_dir)
         return
+
+    # Validate continuation mode arguments
+    if args.continue_run and args.additional_samples is None:
+        parser.error("--continue requires --additional-samples")
 
     # Load configuration
     if args.config is not None:
@@ -1444,7 +1581,27 @@ Examples:
     print(f"  - DYR file: {dyr}")
     print(f"  - Buses: {n_bus}")
     print()
-    print(f"Scenarios: {total_scenarios:,} total")
+    
+    # Handle continuation mode
+    existing_metadata = {}
+    existing_log = {}
+    sample_idx_offset = 0
+    
+    if args.continue_run:
+        print("=" * 60)
+        print("CONTINUATION MODE")
+        print("=" * 60)
+        existing_metadata, existing_log, max_sample_idx = load_existing_state()
+        sample_idx_offset = max_sample_idx + 1
+        samples_per_fault = args.additional_samples
+        total_scenarios = samples_per_fault * len(fault_locations) * len(fault_impedances)
+        print(f"  - Starting sample_idx from: {sample_idx_offset}")
+        print(f"  - Additional samples per fault: {samples_per_fault}")
+        print(f"  - New scenarios to generate: {total_scenarios:,}")
+        print(f"  - Total scenarios after: {len(existing_metadata) + total_scenarios:,}")
+        print()
+    
+    print(f"Scenarios: {total_scenarios:,} {'new' if args.continue_run else 'total'}")
     print(f"  - Samples per fault location: {samples_per_fault}")
     print(f"  - Fault locations: {len(fault_locations)}")
     print(f"  - Fault impedances: {fault_impedances}")
@@ -1467,15 +1624,26 @@ Examples:
     # -------------------------------------------------------------------------
     # Generate scenario definitions
     # -------------------------------------------------------------------------
-    scenarios = sample_scenarios(samples_per_fault, fault_locations, fault_impedances)
-    metadata = generate_metadata(scenarios)
+    # Generate sample indices with offset for continuation mode
+    sample_indices = range(sample_idx_offset, sample_idx_offset + samples_per_fault)
+    scenarios = list(itertools.product(sample_indices, fault_locations, fault_impedances))
+    
+    # Generate metadata (merged with existing if continuing)
+    if args.continue_run:
+        metadata = generate_metadata_continued(scenarios, existing_metadata)
+        # Extract only the NEW scenario metadata for simulation
+        new_scenario_ids = set(metadata.keys()) - set(existing_metadata.keys())
+        new_metadata = {sid: metadata[sid] for sid in new_scenario_ids}
+    else:
+        metadata = generate_metadata(scenarios)
+        new_metadata = metadata
 
     # -------------------------------------------------------------------------
     # Execute Simulation Campaign
     # -------------------------------------------------------------------------
     # Use the more general noise_type/noise_var as fallback (set to load values)
     run_simulation_driver_batched(
-        raw, dyr, metadata,
+        raw, dyr, new_metadata,
         noise_type=load_noise_type,
         noise_var=load_noise_var,
         balance_generation=balance_generation,
@@ -1489,7 +1657,8 @@ Examples:
         load_noise_var=load_noise_var,
         gen_noise_var=gen_noise_var,
         keep_power_factor=keep_power_factor,
-        clamp_gens=clamp_gens
+        clamp_gens=clamp_gens,
+        existing_log=existing_log if args.continue_run else None
     )
 
 
