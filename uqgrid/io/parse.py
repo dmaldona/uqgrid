@@ -186,7 +186,7 @@ def load_psse(raw_filename):
     # Downgrade PV buses to PQ only if they have no active generators
     for (bus, idx) in psys.inactive_gens:
         if bus not in buses_with_active_gens and psys.buses[bus].type == 2:
-            psys.buses[bus].type = 3
+            psys.buses[bus].type = 1
 
     # add loads
     for i in range(nloads):
