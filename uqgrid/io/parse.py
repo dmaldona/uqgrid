@@ -18,6 +18,9 @@ def load_psse(raw_filename):
     
     baseMVA = case.baseMVA
     psys = Psystem(basemva=float(baseMVA))
+    
+    # Track inactive generators to skip their dynamic models in .dyr files
+    psys.inactive_gens = set()
 
     # add buses
     for i in range(nbus):
@@ -165,13 +168,25 @@ def load_psse(raw_filename):
                 0.0, tap=tap3, shift=tran.ANG3)
 
     # add generators
+    # First pass: track inactive generators and buses with active generators
+    buses_with_active_gens = set()
     for gen in case.gens:
         if gen.status == 0:
+            # Track inactive generator for .dyr parsing
+            bus = psse_to_int[int(gen.busn)]
+            idx = gen.name.strip().replace("'", "").strip()
+            psys.inactive_gens.add((bus, idx))
             continue
         bus = psse_to_int[int(gen.busn)]
+        buses_with_active_gens.add(bus)
         psys.add_gen(bus, gen.name, gen.pg, gen.qg, 
                      pgub=gen.pt, pglb=gen.pb, qgub=gen.qt, qglb=gen.qb,
                      mbase=gen.mbase)
+
+    # Downgrade PV buses to PQ only if they have no active generators
+    for (bus, idx) in psys.inactive_gens:
+        if bus not in buses_with_active_gens and psys.buses[bus].type == 2:
+            psys.buses[bus].type = 1
 
     # add loads
     for i in range(nloads):
@@ -298,7 +313,14 @@ def add_dyr(psys, dyr_filename, verbose=False):
 
         if 'GENROU' in device[1]:
             bus = psys.ext2int[int(device[0])]
-            idx = str(device[2])
+            idx = str(device[2]).strip().replace("'", "")
+            
+            # Skip dynamic models for inactive generators
+            if hasattr(psys, 'inactive_gens') and (bus, idx) in psys.inactive_gens:
+                if verbose:
+                    print("Skipping GENROU for inactive generator at bus %d, idx %s." % (int(device[0]), idx))
+                continue
+            
             T_d0p = float(device[3])
             T_d0dp = float(device[4])
             T_q0p = float(device[5])
