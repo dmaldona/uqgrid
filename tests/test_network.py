@@ -4,7 +4,7 @@ import os
 import pytest
 import numpy as np
 import scipy.io as sio
-from uqgrid.core.psydef import Psystem
+from uqgrid.core.psydef import Psystem, Bus
 from uqgrid.models.network import createYbusComplex
 from uqgrid.io.parse import load_matpower
 
@@ -34,9 +34,9 @@ def test_nine_bus_system(data_dir):
     psys = Psystem()
 
     # Add buses with respective types
-    psys.add_bus(1, bus_type=3)  # Slack bus
+    psys.add_bus(1, bus_type=Bus.SLACK)  # Slack bus
     for bus_id in range(2, 10):
-        psys.add_bus(bus_id, bus_type=2)  # PV buses
+        psys.add_bus(bus_id, bus_type=Bus.PV)  # PV buses
 
     # Set initial voltages (magnitude in p.u., angle in radians)
     initial_voltages = [
@@ -110,3 +110,37 @@ def test_nine_bus_from_matpower(data_dir):
         for j in range(psys.nbuses):
             test_flag = np.abs(ybus[i, j] - ybus_mat[i, j]) < EPS
             assert test_flag, f'Ymat entry ({i}, {j}) differs from test.'
+
+
+def test_bus_constants_values():
+    """Verify that Bus constants map to standard PSS/E integer codes."""
+    assert Bus.PQ == 1
+    assert Bus.PV == 2
+    assert Bus.SLACK == 3
+
+def test_psystem_bus_counters():
+    """Verify that Psystem correctly counts bus types when added."""
+    psys = Psystem()
+    
+    # Add 2 PQ buses
+    psys.add_bus(1, Bus.PQ)
+    psys.add_bus(2, Bus.PQ)
+    
+    # Add 3 PV buses
+    psys.add_bus(3, Bus.PV)
+    psys.add_bus(4, Bus.PV)
+    psys.add_bus(5, Bus.PV)
+    
+    # Add 1 Slack bus
+    psys.add_bus(6, Bus.SLACK)
+    
+    assert psys.npq == 2
+    assert psys.npv == 3
+    assert psys.nslack == 1
+    assert psys.nbuses == 6
+
+def test_add_bus_invalid_type():
+    """Verify that adding a bus with an invalid type raises ValueError."""
+    psys = Psystem()
+    with pytest.raises(ValueError):
+        psys.add_bus(1, 99)

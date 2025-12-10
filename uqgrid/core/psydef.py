@@ -15,8 +15,13 @@ class Bus(object):
 
         Attributes:
             n (int): bus number
-            type (int): bus type
+            type (int): bus type (Bus.PQ=1, Bus.PV=2, Bus.SLACK=3)
     """
+
+    # Bus type constants
+    PQ = 1
+    PV = 2
+    SLACK = 3
 
     _ids = count(0)
 
@@ -25,7 +30,7 @@ class Bus(object):
         self.i = next(
             self._ids
         )  # This id is sequentially created, for internal numbering
-        self.type = bus_type  # 1: PQ, 2:PV, 3:slack
+        self.type = bus_type  # Bus.PQ, Bus.PV, or Bus.SLACK
 
         # these can be set at a later time
         self.baseKV = -1
@@ -454,14 +459,14 @@ class Psystem:
         self.buses.append(Bus(n, bus_type))
         self.nbuses += 1
 
-        if bus_type == 3:
-            self.npq += 1
-        elif bus_type == 2:
-            self.npv += 1
-        elif bus_type == 1:
+        if bus_type == Bus.SLACK:
             self.nslack += 1
+        elif bus_type == Bus.PV:
+            self.npv += 1
+        elif bus_type == Bus.PQ:
+            self.npq += 1
         else:
-            raise ("Incorrect bus type found.")
+            raise ValueError(f"Incorrect bus type found: {bus_type}")
 
     def add_load(self, bus, tag, pload, qload):
         self.loads.append(Load(bus, tag, pload, qload, self.basemva))
@@ -564,7 +569,7 @@ class Psystem:
         """ register loads and generators connected to buses """
         for load in self.loads:
             bus = load.bus
-            self.buses[i].loads.append(load)
+            self.buses[bus].loads.append(load)
         """ for each bus with multiple loads, calculate weights """
         for bus in self.buses:
             if len(bus.loads) <= 1:
