@@ -6,7 +6,7 @@ try:
     from scipy.optimize._nonlin import nonlin_solve # For newer SciPy
 except ImportError:
     from scipy.optimize.nonlin import nonlin_solve # Fallback for older SciPy
-from uqgrid.core.psydef import Psystem
+from uqgrid.core.psydef import Psystem, Bus
 
 class PowerFlowSolution:
     def __init__(self, num_buses, num_gens):
@@ -314,9 +314,9 @@ def runpf(psys, verbose=False):
         Pinj[load.bus] -= load.pload
         Qinj[load.bus] += load.qload
 
-    nslack = np.sum(bus_type == 3)
-    nPV = np.sum(bus_type == 2)
-    nPQ = np.sum(bus_type == 1)
+    nslack = np.sum(bus_type == Bus.SLACK)
+    nPV = np.sum(bus_type == Bus.PV)
+    nPQ = np.sum(bus_type == Bus.PQ)
 
     if verbose: print("Solving power flow with nslack: %d, nPV: %d, nPQ: %d" % (
         nslack, nPV, nPQ))
@@ -324,12 +324,12 @@ def runpf(psys, verbose=False):
     x0 = np.zeros(2*nPQ + nPV)
 
     # indexing for PQ buses
-    PQ_bus = np.where(bus_type == 1, 1, 0)
+    PQ_bus = np.where(bus_type == Bus.PQ, 1, 0)
     PQ_idx = (np.where(PQ_bus == 1, np.cumsum(PQ_bus), PQ_bus) - 1)
 
     # indexing for PQ and PV buses
-    PQV_bus = (np.where(bus_type == 1, 1, 0) +
-        np.where(bus_type == 2, 1, 0))
+    PQV_bus = (np.where(bus_type == Bus.PQ, 1, 0) +
+        np.where(bus_type == Bus.PV, 1, 0))
     PQV_idx = (np.where(PQV_bus == 1, np.cumsum(PQV_bus), PQV_bus) - 1)
 
     # these index sets are used to build the x0 vector.
@@ -401,14 +401,14 @@ def runpf(psys, verbose=False):
             pf_solution.gen_qsch[gen_orig_idx] = psys.gens[gen_orig_idx].qsch
 
         ngen_on_bus = len(bus_to_gen[bus_idx_internal]) #
-        if bus_obj.type == 2: # PV bus
+        if bus_obj.type == Bus.PV: # PV bus
             if ngen_on_bus == 0: #
                 raise ValueError(f"PV bus {bus_obj.id} with no generator")
             q_to_dispatch = sgen_dispatch[2*bus_idx_internal + 1] / ngen_on_bus
             for gen_orig_idx in bus_to_gen[bus_idx_internal]:
                 # Psch is fixed from input for PV bus gens (already set above)
                 pf_solution.gen_qsch[gen_orig_idx] = q_to_dispatch
-        elif bus_obj.type == 3: # Slack bus
+        elif bus_obj.type == Bus.SLACK: # Slack bus
             if ngen_on_bus == 0:
                 raise ValueError(f"Slack bus {bus_obj.id} with no generator")
             p_to_dispatch = sgen_dispatch[2*bus_idx_internal] / ngen_on_bus

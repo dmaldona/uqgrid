@@ -1,4 +1,4 @@
-from uqgrid.core.psydef import Psystem
+from uqgrid.core.psydef import Psystem, Bus
 from uqgrid.models import GenGENROU, ExcESDC1A, GovIEESGO
 from uqgrid.models.cim5_imp import MotCIM5
 from uqgrid.io.parse_psse import read_raw
@@ -185,8 +185,8 @@ def load_psse(raw_filename):
 
     # Downgrade PV buses to PQ only if they have no active generators
     for (bus, idx) in psys.inactive_gens:
-        if bus not in buses_with_active_gens and psys.buses[bus].type == 2:
-            psys.buses[bus].type = 1
+        if bus not in buses_with_active_gens and psys.buses[bus].type == Bus.PV:
+            psys.buses[bus].type = Bus.PQ
 
     # add loads
     for i in range(nloads):
