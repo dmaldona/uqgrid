@@ -632,7 +632,8 @@ def run_single_scenario_worker(
         load_noise_var=None,
         gen_noise_var=None,
         keep_power_factor=True,
-        clamp_gens=True):
+        clamp_gens=True,
+        integration_config=None):
     r"""
     Worker function for single-scenario simulation.
 
@@ -677,6 +678,17 @@ def run_single_scenario_worker(
         If True, adjust Q to maintain original Q/P ratio when perturbing.
     clamp_gens : bool, default=True
         If True, clamp generator P and Q to their operational limits.
+    integration_config : dict, optional
+        Integration parameters for the dynamic simulation. If None, uses
+        default values. Supported keys:
+
+        - 'tend': Simulation end time in seconds (default: 10.0)
+        - 'dt': Time step in seconds (default: 1/120.0)
+        - 'power_injection': Use power injection model (default: False)
+        - 'ton': Fault onset time in seconds (default: 0.25)
+        - 'toff': Fault clearing time in seconds (default: 0.4)
+        - 'verbose': Enable verbose output (default: False)
+        - 'petsc': Use PETSc solver (default: True)
 
     Returns
     -------
@@ -833,14 +845,15 @@ def run_single_scenario_worker(
         psys.createYbusComplex()
 
         # Configure integration parameters
+        int_cfg = integration_config or {}
         cfg = IntegrationConfig(
-            tend=10.0,           # Simulation end time [s]
-            dt=1/120.0,          # Time step [s]
-            power_injection=False,
-            ton=0.25,            # Fault onset time [s]
-            toff=0.4,            # Fault clearing time [s]
-            verbose=False,
-            petsc=True
+            tend=int_cfg.get('tend', 10.0),           # Simulation end time [s]
+            dt=int_cfg.get('dt', 1/120.0),            # Time step [s]
+            power_injection=int_cfg.get('power_injection', False),
+            ton=int_cfg.get('ton', 0.25),             # Fault onset time [s]
+            toff=int_cfg.get('toff', 0.4),            # Fault clearing time [s]
+            verbose=int_cfg.get('verbose', False),
+            petsc=int_cfg.get('petsc', True)
         )
 
         try:
@@ -901,7 +914,8 @@ def run_simulation_driver_batched(
         gen_noise_var=None,
         keep_power_factor=True,
         clamp_gens=True,
-        existing_log=None):
+        existing_log=None,
+        integration_config=None):
     """
     Batched simulation driver with checkpointing and error handling.
 
@@ -949,6 +963,9 @@ def run_simulation_driver_batched(
         Existing simulation log to merge results into. Used for continuation
         mode (--continue) to append new scenarios to previous runs. If None,
         starts with an empty log.
+    integration_config : dict, optional
+        Integration parameters for the dynamic simulation. Passed to each
+        worker. See :func:`run_single_scenario_worker` for supported keys.
 
     Returns
     -------
@@ -1040,7 +1057,8 @@ def run_simulation_driver_batched(
              perturb_loads, perturb_gens,
              load_noise_type, gen_noise_type,
              load_noise_var, gen_noise_var,
-             keep_power_factor, clamp_gens)
+             keep_power_factor, clamp_gens,
+             integration_config)
             for sid in batch_ids
         ]
 
@@ -1114,6 +1132,7 @@ def load_config(config_path: str) -> dict:
         - scenarios: Scenario sampling parameters
         - execution: Parallel execution parameters
         - perturbation: Noise and perturbation settings
+        - integration: Dynamic simulation parameters (tend, dt, ton, toff, etc.)
 
     Raises
     ------
@@ -1166,6 +1185,7 @@ def get_default_config(model_name: str) -> dict:
     - Default scenario sampling parameters
     - Default execution parameters (n_jobs, batch_size)
     - Default perturbation settings (noise type, variance, flags)
+    - Default integration settings (tend, dt, ton, toff, petsc, etc.)
     """
     # Model-specific paths and bus counts
     model_configs = {
@@ -1238,6 +1258,17 @@ def get_default_config(model_name: str) -> dict:
             "perturb_gens": True,
             "keep_power_factor": True,
             "clamp_gens": True
+        },
+
+        # Integration/simulation configuration
+        "integration": {
+            "tend": 10.0,              # Simulation end time [s]
+            "dt": 0.008333333333333333, # Time step [s] (1/120)
+            "power_injection": False,
+            "ton": 0.25,               # Fault onset time [s]
+            "toff": 0.4,               # Fault clearing time [s]
+            "verbose": False,
+            "petsc": True
         }
     }
 
@@ -1445,6 +1476,15 @@ def main(config_path: str = None):
                 "perturb_gens": true,
                 "keep_power_factor": true,
                 "clamp_gens": true
+            },
+            "integration": {
+                "tend": 10.0,
+                "dt": 0.008333333333333333,
+                "power_injection": false,
+                "ton": 0.25,
+                "toff": 0.4,
+                "verbose": false,
+                "petsc": true
             }
         }
 
@@ -1565,6 +1605,18 @@ Examples:
     keep_power_factor = pert_cfg["keep_power_factor"]
     clamp_gens = pert_cfg["clamp_gens"]
 
+    # Integration configuration (with defaults for backward compatibility)
+    integration_cfg = config.get("integration", {})
+    integration_config = {
+        "tend": integration_cfg.get("tend", 10.0),
+        "dt": integration_cfg.get("dt", 1/120.0),
+        "power_injection": integration_cfg.get("power_injection", False),
+        "ton": integration_cfg.get("ton", 0.25),
+        "toff": integration_cfg.get("toff", 0.4),
+        "verbose": integration_cfg.get("verbose", False),
+        "petsc": integration_cfg.get("petsc", True)
+    }
+
     # -------------------------------------------------------------------------
     # Print configuration summary
     # -------------------------------------------------------------------------
@@ -1616,6 +1668,15 @@ Examples:
     print(f"  - Perturb generators: {perturb_gens}")
     print(f"  - Keep power factor: {keep_power_factor}")
     print(f"  - Clamp generators: {clamp_gens}")
+    print()
+    print(f"Integration:")
+    print(f"  - End time (tend): {integration_config['tend']} s")
+    print(f"  - Time step (dt): {integration_config['dt']:.6f} s")
+    print(f"  - Fault onset (ton): {integration_config['ton']} s")
+    print(f"  - Fault clearing (toff): {integration_config['toff']} s")
+    print(f"  - Power injection: {integration_config['power_injection']}")
+    print(f"  - PETSc solver: {integration_config['petsc']}")
+    print(f"  - Verbose: {integration_config['verbose']}")
     print("=" * 60 + "\n")
 
     # -------------------------------------------------------------------------
@@ -1655,7 +1716,8 @@ Examples:
         gen_noise_var=gen_noise_var,
         keep_power_factor=keep_power_factor,
         clamp_gens=clamp_gens,
-        existing_log=existing_log if args.continue_run else None
+        existing_log=existing_log if args.continue_run else None,
+        integration_config=integration_config
     )
 
 
