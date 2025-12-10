@@ -184,9 +184,6 @@ See Also
 - recovery_tool.py : Recovery utilities for failed simulations
 - monitor.py : Real-time simulation progress monitoring
 
-Author
-------
-Power Grid Simulation Team
 """
 
 import os

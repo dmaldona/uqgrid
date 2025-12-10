@@ -21,8 +21,11 @@ cd /path/to/simulation/output
 # Compute TSI and export dataset
 python /path/to/scripts/postprocessing/TSI_analysis.py
 
-# Visualize TSI distributions
-python /path/to/scripts/postprocessing/TSI_histogram_utils.py
+# Display dataset information and statistics
+python /path/to/scripts/postprocessing/TSI_histogram_utils.py tsi_probml_fullinputs.npz
+
+# Generate and display TSI histograms
+python /path/to/scripts/postprocessing/TSI_histogram_utils.py tsi_probml_fullinputs.npz --histogram
 ```
 
 ---
@@ -111,21 +114,57 @@ meta = data["meta"].item()                  # Metadata dictionary
 
 ### TSI_histogram_utils.py
 
-Visualization utilities for exploring TSI distributions across simulation campaigns.
+Visualization and analysis utilities for exploring TSI distributions and dataset statistics.
 
 **Features:**
 - Publication-quality histogram plots
-- Aggregate statistics across all scenarios
-- Per-scenario analysis for detailed inspection
-- Automatic statistics annotation (mean, std, counts)
+- Comprehensive dataset information display
+- Power variable statistics (Pg, Qg, Pl, Ql) extraction and analysis
+- Aggregate and per-scenario statistics
+- Per-unit (per generator/load) statistics
+- Automatic statistics annotation (mean, std, counts, stability breakdown)
 - Flexible figure saving (PNG, PDF, SVG)
 
 **Usage:**
 
 ```bash
-# Generate example histograms
-python TSI_histogram_utils.py
+# Display dataset information
+python TSI_histogram_utils.py my_dataset.npz
+
+# Display info for a specific scenario
+python TSI_histogram_utils.py my_dataset.npz -s 5
+
+# Generate histograms
+python TSI_histogram_utils.py my_dataset.npz --histogram
+
+# Generate histograms without interactive display (save only)
+python TSI_histogram_utils.py my_dataset.npz --histogram --no-show
+
+# Show per-unit statistics (per generator/load)
+python TSI_histogram_utils.py my_dataset.npz --per-unit
+
+# Full analysis with custom output directory
+python TSI_histogram_utils.py my_dataset.npz -s 0 --histogram --per-unit -o ./output
+
+# Quiet mode (suppress info, only generate histograms)
+python TSI_histogram_utils.py my_dataset.npz -q --histogram
+
+# Show all options
+python TSI_histogram_utils.py --help
 ```
+
+**CLI Options:**
+
+| Option | Description |
+|--------|-------------|
+| `filepath` | Path to the .npz file (required) |
+| `-s, --scenario IDX` | Scenario index to analyze |
+| `--histogram` | Generate histogram plots |
+| `--no-show` | Don't display plots interactively (save only) |
+| `--per-unit` | Display per-unit (per generator/load) statistics |
+| `-o, --output-dir DIR` | Directory for output files (default: current) |
+| `--bins N` | Number of histogram bins (default: 50) |
+| `-q, --quiet` | Suppress dataset info output |
 
 **Programmatic Usage:**
 
@@ -133,12 +172,32 @@ python TSI_histogram_utils.py
 from TSI_histogram_utils import (
     load_tsi_data,
     plot_histogram_all_samples,
-    plot_histogram_single_scenario
+    plot_histogram_single_scenario,
+    display_dataset_info,
+    extract_power_variables,
+    display_per_unit_statistics
 )
+
+# Display comprehensive dataset information
+info = display_dataset_info("tsi_probml_fullinputs.npz")
+
+# Display info for a specific scenario
+info = display_dataset_info("tsi_probml_fullinputs.npz", scenario_idx=5)
 
 # Load dataset for custom analysis
 data = load_tsi_data("tsi_probml_fullinputs.npz")
 Y = data["Y"]  # Shape: (N, F, Z)
+
+# Extract power variables for analysis
+powers = extract_power_variables(data)
+print(f"Pg mean: {powers['pg'].mean():.4f}")
+print(f"Pl range: [{powers['pl'].min():.4f}, {powers['pl'].max():.4f}]")
+
+# Extract power variables for a single scenario
+powers_s0 = extract_power_variables(data, scenario_idx=0)
+
+# Display per-unit statistics
+display_per_unit_statistics("tsi_probml_fullinputs.npz")
 
 # Plot aggregate histogram (all scenarios combined)
 fig1 = plot_histogram_all_samples(
@@ -163,8 +222,50 @@ plt.show()
 | Function | Description |
 |----------|-------------|
 | `load_tsi_data(filepath)` | Load TSI dataset from .npz file |
+| `display_dataset_info(filepath, scenario_idx, print_output)` | Display comprehensive dataset information |
+| `extract_power_variables(data, scenario_idx)` | Extract Pg, Qg, Pl, Ql from dataset |
+| `compute_variable_statistics(arr)` | Compute min, max, mean, median, std, percentiles |
+| `display_per_unit_statistics(filepath, scenario_idx)` | Show per-generator and per-load statistics |
 | `plot_histogram_all_samples(...)` | Aggregate histogram across all scenarios |
 | `plot_histogram_single_scenario(...)` | Histogram for one operating condition |
+
+**Example Output (display_dataset_info):**
+
+```
+================================================================================
+DATASET INFORMATION: tsi_probml_fullinputs.npz
+================================================================================
+
+--- STORED ARRAYS ---
+  X                    shape=(1000, 2, 30)           dtype=float64
+  Y                    shape=(1000, 50, 3)           dtype=float64
+  ...
+
+--- METADATA ---
+  Ngen: 10
+  Nload: 20
+  tsi_mode: final
+  ...
+
+--- TSI (Y) STATISTICS ---
+  Count:     150,000
+  Range:     [-100.0000, 100.0000]
+  Mean:      45.2341
+  Median:    52.1234
+  Std:       35.6789
+
+  Stability breakdown:
+    Stable (TSI > 0):   120,000 (80.00%)
+    Unstable (TSI < 0): 30,000 (20.00%)
+
+--- POWER VARIABLE STATISTICS (ALL SCENARIOS) ---
+  Variable          Min          Max        Range         Mean       Median          Std
+  ----------------------------------------------------------------------------------
+  Pg (gen)       0.1000       1.5000       1.4000       0.8500       0.8200       0.2100
+  Qg (gen)      -0.3000       0.5000       0.8000       0.1200       0.1000       0.1500
+  Pl (load)      0.2000       2.0000       1.8000       1.1000       1.0500       0.3200
+  Ql (load)      0.0500       0.8000       0.7500       0.3500       0.3200       0.1800
+```
 
 ---
 
@@ -190,7 +291,9 @@ plt.show()
 │              │                                              │
 │              ▼                                              │
 │  TSI_histogram_utils.py                                     │
-│    ├── Load TSI dataset                                     │
+│    ├── Display dataset info & statistics                    │
+│    ├── Extract power variables (Pg, Qg, Pl, Ql)             │
+│    ├── Compute per-scenario & per-unit statistics           │
 │    └── Generate visualization plots                         │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -240,13 +343,14 @@ python generate_scenarios.py config/config_IEEE-39.json
 # 2. Compute TSI and export dataset
 python TSI_analysis.py -o ieee39_tsi.npz
 
-# 3. Visualize distributions
-python -c "
-from TSI_histogram_utils import plot_histogram_all_samples
-import matplotlib.pyplot as plt
-plot_histogram_all_samples('ieee39_tsi.npz', save_path='ieee39_hist.png')
-plt.show()
-"
+# 3. Display dataset information
+python TSI_histogram_utils.py ieee39_tsi.npz
+
+# 4. Generate and save histograms
+python TSI_histogram_utils.py ieee39_tsi.npz --histogram --no-show -o ./figures
+
+# 5. Full analysis for specific scenario
+python TSI_histogram_utils.py ieee39_tsi.npz -s 0 --histogram --per-unit
 ```
 
 ### Comparing TSI Extraction Modes
