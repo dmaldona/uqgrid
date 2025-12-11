@@ -47,6 +47,7 @@ Main script for generating perturbed scenarios and running transient stability s
 - Generation-load balance maintenance
 - Parallel execution with checkpointing
 - Continuation mode to add more samples to existing runs
+- Configurable integration parameters (simulation time, fault timing, solver options)
 
 **Usage:**
 
@@ -182,6 +183,15 @@ Configuration files are stored in `config/` and define all simulation parameters
         "perturb_gens": true,
         "keep_power_factor": true,
         "clamp_gens": true
+    },
+    "integration": {
+        "tend": 10.0,
+        "dt": 0.008333333333333333,
+        "power_injection": false,
+        "ton": 0.25,
+        "toff": 0.4,
+        "verbose": false,
+        "petsc": true
     }
 }
 ```
@@ -209,6 +219,13 @@ Configuration files are stored in `config/` and define all simulation parameters
 | | `perturb_gens` | Apply perturbations to generators |
 | | `keep_power_factor` | Maintain Q/P ratio |
 | | `clamp_gens` | Enforce generator limits |
+| **integration** | `tend` | Simulation end time [s] |
+| | `dt` | Integration time step [s] (default: 1/120) |
+| | `power_injection` | Use power injection model |
+| | `ton` | Fault onset time [s] |
+| | `toff` | Fault clearing time [s] |
+| | `verbose` | Enable verbose solver output |
+| | `petsc` | Use PETSc solver |
 
 ### Available Models
 
@@ -242,6 +259,19 @@ For a dual-socket server (e.g., 2× Intel Xeon with 32 cores total, 192GB RAM):
     "n_jobs": 4,
     "batch_size": 20,
     "checkpoint_interval": 5
+}
+```
+
+### Adjusting Simulation Duration
+
+For longer transient analysis (e.g., 20 seconds with smaller time step):
+
+```json
+"integration": {
+    "tend": 20.0,
+    "dt": 0.005,
+    "ton": 0.5,
+    "toff": 0.65
 }
 ```
 
@@ -343,16 +373,25 @@ Each scenario file contains:
 1. Check for mismatched RAW/DYR files (generators without dynamic models)
 2. Reduce noise variance (`load_noise_var`, `gen_noise_var`)
 3. Try excluding problematic fault locations
+4. Increase fault clearing time (`toff`) in the integration config
 
 ### Out of Memory
 
 1. Reduce `batch_size`
 2. Reduce `n_jobs`
+3. Increase `dt` (larger time step = fewer data points)
 
 ### Slow Performance
 
 1. Increase `n_jobs` (up to number of physical cores)
 2. Increase `batch_size`
 3. Ensure numerical libraries use single-threaded mode (set automatically)
+4. Increase `dt` for faster (but less accurate) simulations
+
+### Numerical Instability
+
+1. Reduce `dt` for better accuracy
+2. Ensure `petsc` is enabled for robust solving
+3. Check that fault timing (`ton`, `toff`) is reasonable
 
 ---
