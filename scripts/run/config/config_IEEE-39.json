@@ -1,8 +1,8 @@
 {
     "model": {
         "name": "IEEE-39",
-        "raw": "../data/IEEE39_v33.raw",
-        "dyr": "../data/IEEE39_gov.dyr",
+        "raw": "../../data/IEEE39_v33.raw",
+        "dyr": "../../data/IEEE39_gov.dyr",
         "n_bus": 39
     },
     "scenarios": {

@@ -1,8 +1,8 @@
 {
     "model": {
         "name": "IEEE-9",
-        "raw": "../data/ieee9_v33.raw",
-        "dyr": "../data/ieee9bus_gov.dyr",
+        "raw": "../../data/ieee9_v33.raw",
+        "dyr": "../../data/ieee9bus_gov.dyr",
         "n_bus": 9
     },
     "scenarios": {
