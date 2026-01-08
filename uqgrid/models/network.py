@@ -45,14 +45,14 @@ def createYbusComplex(psys):
 
         # charging susceptance
 
-        ybus_dict[to][to] += ((1j*0.5*branch.sh)/(tap*tap))
-        ybus_dict[fr][fr] += 1j*0.5*branch.sh
+        ybus_dict[fr][fr] += ((1j*0.5*branch.sh)/(tap*tap))
+        ybus_dict[to][to] += 1j*0.5*branch.sh
 
     for shunt in psys.shunts:
 
         if shunt.bus not in ybus_dict:
-            ybus_dict[to] = {}
-            ybus_dict[to][to] = 0.0
+            ybus_dict[shunt.bus] = {}
+            ybus_dict[shunt.bus][shunt.bus] = 0.0
 
         ybus_dict[shunt.bus][shunt.bus] += shunt.gsh + 1j*shunt.bsh
 

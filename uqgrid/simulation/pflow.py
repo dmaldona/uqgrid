@@ -351,7 +351,15 @@ def runpf(psys, verbose=False):
 
     # https://github.com/scipy/scipy/blob/main/scipy/optimize/_nonlin.py#L116
     # The only solver in SciPy that allowed me to pass a sparse Jacobian
+    if verbose:
+        initial_residual = fun(x0)
+        print(f"[Power Flow] Initial residual norm: {np.linalg.norm(initial_residual):.6e}")
+    
     sol, info = nonlin_solve(fun, x0, jacobian=jac, full_output=True, f_tol=1e-9)
+    
+    if verbose:
+        final_residual = fun(sol)
+        print(f"[Power Flow] Final residual norm: {np.linalg.norm(final_residual):.6e}")
 
     if info["success"]:
         if verbose: print("Power flow converged.")
