@@ -1,12 +1,17 @@
 import numpy as np
 from uqgrid.core.base_models import Exciter
+from uqgrid.utils.tools import csr_set_row
+
+
+def _ordered_vals(cols, mapping):
+    return np.array([mapping[c] for c in cols], dtype=np.float64)
 
 
 class ExcSEXS(Exciter):
     """
     Simplified Excitation System (SEXS) with continuous limiter.
 
-    Parameters are consistent with TSOPF's SEXS model:
+    Parameters are:
     TA_TB, TB, K, TE, Emin, Emax.
     """
 
@@ -109,15 +114,19 @@ class ExcSEXS(Exciter):
 
         # row for x1
         if power_injection:
-            coord.append([dp, [x1, vm]])
+            self._jac_cols_x1 = sorted([x1, vm])
+            coord.append([dp, self._jac_cols_x1])
         else:
-            coord.append([dp, [x1, vr, vi]])
+            self._jac_cols_x1 = sorted([x1, vr, vi])
+            coord.append([dp, self._jac_cols_x1])
 
         # row for e_fd
         if power_injection:
-            coord.append([dp + 1, [x1, e_fd, vm]])
+            self._jac_cols_efd = sorted([x1, e_fd, vm])
+            coord.append([dp + 1, self._jac_cols_efd])
         else:
-            coord.append([dp + 1, [x1, e_fd, vr, vi]])
+            self._jac_cols_efd = sorted([x1, e_fd, vr, vi])
+            coord.append([dp + 1, self._jac_cols_efd])
 
         return coord
 
@@ -147,59 +156,37 @@ class ExcSEXS(Exciter):
 
         # Row for x1
         row = dp
-        cols = np.zeros(4, dtype=np.int32)
-        vals = np.zeros(4, dtype=np.float64)
-        cols[0] = dp
-        vals[0] = -1.0 / self.TB
-        ncols = 1
-
         if power_injection:
-            cols[ncols] = dev + 2 * self.bus
-            vals[ncols] = -(1.0 - self.TA_TB) / self.TB
-            ncols += 1
+            col_map = {
+                dp: -1.0 / self.TB,
+                dev + 2 * self.bus: -(1.0 - self.TA_TB) / self.TB,
+            }
         else:
-            cols[ncols] = dev + 2 * self.bus
-            vals[ncols] = -(1.0 - self.TA_TB) * dvm_dvr / self.TB
-            ncols += 1
-            cols[ncols] = dev + 2 * self.bus + 1
-            vals[ncols] = -(1.0 - self.TA_TB) * dvm_dvi / self.TB
-            ncols += 1
-
-        from uqgrid.utils.tools import csr_set_row
-        order = np.argsort(cols[:ncols])
-        csr_set_row(J.data, J.indptr, J.indices, ncols, row, cols[order], vals[order])
+            col_map = {
+                dp: -1.0 / self.TB,
+                dev + 2 * self.bus: -(1.0 - self.TA_TB) * dvm_dvr / self.TB,
+                dev + 2 * self.bus + 1: -(1.0 - self.TA_TB) * dvm_dvi / self.TB,
+            }
+        cols = np.array(self._jac_cols_x1, dtype=np.int32)
+        vals = _ordered_vals(cols, col_map)
+        csr_set_row(J.data, J.indptr, J.indices, len(cols), row, cols, vals)
 
         # Row for e_fd
         row = dp + 1
-        cols = np.zeros(5, dtype=np.int32)
-        vals = np.zeros(5, dtype=np.float64)
-        ncols = 0
-
         if not limited:
-            cols[ncols] = dp
-            vals[ncols] = self.K / self.TE
-            ncols += 1
-
-            cols[ncols] = dp + 1
-            vals[ncols] = -1.0 / self.TE
-            ncols += 1
-
             if power_injection:
-                cols[ncols] = dev + 2 * self.bus
-                vals[ncols] = -(self.K * self.TA_TB) / self.TE
-                ncols += 1
+                col_map = {
+                    dp: self.K / self.TE,
+                    dp + 1: -1.0 / self.TE,
+                    dev + 2 * self.bus: -(self.K * self.TA_TB) / self.TE,
+                }
             else:
-                cols[ncols] = dev + 2 * self.bus
-                vals[ncols] = -(self.K * self.TA_TB) * dvm_dvr / self.TE
-                ncols += 1
-                cols[ncols] = dev + 2 * self.bus + 1
-                vals[ncols] = -(self.K * self.TA_TB) * dvm_dvi / self.TE
-                ncols += 1
-        else:
-            # If limited, keep the row zero (no dynamics).
-            ncols = 0
-
-        if ncols > 0:
-            order = np.argsort(cols[:ncols])
-            csr_set_row(J.data, J.indptr, J.indices, ncols, row, cols[order], vals[order])
-
+                col_map = {
+                    dp: self.K / self.TE,
+                    dp + 1: -1.0 / self.TE,
+                    dev + 2 * self.bus: -(self.K * self.TA_TB) * dvm_dvr / self.TE,
+                    dev + 2 * self.bus + 1: -(self.K * self.TA_TB) * dvm_dvi / self.TE,
+                }
+            cols = np.array(self._jac_cols_efd, dtype=np.int32)
+            vals = _ordered_vals(cols, col_map)
+            csr_set_row(J.data, J.indptr, J.indices, len(cols), row, cols, vals)

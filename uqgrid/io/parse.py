@@ -1,5 +1,5 @@
 from uqgrid.core.psydef import Psystem, Bus
-from uqgrid.models import GenGENROU, ExcESDC1A, ExcSEXS, GovIEESGO
+from uqgrid.models import GenGENROU, ExcESDC1A, ExcSEXS, GovIEESGO, GovTGOV1
 from uqgrid.models.cim5_imp import MotCIM5
 from uqgrid.io.parse_psse import read_raw
 import numpy as np
@@ -457,6 +457,36 @@ def add_dyr(psys, dyr_filename, verbose=False):
                 if gen.bus == bus and gen.id_tag == gen_id:
                     psys.add_gov(gen, GovIEESGO(gen_id, T1, T2, T3, T4, T5, T6,
                         K1, K2, K3))
+                    break
+
+        if 'TGOV1' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if verbose:
+                print("Adding TGOV1 at bus %d. GENID %s." % (int(device[0]), gen_id))
+
+            R = float(device[3])
+            T1 = float(device[4])
+            VMAX = float(device[5])
+            VMIN = float(device[6])
+            T2 = float(device[7])
+            T3 = float(device[8])
+            DT = float(device[9])
+
+            ratio = 1.0
+            for gen in psys.gens:
+                if gen.bus == bus and gen.idx.strip() == gen_id.strip():
+                    if gen.mbase > 0:
+                        ratio = gen.mbase / psys.basemva
+                    break
+            R *= ratio
+            VMAX *= ratio
+            VMIN *= ratio
+            DT *= ratio
+
+            for gen in psys.gendyn:
+                if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
+                    psys.add_gov(gen, GovTGOV1(gen_id, R, T1, VMAX, VMIN, T2, T3, DT))
                     break
 
         if 'ESDC1A' in device[1]:
