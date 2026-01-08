@@ -60,7 +60,7 @@ def load_psse(raw_filename):
 
         tap = (volt1/volt2)
         psys.add_branch(fr_internal, to_internal, r12, x12, 
-                0.0, tap=tap, shift=tran.ANG1)
+                tran.MAG2 if abs(tran.MAG2) > 0.0 else 0.0, tap=tap, shift=tran.ANG1)
 
         if tran.COD1 == 1:
             psys.add_shunt(fr_internal, tran.MAG1*baseMVA, tran.MAG2*baseMVA)
