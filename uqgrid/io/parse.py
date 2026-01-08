@@ -178,6 +178,8 @@ def load_psse(raw_filename):
             continue
         bus = psse_to_int[int(gen.busn)]
         buses_with_active_gens.add(bus)
+        if psys.buses[bus].type in (Bus.PV, Bus.SLACK):
+            psys.buses[bus].set_vinit(gen.vs, psys.buses[bus].v0a)
         psys.add_gen(bus, gen.name, gen.pg, gen.qg, 
                      pgub=gen.pt, pglb=gen.pb, qgub=gen.qt, qglb=gen.qb,
                      mbase=gen.mbase)
@@ -205,6 +207,11 @@ def load_psse(raw_filename):
         if shunt.status == 1:
             bus = psse_to_int[shunt.busn]
             psys.add_shunt(bus, shunt.gshunt, shunt.bshunt) 
+
+    for shunt in getattr(case, "switched_shunts", []):
+        if shunt.status == 1:
+            bus = psse_to_int[int(shunt.busn)]
+            psys.add_shunt(bus, 0.0, shunt.binit)
 
     psys.add_ext2int(psse_to_int)
     psys.assemble()
@@ -307,16 +314,28 @@ def load_matpower(mat_file):
         psys.add_load(i, str(i), mat_buses[i, 2], -mat_buses[i, 3])
         mat_to_int[mat_buses[i, 0]] = i
 
+    buses_with_active_gens = set()
     for i in range(ngens):
         bus = mat_to_int[int(mat_gens[i, 0])]
         # MATPOWER gen columns: bus, Pg, Qg, Qmax, Qmin, Vg, mBase, status, Pmax, Pmin
         pg = mat_gens[i, 1]
         qg = mat_gens[i, 2]
+        vg = mat_gens[i, 5] if mat_gens.shape[1] > 5 else psys.buses[bus].v0m
         qmax = mat_gens[i, 3] if mat_gens.shape[1] > 3 else 0.0
         qmin = mat_gens[i, 4] if mat_gens.shape[1] > 4 else 0.0
         pmax = mat_gens[i, 8] if mat_gens.shape[1] > 8 else 0.0
         pmin = mat_gens[i, 9] if mat_gens.shape[1] > 9 else 0.0
+        status = int(mat_gens[i, 7]) if mat_gens.shape[1] > 7 else 1
+        if status == 0:
+            continue
+        buses_with_active_gens.add(bus)
+        if psys.buses[bus].type in (Bus.PV, Bus.SLACK):
+            psys.buses[bus].set_vinit(vg, psys.buses[bus].v0a)
         psys.add_gen(bus, "id", pg, qg, pgub=pmax, pglb=pmin, qgub=qmax, qglb=qmin)
+
+    for bus_idx, bus in enumerate(psys.buses):
+        if bus.type == Bus.PV and bus_idx not in buses_with_active_gens:
+            bus.type = Bus.PQ
 
     for i in range(nbranch):
         fr_internal = mat_to_int[int(mat_branches[i, 0])]

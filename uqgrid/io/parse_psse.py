@@ -76,6 +76,23 @@ class ShuntRaw(object):
         return raw_str
 
 
+class SwitchedShuntRaw(object):
+
+    def __init__(self, line):
+
+        line = line.strip('\n').split(',')
+        self.busn = int(line[0])
+        self.modsw = int(line[1]) if len(line) > 1 else 0
+        self.adjm = int(line[2]) if len(line) > 2 else 0
+        self.status = int(line[3]) if len(line) > 3 else 0
+        self.vswhi = float(line[4]) if len(line) > 4 else 0.0
+        self.vswlo = float(line[5]) if len(line) > 5 else 0.0
+        self.swrem = int(line[6]) if len(line) > 6 else 0
+        self.rmpct = float(line[7]) if len(line) > 7 else 0.0
+        self.rmidnt = line[8] if len(line) > 8 else ""
+        self.binit = float(line[9]) if len(line) > 9 else 0.0
+
+
 class GenRaw(object):
 
     def __init__(self, line):
@@ -300,6 +317,7 @@ class PsystemRaw(object):
         self.buses        = []
         self.loads        = []
         self.shunts       = []
+        self.switched_shunts = []
         self.branches     = []
         self.gens         = []
         self.transformers = []
@@ -331,6 +349,24 @@ class PsystemRaw(object):
             if not line: break
             else:
                 self.shunts.append(ShuntRaw(line))
+
+    def add_switched_shunts(self, f):
+        while True:
+            line = f.readline()
+            if not line:
+                return
+            if "BEGIN SWITCHED SHUNT DATA" in line:
+                break
+
+        while True:
+            line = f.readline()
+            if not line:
+                return
+            if "END OF SWITCHED SHUNT DATA" in line:
+                break
+            if line.strip() == "":
+                continue
+            self.switched_shunts.append(SwitchedShuntRaw(line))
     
     def add_gens(self, f):
         
@@ -447,6 +483,7 @@ def read_raw(filename):
         sys.add_gens(f)
         sys.add_branches(f)
         sys.add_transformers(f)
+        sys.add_switched_shunts(f)
 
         f.close()
 

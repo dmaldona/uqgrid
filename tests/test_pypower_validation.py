@@ -30,14 +30,7 @@ def data_dir():
 
 def _ppc_from_matpower(case_path):
     base_mva, bus, gen, branch = load_matpower_raw(case_path)
-
-    # Match UQGrid's use of bus Vm as the voltage target at generator buses.
-    bus_lookup = {int(bus[i, 0]): i for i in range(bus.shape[0])}
     gen = gen.copy()
-    for i in range(gen.shape[0]):
-        bus_idx = bus_lookup[int(gen[i, 0])]
-        gen[i, 5] = bus[bus_idx, 7]
-
     return {
         "baseMVA": base_mva,
         "bus": bus,
