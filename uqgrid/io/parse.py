@@ -2,7 +2,6 @@ from uqgrid.core.psydef import Psystem, Bus
 from uqgrid.models import GenGENROU, ExcESDC1A, GovIEESGO
 from uqgrid.models.cim5_imp import MotCIM5
 from uqgrid.io.parse_psse import read_raw
-import scipy.io as sio
 import numpy as np
 import warnings
 import re
@@ -212,20 +211,73 @@ def load_psse(raw_filename):
 
     return psys
 
+def _strip_matpower_comments(lines):
+    cleaned = []
+    for line in lines:
+        if "%" in line:
+            line = line.split("%", 1)[0]
+        cleaned.append(line)
+    return cleaned
+
+
+def _parse_matpower_matrix(text, key):
+    import re
+
+    match = re.search(rf"mpc\.{key}\s*=\s*\[", text)
+    if not match:
+        raise ValueError(f"MATPOWER file missing required section: mpc.{key}")
+    start = match.end()
+    end_match = re.search(r"\];", text[start:])
+    if not end_match:
+        raise ValueError(f"MATPOWER file has unterminated section: mpc.{key}")
+    block = text[start:start + end_match.start()]
+
+    rows = []
+    for raw_line in _strip_matpower_comments(block.splitlines()):
+        line = raw_line.strip()
+        if not line:
+            continue
+        for row_text in line.split(";"):
+            row = row_text.strip()
+            if not row:
+                continue
+            values = [float(val) for val in row.split()]
+            rows.append(values)
+
+    if not rows:
+        raise ValueError(f"MATPOWER file section mpc.{key} is empty")
+    return np.array(rows, dtype=float)
+
+
+def _load_matpower_m(m_file):
+    import re
+
+    with open(m_file, "r") as f:
+        lines = f.readlines()
+    text = "\n".join(_strip_matpower_comments(lines))
+
+    base_match = re.search(r"mpc\.baseMVA\s*=\s*([0-9eE+.-]+)", text)
+    if not base_match:
+        raise ValueError("MATPOWER file missing required field: mpc.baseMVA")
+    basemva = float(base_match.group(1))
+
+    mat_buses = _parse_matpower_matrix(text, "bus")
+    mat_gens = _parse_matpower_matrix(text, "gen")
+    mat_branches = _parse_matpower_matrix(text, "branch")
+
+    return basemva, mat_buses, mat_gens, mat_branches
+
+
 def load_matpower(mat_file):
 
     """
-        The files loaded here are the result executing the following commands in MATPOWER
-        mpc = loadcase('casefile.m')
-        save('casefile.mat', mpc)
+        Load MATPOWER data from a case file (.m preferred, .mat supported).
     """
 
-    case = sio.loadmat(mat_file)
+    if not mat_file.endswith(".m"):
+        raise ValueError("MATPOWER parser only supports .m case files")
 
-    basemva = case['mpc'][0][0][1][0][0]
-    mat_buses = np.array(case['mpc'][0][0][2])
-    mat_gens = np.array(case['mpc'][0][0][3])
-    mat_branches = np.array(case['mpc'][0][0][4])
+    basemva, mat_buses, mat_gens, mat_branches = _load_matpower_m(mat_file)
         
     nbus = mat_buses.shape[0]
     nbranch = mat_branches.shape[0]

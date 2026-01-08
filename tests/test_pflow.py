@@ -19,9 +19,9 @@ def data_dir():
     )
 
 @pytest.mark.parametrize("case, mat_file, sbus_file, volt_file", [
-    ("case9", "case9.mat", "sbus_case9.mat", "volt_case9.mat"),
-    ("case14", "case14.mat", "sbus_case14.mat", "volt_case14.mat"),
-    ("case30", "case30.mat", "sbus_case30.mat", "volt_case30.mat"),
+    ("case9", "case9.m", "sbus_case9.mat", "volt_case9.mat"),
+    ("case14", "case14.m", "sbus_case14.mat", "volt_case14.mat"),
+    ("case30", "case30.m", "sbus_case30.mat", "volt_case30.mat"),
 ])
 def test_power_flow_from_matpower(case, mat_file, sbus_file, volt_file, data_dir):
     """

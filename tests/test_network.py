@@ -96,7 +96,7 @@ def test_nine_bus_from_matpower(data_dir):
     This test loads a nine-bus power system from a MATPOWER file, creates the Y-bus matrix,
     and verifies the Y-bus entries against expected values from a MATPOWER-generated matrix.
     """
-    psys = load_matpower(mat_file=os.path.join(data_dir, 'case14.mat'))
+    psys = load_matpower(mat_file=os.path.join(data_dir, 'case14.m'))
 
     # Create Y-bus matrix
     ybus = createYbusComplex(psys)
