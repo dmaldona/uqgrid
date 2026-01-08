@@ -268,6 +268,16 @@ def _load_matpower_m(m_file):
     return basemva, mat_buses, mat_gens, mat_branches
 
 
+def load_matpower_raw(m_file):
+    """
+        Load raw MATPOWER data from a .m case file.
+        Returns (baseMVA, bus, gen, branch) as numpy arrays.
+    """
+    if not m_file.endswith(".m"):
+        raise ValueError("MATPOWER raw loader only supports .m case files")
+    return _load_matpower_m(m_file)
+
+
 def load_matpower(mat_file):
 
     """
@@ -290,8 +300,8 @@ def load_matpower(mat_file):
         psys.add_bus(i, bus_type=mat_buses[i, 1])
         psys.buses[i].set_vinit(mat_buses[i, 7], (np.pi/180.0)*mat_buses[i, 8])
  
-        # add shunt
-        if mat_buses[i, 4] > 0.0 or mat_buses[i, 5] > 0.0:
+        # add shunt (allow negative susceptance/conductance)
+        if mat_buses[i, 4] != 0.0 or mat_buses[i, 5] != 0.0:
                 psys.add_shunt(i, mat_buses[i, 4], mat_buses[i, 5])
         # add load
         psys.add_load(i, str(i), mat_buses[i, 2], -mat_buses[i, 3])
