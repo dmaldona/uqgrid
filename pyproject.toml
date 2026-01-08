@@ -30,6 +30,11 @@ petsc = [
     "petsc4py>=3.16.0",
 ]
 
+# PYPOWER validation (optional)
+pypower = [
+    "pypower>=5.1.19",
+]
+
 # Development dependencies (basic)
 dev = [
     "pytest>=6.0.0",

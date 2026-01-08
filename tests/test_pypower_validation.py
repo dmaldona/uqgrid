@@ -7,6 +7,7 @@ from uqgrid.io.parse import load_matpower, load_matpower_raw
 from uqgrid.simulation.pflow import runpf
 
 
+pytest.importorskip("pypower")
 from pypower.ext2int import ext2int
 from pypower.makeYbus import makeYbus
 from pypower.ppoption import ppoption
