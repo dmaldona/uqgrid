@@ -988,7 +988,7 @@ def preallocate_jacobian(psys):
                 list_coordinates[coord[j][0]] = coord[j][1]
             else:
                 list_coordinates[coord[j][0]].extend(coord[j][1])
-                list_coordinates[coord[j][0]] = list(
+                list_coordinates[coord[j][0]] = sorted(
                     set(list_coordinates[coord[j][0]]))
 
     # because the ZIP load depends only on the bus voltage, no need to

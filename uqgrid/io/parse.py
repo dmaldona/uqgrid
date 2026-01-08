@@ -427,7 +427,7 @@ def add_dyr(psys, dyr_filename, verbose=False):
                 if static_bus == bus and static_idx.strip() == idx.strip():
                     psys.add_gen_dynamics(psys.gens[i],
                         GenGENROU(idx, x_d, x_q, x_dp, x_qp, x_ddp,
-                        xl, H, D, T_d0p, T_q0p, T_d0dp, T_q0dp))
+                        xl, H, D, T_d0p, T_q0p, T_d0dp, T_q0dp, S1, S2))
                     found_match = True
                     psys.gens[i].set_dynamic_true()
                     if verbose:
@@ -475,9 +475,10 @@ def add_dyr(psys, dyr_filename, verbose=False):
 
             ratio = 1.0
             for gen in psys.gens:
-                if gen.bus == bus and gen.idx.strip() == gen_id.strip():
+                static_id = gen.idx.replace("'", "").strip()
+                if gen.bus == bus and static_id == gen_id.strip():
                     if gen.mbase > 0:
-                        ratio = gen.mbase / psys.basemva
+                        ratio = psys.basemva / gen.mbase
                     break
             R *= ratio
             VMAX *= ratio
@@ -585,7 +586,7 @@ def add_dyr(psys, dyr_filename, verbose=False):
             # add dummy generator
             psys.add_gen_dynamics(psys.gens[i],
                     GenGENROU(id_tag, x_d, x_q, x_dp, x_qp, x_ddp,
-                    xl, H, D, T_d0p, T_q0p, T_d0dp, T_q0dp))
+                    xl, H, D, T_d0p, T_q0p, T_d0dp, T_q0dp, S1, S2))
             psys.gens[i].set_dynamic_true()
             k += 1
 

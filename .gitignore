@@ -57,3 +57,6 @@ Thumbs.db
 
 # Documentation builds
 site/
+
+# Local comparison scripts
+compare_dynamics_andes.py

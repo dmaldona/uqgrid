@@ -28,12 +28,13 @@
 - Use `snake_case` for functions/variables, `CapWords` for classes, and `UPPER_SNAKE_CASE` for constants.
 - `ruff` is the primary linter (line length 100 in `pyproject.toml`); `mypy` is used on selected modules.
 - `black`, `isort`, and `pre-commit` are available via dev dependencies; run `pre-commit install` after setup.
-- Performance-sensitive routines (residuals/Jacobians) should avoid in-function imports and runtime column sorting. Ensure CSR column indices are ordered up front in preallocation and keep the same order in `residual_jac`.
+- Performance-sensitive routines (residuals/Jacobians) should avoid in-function imports and runtime column sorting (no `argsort` in these paths). Ensure CSR column indices are ordered up front in preallocation and keep the same order in `residual_jac`.
 
 ## Testing Guidelines
 - Framework: `pytest` with markers for slow adjoint validation tests.
 - Name tests as `test_*.py` and functions as `test_*`.
 - Use `make test-fast` during local iteration; use `make test` before opening a PR.
+- For Jacobian verification, use the built-in finite-difference checks in `IntegrationConfig` (`check_jacobian`, `jacobian_check_tol`, `jacobian_check_top_k`, `jacobian_check_csv`) as documented in `docs/user-guide/dynamics-simulation.md`.
 
 ## Commit & Pull Request Guidelines
 - No strict commit convention is enforced in history; use concise, imperative summaries (e.g., “Fix bus type handling”).

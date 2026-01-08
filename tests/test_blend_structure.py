@@ -33,7 +33,7 @@ def test_init_mappings_no_controllers(data_dir):
         psys.gens[0],
         __import__('uqgrid.models', fromlist=['GenGENROU']).GenGENROU(
             0, 1.575, 1.512, 0.291, 0.39, 0.1733,
-            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15
+            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15, 0.0, 0.0
         )
     )
     psys.initialize()
@@ -87,7 +87,7 @@ def test_blend_structure_no_controllers(data_dir):
         psys.gens[0],
         __import__('uqgrid.models', fromlist=['GenGENROU']).GenGENROU(
             0, 1.575, 1.512, 0.291, 0.39, 0.1733,
-            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15
+            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15, 0.0, 0.0
         )
     )
     psys.createYbusComplex()
@@ -124,7 +124,7 @@ def test_blend_values_at_t0(data_dir):
         psys.gens[0],
         __import__('uqgrid.models', fromlist=['GenGENROU']).GenGENROU(
             0, 1.575, 1.512, 0.291, 0.39, 0.1733,
-            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15
+            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15, 0.0, 0.0
         )
     )
     psys.createYbusComplex()

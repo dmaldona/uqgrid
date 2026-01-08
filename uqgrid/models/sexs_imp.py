@@ -33,7 +33,7 @@ class ExcSEXS(Exciter):
         Exciter.__init__(self, id_tag, 2, 2, 0, len(parameter_list), state_list)
 
     def initialize(self, vm, va, p, q, x, y, psys):
-        # Initial conditions per TSOPF:
+        # Initial conditions:
         # Vref = Efd/K + Vm, x1 = (1 - TA_TB) * (Vref - Vm)
         e_fd = self.e_fd0
         if self.K == 0:
