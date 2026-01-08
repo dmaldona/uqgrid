@@ -2,7 +2,6 @@ from uqgrid.core.psydef import Psystem, Bus
 from uqgrid.models import GenGENROU, ExcESDC1A, GovIEESGO
 from uqgrid.models.cim5_imp import MotCIM5
 from uqgrid.io.parse_psse import read_raw
-import scipy.io as sio
 import numpy as np
 import warnings
 import re
@@ -61,7 +60,7 @@ def load_psse(raw_filename):
 
         tap = (volt1/volt2)
         psys.add_branch(fr_internal, to_internal, r12, x12, 
-                0.0, tap=tap, shift=tran.ANG1)
+                tran.MAG2 if abs(tran.MAG2) > 0.0 else 0.0, tap=tap, shift=tran.ANG1)
 
         if tran.COD1 == 1:
             psys.add_shunt(fr_internal, tran.MAG1*baseMVA, tran.MAG2*baseMVA)
@@ -179,6 +178,8 @@ def load_psse(raw_filename):
             continue
         bus = psse_to_int[int(gen.busn)]
         buses_with_active_gens.add(bus)
+        if psys.buses[bus].type in (Bus.PV, Bus.SLACK):
+            psys.buses[bus].set_vinit(gen.vs, psys.buses[bus].v0a)
         psys.add_gen(bus, gen.name, gen.pg, gen.qg, 
                      pgub=gen.pt, pglb=gen.pb, qgub=gen.qt, qglb=gen.qb,
                      mbase=gen.mbase)
@@ -207,25 +208,93 @@ def load_psse(raw_filename):
             bus = psse_to_int[shunt.busn]
             psys.add_shunt(bus, shunt.gshunt, shunt.bshunt) 
 
+    for shunt in getattr(case, "switched_shunts", []):
+        if shunt.status == 1:
+            bus = psse_to_int[int(shunt.busn)]
+            psys.add_shunt(bus, 0.0, shunt.binit)
+
     psys.add_ext2int(psse_to_int)
     psys.assemble()
 
     return psys
 
+def _strip_matpower_comments(lines):
+    cleaned = []
+    for line in lines:
+        if "%" in line:
+            line = line.split("%", 1)[0]
+        cleaned.append(line)
+    return cleaned
+
+
+def _parse_matpower_matrix(text, key):
+    import re
+
+    match = re.search(rf"mpc\.{key}\s*=\s*\[", text)
+    if not match:
+        raise ValueError(f"MATPOWER file missing required section: mpc.{key}")
+    start = match.end()
+    end_match = re.search(r"\];", text[start:])
+    if not end_match:
+        raise ValueError(f"MATPOWER file has unterminated section: mpc.{key}")
+    block = text[start:start + end_match.start()]
+
+    rows = []
+    for raw_line in _strip_matpower_comments(block.splitlines()):
+        line = raw_line.strip()
+        if not line:
+            continue
+        for row_text in line.split(";"):
+            row = row_text.strip()
+            if not row:
+                continue
+            values = [float(val) for val in row.split()]
+            rows.append(values)
+
+    if not rows:
+        raise ValueError(f"MATPOWER file section mpc.{key} is empty")
+    return np.array(rows, dtype=float)
+
+
+def _load_matpower_m(m_file):
+    import re
+
+    with open(m_file, "r") as f:
+        lines = f.readlines()
+    text = "\n".join(_strip_matpower_comments(lines))
+
+    base_match = re.search(r"mpc\.baseMVA\s*=\s*([0-9eE+.-]+)", text)
+    if not base_match:
+        raise ValueError("MATPOWER file missing required field: mpc.baseMVA")
+    basemva = float(base_match.group(1))
+
+    mat_buses = _parse_matpower_matrix(text, "bus")
+    mat_gens = _parse_matpower_matrix(text, "gen")
+    mat_branches = _parse_matpower_matrix(text, "branch")
+
+    return basemva, mat_buses, mat_gens, mat_branches
+
+
+def load_matpower_raw(m_file):
+    """
+        Load raw MATPOWER data from a .m case file.
+        Returns (baseMVA, bus, gen, branch) as numpy arrays.
+    """
+    if not m_file.endswith(".m"):
+        raise ValueError("MATPOWER raw loader only supports .m case files")
+    return _load_matpower_m(m_file)
+
+
 def load_matpower(mat_file):
 
     """
-        The files loaded here are the result executing the following commands in MATPOWER
-        mpc = loadcase('casefile.m')
-        save('casefile.mat', mpc)
+        Load MATPOWER data from a case file (.m preferred, .mat supported).
     """
 
-    case = sio.loadmat(mat_file)
+    if not mat_file.endswith(".m"):
+        raise ValueError("MATPOWER parser only supports .m case files")
 
-    basemva = case['mpc'][0][0][1][0][0]
-    mat_buses = np.array(case['mpc'][0][0][2])
-    mat_gens = np.array(case['mpc'][0][0][3])
-    mat_branches = np.array(case['mpc'][0][0][4])
+    basemva, mat_buses, mat_gens, mat_branches = _load_matpower_m(mat_file)
         
     nbus = mat_buses.shape[0]
     nbranch = mat_branches.shape[0]
@@ -238,23 +307,35 @@ def load_matpower(mat_file):
         psys.add_bus(i, bus_type=mat_buses[i, 1])
         psys.buses[i].set_vinit(mat_buses[i, 7], (np.pi/180.0)*mat_buses[i, 8])
  
-        # add shunt
-        if mat_buses[i, 4] > 0.0 or mat_buses[i, 5] > 0.0:
+        # add shunt (allow negative susceptance/conductance)
+        if mat_buses[i, 4] != 0.0 or mat_buses[i, 5] != 0.0:
                 psys.add_shunt(i, mat_buses[i, 4], mat_buses[i, 5])
         # add load
         psys.add_load(i, str(i), mat_buses[i, 2], -mat_buses[i, 3])
         mat_to_int[mat_buses[i, 0]] = i
 
+    buses_with_active_gens = set()
     for i in range(ngens):
         bus = mat_to_int[int(mat_gens[i, 0])]
         # MATPOWER gen columns: bus, Pg, Qg, Qmax, Qmin, Vg, mBase, status, Pmax, Pmin
         pg = mat_gens[i, 1]
         qg = mat_gens[i, 2]
+        vg = mat_gens[i, 5] if mat_gens.shape[1] > 5 else psys.buses[bus].v0m
         qmax = mat_gens[i, 3] if mat_gens.shape[1] > 3 else 0.0
         qmin = mat_gens[i, 4] if mat_gens.shape[1] > 4 else 0.0
         pmax = mat_gens[i, 8] if mat_gens.shape[1] > 8 else 0.0
         pmin = mat_gens[i, 9] if mat_gens.shape[1] > 9 else 0.0
+        status = int(mat_gens[i, 7]) if mat_gens.shape[1] > 7 else 1
+        if status == 0:
+            continue
+        buses_with_active_gens.add(bus)
+        if psys.buses[bus].type in (Bus.PV, Bus.SLACK):
+            psys.buses[bus].set_vinit(vg, psys.buses[bus].v0a)
         psys.add_gen(bus, "id", pg, qg, pgub=pmax, pglb=pmin, qgub=qmax, qglb=qmin)
+
+    for bus_idx, bus in enumerate(psys.buses):
+        if bus.type == Bus.PV and bus_idx not in buses_with_active_gens:
+            bus.type = Bus.PQ
 
     for i in range(nbranch):
         fr_internal = mat_to_int[int(mat_branches[i, 0])]

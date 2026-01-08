@@ -14,6 +14,7 @@ Documentation is now available at
 ## Features
 
 - Power system modeling with PSS/E format files
+- MATPOWER case file support (`.m` ASCII)
 - Dynamic simulation with DAE integration
 - First and second-order parameter sensitivities
 - Adjoint methods for efficient gradient computation (requires PETSc)

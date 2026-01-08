@@ -112,7 +112,7 @@ class TestGeneratorProperties:
 
     def test_get_gen_pq_matpower(self, data_dir):
         """Test get_gen_pq returns correct values from MATPOWER file."""
-        psys = load_matpower(os.path.join(data_dir, 'case14.mat'))
+        psys = load_matpower(os.path.join(data_dir, 'case14.m'))
         p_gen, q_gen = psys.get_gen_pq()
         
         assert len(p_gen) == psys.ngens
@@ -120,7 +120,7 @@ class TestGeneratorProperties:
 
     def test_get_pgen_bounds_matpower(self, data_dir):
         """Test get_pgen_bounds returns correct values from MATPOWER file."""
-        psys = load_matpower(os.path.join(data_dir, 'case14.mat'))
+        psys = load_matpower(os.path.join(data_dir, 'case14.m'))
         pg_lb, pg_ub = psys.get_pgen_bounds()
         
         assert len(pg_lb) == psys.ngens
@@ -170,7 +170,7 @@ class TestBranchProperties:
 
     def test_branch_properties_matpower(self, data_dir):
         """Test branch properties are correctly loaded from MATPOWER file."""
-        psys = load_matpower(os.path.join(data_dir, 'case14.mat'))
+        psys = load_matpower(os.path.join(data_dir, 'case14.m'))
         branch_props = psys.get_branch_properties()
         
         assert len(branch_props['fr']) == psys.nbranches
