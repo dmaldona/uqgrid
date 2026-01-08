@@ -1,5 +1,5 @@
 from uqgrid.core.psydef import Psystem, Bus
-from uqgrid.models import GenGENROU, ExcESDC1A, GovIEESGO
+from uqgrid.models import GenGENROU, ExcESDC1A, ExcSEXS, GovIEESGO
 from uqgrid.models.cim5_imp import MotCIM5
 from uqgrid.io.parse_psse import read_raw
 import numpy as np
@@ -488,6 +488,24 @@ def add_dyr(psys, dyr_filename, verbose=False):
                 if gen.bus == bus and gen.id_tag == gen_id:
                     #psys.add_exc(gen, ExcESDC1A(gen_id, KA, TA, KF, TF1, KE, TE, TR, E1, E2))
                     psys.add_exc(gen, ExcESDC1A(gen_id, 20.0, 1.0, 0.7, 0.7, 7.0, 0.5, 20.4, 0.006, 0.9))
+                    break
+
+        if 'SEXS' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if verbose:
+                print("Adding SEXS at bus %d. GENID %s." % (int(device[0]), gen_id))
+
+            TA_TB = float(device[3])
+            TB = float(device[4])
+            K = float(device[5])
+            TE = float(device[6])
+            EMIN = float(device[7])
+            EMAX = float(device[8])
+
+            for gen in psys.gendyn:
+                if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
+                    psys.add_exc(gen, ExcSEXS(gen_id, TA_TB, TB, K, TE, EMIN, EMAX))
                     break
 
 

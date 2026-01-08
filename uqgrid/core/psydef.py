@@ -679,7 +679,8 @@ class Psystem:
                 if gen.exciter is exc:
                     gen.has_exciter = True
                     exc.gen_index = gi
-                    self.gen_efd_ctrl_col[gi] = exc.dif_ptr + 2
+                    efd_idx = exc.efd_idx if hasattr(exc, "efd_idx") else 2
+                    self.gen_efd_ctrl_col[gi] = exc.dif_ptr + efd_idx
                     self.exc_devices.append(exc)
                     mapped = True
                     break

@@ -16,6 +16,10 @@ class IntegrationConfig(BaseModel):
     petsc: bool = Field(False, description="Enable PETSc integration.")
     solve_powerflow_dynamics: bool = Field(True, description="Solve power flow before dynamics.")
     arkimex: bool = Field(False, description="Use ARKIMEX integrator.")
+    check_jacobian: bool = Field(False, description="Run FD Jacobian check (non-PETSc only).")
+    jacobian_check_tol: float = Field(1e-6, description="Absolute tolerance for Jacobian FD checks.")
+    jacobian_check_top_k: int = Field(10, description="Number of Jacobian mismatches to report.")
+    jacobian_check_csv: Optional[str] = Field(None, description="Optional CSV path for Jacobian mismatch report.")
     arkimex_slow_differential: Optional[List[int]] = Field(
         default=None,
         description=(

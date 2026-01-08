@@ -109,8 +109,14 @@ class ExcESDC1A(Exciter):
         # setpoint (to be implemented in external uref vector)
         vref = self.vref
 
-        vm = v[2*self.bus]
-        va = v[2*self.bus + 1]
+        if power_injection:
+            vm = v[2*self.bus]
+        else:
+            vr = v[2*self.bus]
+            vi = v[2*self.bus + 1]
+            vm = np.sqrt(vr*vr + vi*vi)
+            if vm == 0.0:
+                vm = 1e-12
 
         F[dp] = (Ka*(vref - vm - vr2 - (Kf/Tf)*e_fd) - vr1)/Ta
         F[dp + 1] = -((Kf/Tf)*e_fd + vr2)/Tf
@@ -124,7 +130,7 @@ class ExcESDC1A(Exciter):
     def residual_cinj(self, F, z, v, theta, idxs, alpha=False):
         return None
 
-    def preallocate_jacobian(self, idxs, psys):
+    def preallocate_jacobian(self, idxs, psys, power_injection):
 
         coord = []
 
@@ -137,12 +143,18 @@ class ExcESDC1A(Exciter):
         vr2 = dp + 1
         e_fd = dp + 2
 
-        vm = dev + 2*self.bus
-        va = dev + 2*self.bus + 1
+        if power_injection:
+            vm = dev + 2*self.bus
+        else:
+            vr = dev + 2*self.bus
+            vi = dev + 2*self.bus + 1
 
         # first row
         row = dp
-        cols = [vr1, vr2, e_fd, vm]
+        if power_injection:
+            cols = [vr1, vr2, e_fd, vm]
+        else:
+            cols = [vr1, vr2, e_fd, vr, vi]
         coord.append([row, cols])
 
         # second row
@@ -152,7 +164,10 @@ class ExcESDC1A(Exciter):
 
         # third row
         row = dp + 2
-        cols = [vr1, e_fd, vm]
+        if power_injection:
+            cols = [vr1, e_fd, vm]
+        else:
+            cols = [vr1, e_fd, vr, vi]
         coord.append([row, cols])
 
         return coord
@@ -181,15 +196,24 @@ class ExcESDC1A(Exciter):
         # setpoint (to be implemented in external uref vector)
         vref = self.vref
 
-        vm = v[2*self.bus]
-        va = v[2*self.bus + 1]
+        if power_injection:
+            vm = v[2*self.bus]
+        else:
+            vr = v[2*self.bus]
+            vi = v[2*self.bus + 1]
+            vm = np.sqrt(vr*vr + vi*vi)
+            if vm == 0.0:
+                vm = 1e-12
 
         # indexes
         vr1_idx = dp
         vr2_idx = dp + 1
         e_fd_idx = dp + 2
-        vm_idx = dev + 2*self.bus
-        va_idx = dev + 2*self.bus + 1
+        if power_injection:
+            vm_idx = dev + 2*self.bus
+        else:
+            vr_idx = dev + 2*self.bus
+            vi_idx = dev + 2*self.bus + 1
 
         col = np.zeros(10)
         val = np.zeros(10)
@@ -202,9 +226,19 @@ class ExcESDC1A(Exciter):
         val[1] = -Ka/Ta
         col[2] = e_fd_idx
         val[2] = -Ka*Kf/(Ta*Tf)
-        col[3] = vm_idx
-        val[3] = -Ka/Ta
-        csr_set_row(J.data, J.indptr, J.indices, 4, row, col, val)
+        if power_injection:
+            col[3] = vm_idx
+            val[3] = -Ka/Ta
+            ncols = 4
+        else:
+            dvm_dvr = vr / vm
+            dvm_dvi = vi / vm
+            col[3] = vr_idx
+            val[3] = (-Ka/Ta) * dvm_dvr
+            col[4] = vi_idx
+            val[4] = (-Ka/Ta) * dvm_dvi
+            ncols = 5
+        csr_set_row(J.data, J.indptr, J.indices, ncols, row, col, val)
 
         # second row
         row = dp + 1
@@ -220,9 +254,19 @@ class ExcESDC1A(Exciter):
         val[0] = 1/Te
         col[1] = e_fd_idx
         val[1] = -(Ke + Ae*np.exp(Be*vm))/Te
-        col[2] = vm_idx
-        val[2] = -e_fd*(Ae*Be*np.exp(Be*vm))/Te
-        csr_set_row(J.data, J.indptr, J.indices, 3, row, col, val)
+        if power_injection:
+            col[2] = vm_idx
+            val[2] = -e_fd*(Ae*Be*np.exp(Be*vm))/Te
+            ncols = 3
+        else:
+            dvm_dvr = vr / vm
+            dvm_dvi = vi / vm
+            col[2] = vr_idx
+            val[2] = (-e_fd*(Ae*Be*np.exp(Be*vm))/Te) * dvm_dvr
+            col[3] = vi_idx
+            val[3] = (-e_fd*(Ae*Be*np.exp(Be*vm))/Te) * dvm_dvi
+            ncols = 4
+        csr_set_row(J.data, J.indptr, J.indices, ncols, row, col, val)
 
     def preallocate_hessian(self, h_nnz, idxs, psys):
 

@@ -1565,6 +1565,10 @@ def integrate_system(
     ton = config.ton
     toff = config.toff
     petsc = config.petsc
+    check_jacobian = config.check_jacobian
+    jacobian_check_tol = config.jacobian_check_tol
+    jacobian_check_top_k = config.jacobian_check_top_k
+    jacobian_check_csv = config.jacobian_check_csv
     power_injection = config.power_injection
     solve_power_flow = config.solve_powerflow_dynamics
     arkimex = config.arkimex
@@ -1597,6 +1601,47 @@ def integrate_system(
     system_size = z0.shape[0]
     jacobian = preallocate_jacobian(psys)
     residual = np.zeros(system_size)
+
+    if check_jacobian:
+        if petsc:
+            raise ValueError("Jacobian check is only supported without PETSc.")
+        from uqgrid.simulation.jacobian import residual_jacobian
+        from uqgrid.simulation.jacobian_check import compare_jacobians
+        residual_jacobian(jacobian, z0, theta, psys)
+        mismatches = compare_jacobians(
+            psys,
+            z0,
+            theta,
+            jacobian,
+            eps=1e-6,
+            top_k=jacobian_check_top_k,
+            tol=jacobian_check_tol,
+        )
+        print("== Jacobian FD check (top mismatches) ==")
+        for m in mismatches:
+            print(
+                f"{m['row_desc']} <- {m['col_desc']}: "
+                f"analytical={m['analytical']:.3e}, fd={m['finite_diff']:.3e}, "
+                f"|diff|={m['abs_diff']:.3e}"
+            )
+        if jacobian_check_csv:
+            import csv
+            with open(jacobian_check_csv, "w", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "row",
+                        "col",
+                        "row_desc",
+                        "col_desc",
+                        "analytical",
+                        "finite_diff",
+                        "abs_diff",
+                    ],
+                )
+                writer.writeheader()
+                for m in mismatches:
+                    writer.writerow(m)
 
     # calculate nsteps
     h = dt

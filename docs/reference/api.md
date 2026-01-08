@@ -23,6 +23,14 @@ from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 - `IntegrationCtx`: Optional container for custom initial conditions and
   parameter overrides.
 
+`IntegrationConfig` also includes optional Jacobian diagnostics for non-PETSc
+runs:
+
+- `check_jacobian`: Run a finite-difference Jacobian check.
+- `jacobian_check_tol`: Absolute tolerance for reporting mismatches.
+- `jacobian_check_top_k`: Number of mismatches to report.
+- `jacobian_check_csv`: Optional CSV path for mismatch report.
+
 ## `uqgrid.simulation.dynamics`
 
 ```python
