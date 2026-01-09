@@ -95,18 +95,21 @@ class GenGENROU(DynamicGenerator):
                                   state_list)
 
     def set_ratio(self, ratio):
-        """ Modify machine parameters for a given MBASE/SBASE ratio"""
+        """Modify machine parameters for a given MBASE/SBASE ratio."""
 
+        if ratio <= 0.0:
+            return
         self.ratio = ratio
-        self.x_d = self.x_d*(1.0/ratio)
-        self.x_q = self.x_q*(1.0/ratio)
-        self.x_dp = self.x_dp*(1.0/ratio)
-        self.x_qp = self.x_qp*(1.0/ratio)
-        self.x_ddp = self.x_ddp*(1.0/ratio)
-        self.x_qdp = self.x_qdp*(1.0/ratio)
-        self.xl = self.xl*(1.0/ratio)
-        self.H = self.H*ratio
-        self.D = self.D*ratio
+        inv_ratio = 1.0 / ratio
+        self.x_d *= inv_ratio
+        self.x_q *= inv_ratio
+        self.x_dp *= inv_ratio
+        self.x_qp *= inv_ratio
+        self.x_ddp *= inv_ratio
+        self.x_qdp *= inv_ratio
+        self.xl *= inv_ratio
+        self.H *= ratio
+        self.D *= ratio
 
     def initialize_theta(self, theta):
 
@@ -184,7 +187,7 @@ class GenGENROU(DynamicGenerator):
         F[2] = (e_qp - i_d*(x_dp - xl) - phi_1d)/T_d0dp
         F[3] = (-e_dp - i_q*(x_qp - xl) - phi_2q)/T_q0dp
 
-        F[4] = (p_m - psi_de*i_q + psi_qe*i_d)/(2.0*H)
+        F[4] = (p_m - psi_de*i_q + psi_qe*i_d - D*w)/(2.0*H)
         F[5] = 2.0*np.pi*60.0*w
 
         # Stator currents
@@ -658,8 +661,6 @@ def resdiff_genrou(F, z, v, theta, idxs, power_injection):
     p_m = z[ap + 4]
     e_fd = z[ap + 5]
     
-    tmech = (p_m - D*w)/(1.0 + w)
-
     # auxiliary variables
     psi_de = (x_ddp - xl)/(x_dp - xl)*e_qp + \
         (x_dp - x_ddp)/(x_dp - xl)*phi_1d
@@ -678,7 +679,7 @@ def resdiff_genrou(F, z, v, theta, idxs, power_injection):
         + phi_2q)/((x_qp - xl)**2.0))*(x_q - x_qp))/T_q0p
     F[dp + 2] = ( e_qp - i_d*(x_dp - xl) - phi_1d)/T_d0dp
     F[dp + 3] = (-e_dp - i_q*(x_qp - xl) - phi_2q)/T_q0dp
-    F[dp + 4] = (tmech - psi_de*i_q + psi_qe*i_d)/(2.0*H)
+    F[dp + 4] = (p_m - psi_de*i_q + psi_qe*i_d - D*w)/(2.0*H)
     F[dp + 5] = 2.0*np.pi*60.0*w
 
     # Stator currents
@@ -877,13 +878,13 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     cols[3] = phi_2q_idx
     vals[3] = 0.5*i_d*(-x_ddp + x_qp)/(H*(x_qp - xl))
     cols[4] = w_idx
-    vals[4] = 0.5*(-D/(w + 1.0) - (-D*w + p_m)/(w + 1.0)**2.0)/H
+    vals[4] = -0.5*D/H
     cols[5] = i_q_idx
     vals[5] = 0.5*(-e_qp*(x_ddp - xl)/(x_dp - xl) - phi_1d*(-x_ddp + x_dp)/(x_dp - xl))/H
     cols[6] = i_d_idx
     vals[6] = 0.5*(e_dp*(-x_ddp + xl)/(x_qp - xl) + phi_2q*(-x_ddp + x_qp)/(x_qp - xl))/H
     cols[7] = pm_idx
-    vals[7] = 0.5/(H*(w + 1.0))
+    vals[7] = 0.5/H
     csr_set_row(J_data, J_ptr, J_idx, 8, dp + 4, cols, vals)
 
     cols = np.empty(1, dtype=np.int32)

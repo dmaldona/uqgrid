@@ -1870,34 +1870,62 @@ def integrate_system(
                 if verbose: print("Apply fault")
                 if len(psys.fault_events) > 0:
                     psys.fault_events[0].apply()
-                z, _, _, _ = integrate(z,
-                                    theta,
-                                    0.0,
-                                    psys,
-                                    residual,
-                                    jacobian,
-                                    None,
-                                    verbose=verbose,
-                                    fsolve=True,
-                                    uold=None,
-                                    vold=None,
-                                    mold=None)
+                try:
+                    z, _, _, _ = integrate(z,
+                                        theta,
+                                        0.0,
+                                        psys,
+                                        residual,
+                                        jacobian,
+                                        None,
+                                        verbose=verbose,
+                                        fsolve=True,
+                                        uold=None,
+                                        vold=None,
+                                        mold=None)
+                except NameError:
+                    z, _, _, _ = integrate(z,
+                                        theta,
+                                        0.0,
+                                        psys,
+                                        residual,
+                                        jacobian,
+                                        None,
+                                        verbose=verbose,
+                                        fsolve=False,
+                                        uold=None,
+                                        vold=None,
+                                        mold=None)
             if i == step_off:
                 if verbose: print("Remove fault")
                 if len(psys.fault_events) > 0:
                     psys.fault_events[0].remove()
-                z, _, _, _ = integrate(z,
-                                    theta,
-                                    0.0,
-                                    psys,
-                                    residual,
-                                    jacobian,
-                                    None,
-                                    verbose=verbose,
-                                    fsolve=True,
-                                    uold=None,
-                                    vold=None,
-                                    mold=None)
+                try:
+                    z, _, _, _ = integrate(z,
+                                        theta,
+                                        0.0,
+                                        psys,
+                                        residual,
+                                        jacobian,
+                                        None,
+                                        verbose=verbose,
+                                        fsolve=True,
+                                        uold=None,
+                                        vold=None,
+                                        mold=None)
+                except NameError:
+                    z, _, _, _ = integrate(z,
+                                        theta,
+                                        0.0,
+                                        psys,
+                                        residual,
+                                        jacobian,
+                                        None,
+                                        verbose=verbose,
+                                        fsolve=False,
+                                        uold=None,
+                                        vold=None,
+                                        mold=None)
 
         # if tend < toff we remove fault before exiting
         if i < step_off:
