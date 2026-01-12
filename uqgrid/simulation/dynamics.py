@@ -276,10 +276,10 @@ def residual_hessian(H, z, theta, psys):
             if is_close == False:
                 matprint(H_ND)
                 matprint(np.array(H_US))
-                print(H[eq])
+                logger.debug("H[%d]=%s", eq, H[eq])
                 assert False
             else:
-                print("True")
+                logger.debug("True")
 
     # No need to restore write access because a local read-only view was used
 
@@ -493,15 +493,15 @@ def test_jacobian_parameters(psys, z, theta):
     Jp_dense = Jp.todense()
     
     if np.allclose(Jp_dense, Jp_fd, rtol=1e-3, atol=1e-3):
-        print("Jacobian with respect to parameters test passed!")
+        logger.info("Jacobian with respect to parameters test passed!")
     else:
-        print("Jacobian with respect to parameters test failed!")
-        print("Maximum difference:", np.max(np.abs(Jp_dense - Jp_fd)))
+        logger.warning("Jacobian with respect to parameters test failed!")
+        logger.warning("Maximum difference: %g", np.max(np.abs(Jp_dense - Jp_fd)))
         
         # Optionally show where the differences are
         diff = np.abs(Jp_dense - Jp_fd)
         idx = np.unravel_index(np.argmax(diff), diff.shape)
-        print(f"Max difference at {idx}: {Jp_dense[idx]} vs {Jp_fd[idx]}")
+        logger.warning("Max difference at %s: %s vs %s", idx, Jp_dense[idx], Jp_fd[idx])
     
     return Jp_dense, Jp_fd
 
@@ -762,7 +762,8 @@ def integrate(zold,
                                               epsfcn=1e-9)
 
         if ier == 1:
-            if verbose: print("Fsolve converged.")
+            if verbose:
+                logger.info("Fsolve converged.")
             z = sol
         else:
             raise NameError('Fsolve did not converge')
@@ -770,7 +771,7 @@ def integrate(zold,
     else:
 
         if verbose:
-            print("Iteration %d. Residual norm: %g" % (iteration, norm_res))
+            logger.info("Iteration %d. Residual norm: %g", iteration, norm_res)
 
         # Iterate until residual norm is below tolerance
         while (norm_res > eps) and (iteration < max_iter):
@@ -799,8 +800,7 @@ def integrate(zold,
             norm_res = np.linalg.norm(F)
 
             if verbose:
-                print("Iteration %d. Residual norm: %g" %
-                      (iteration, norm_res))
+                logger.info("Iteration %d. Residual norm: %g", iteration, norm_res)
 
         if iteration >= max_iter:
             raise NameError('N-R solver did not converge.')
@@ -1571,7 +1571,7 @@ def integrate_system(
 
     # check for arkimex enabled
     if arkimex and petsc:
-        print("ARKIMEX activated.")
+        logger.info("ARKIMEX activated.")
 
     results = {}
     psys.power_injection=power_injection
@@ -1619,7 +1619,8 @@ def integrate_system(
         raise ValueError("Sensitivities can only be computed with PETSc.")
 
     if petsc4py and petsc:
-        if verbose: print("Convert objects to PETSc format")
+        if verbose:
+            logger.info("Convert objects to PETSc format")
         nsize = jacobian.shape[0]
         jac_rhs = PETSc.Mat()
         jac_rhs.create(PETSc.COMM_WORLD)
@@ -1769,7 +1770,8 @@ def integrate_system(
 
         # adjoint computation
         if comp_sens:
-            if verbose: print("Solving adjoint problem...")
+            if verbose:
+                logger.info("Solving adjoint problem...")
             ts.adjointSolve()
 
             # extract results
@@ -1806,7 +1808,8 @@ def integrate_system(
         tvec = np.linspace(0, nsteps*h, nsteps)
         history = np.zeros((system_size, nsteps))
         for i in range(nsteps):
-            if verbose: print("Step: %i. Time: %g (sec)" % (i, i*h))
+            if verbose:
+                logger.info("Step: %i. Time: %g (sec)", i, i * h)
             z, u, v, m = integrate(z,
                                 theta,
                                 h,
@@ -1822,7 +1825,8 @@ def integrate_system(
             history[:, i] = np.copy(z)
 
             if i == step_on:
-                if verbose: print("Apply fault")
+                if verbose:
+                    logger.info("Apply fault")
                 if len(psys.fault_events) > 0:
                     psys.fault_events[0].apply()
                 z, _, _, _ = integrate(z,
@@ -1838,7 +1842,8 @@ def integrate_system(
                                     vold=None,
                                     mold=None)
             if i == step_off:
-                if verbose: print("Remove fault")
+                if verbose:
+                    logger.info("Remove fault")
                 if len(psys.fault_events) > 0:
                     psys.fault_events[0].remove()
                 z, _, _, _ = integrate(z,

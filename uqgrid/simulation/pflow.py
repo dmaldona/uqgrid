@@ -2,11 +2,14 @@ import numpy as np
 from numba import jit
 from scipy.sparse import csr_matrix
 from scipy import optimize
+import logging
 try:
     from scipy.optimize._nonlin import nonlin_solve # For newer SciPy
 except ImportError:
     from scipy.optimize.nonlin import nonlin_solve # Fallback for older SciPy
 from uqgrid.core.psydef import Psystem, Bus
+
+logger = logging.getLogger(__name__)
 
 class PowerFlowSolution:
     def __init__(self, num_buses, num_gens):
@@ -318,8 +321,13 @@ def runpf(psys, verbose=False):
     nPV = np.sum(bus_type == Bus.PV)
     nPQ = np.sum(bus_type == Bus.PQ)
 
-    if verbose: print("Solving power flow with nslack: %d, nPV: %d, nPQ: %d" % (
-        nslack, nPV, nPQ))
+    if verbose:
+        logger.info(
+            "Solving power flow with nslack: %d, nPV: %d, nPQ: %d",
+            nslack,
+            nPV,
+            nPQ,
+        )
 
     x0 = np.zeros(2*nPQ + nPV)
 
@@ -353,18 +361,25 @@ def runpf(psys, verbose=False):
     # The only solver in SciPy that allowed me to pass a sparse Jacobian
     if verbose:
         initial_residual = fun(x0)
-        print(f"[Power Flow] Initial residual norm: {np.linalg.norm(initial_residual):.6e}")
+        logger.info(
+            "[Power Flow] Initial residual norm: %.6e",
+            np.linalg.norm(initial_residual),
+        )
     
     sol, info = nonlin_solve(fun, x0, jacobian=jac, full_output=True, f_tol=1e-9)
     
     if verbose:
         final_residual = fun(sol)
-        print(f"[Power Flow] Final residual norm: {np.linalg.norm(final_residual):.6e}")
+        logger.info(
+            "[Power Flow] Final residual norm: %.6e",
+            np.linalg.norm(final_residual),
+        )
 
     if info["success"]:
-        if verbose: print("Power flow converged.")
+        if verbose:
+            logger.info("Power flow converged.")
     else:
-        print(info["message"])
+        logger.error(info["message"])
         raise Exception("Power flow solution did not converge")
     
     # Create PowerFlowSolution object to store results

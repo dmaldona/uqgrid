@@ -3,6 +3,9 @@ import datetime
 import xml.etree.ElementTree as ET
 import re
 import warnings
+import logging
+
+logger = logging.getLogger(__name__)
 
 class BusRaw(object):
 
@@ -21,8 +24,8 @@ class BusRaw(object):
 
     def display(self):
 
-        print("Line number %i. Name: %s" % (self.busn, self.name))
-        print("\tvm: %f, va: %f" % (self.vm, self.va))
+        logger.info("Line number %i. Name: %s", self.busn, self.name)
+        logger.info("vm: %f, va: %f", self.vm, self.va)
 
     def toraw(self):
 
