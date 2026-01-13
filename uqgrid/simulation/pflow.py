@@ -1,12 +1,26 @@
+import logging
 import numpy as np
 from numba import jit
 from scipy.sparse import csr_matrix
 from scipy import optimize
+import sys
 try:
     from scipy.optimize._nonlin import nonlin_solve # For newer SciPy
 except ImportError:
     from scipy.optimize.nonlin import nonlin_solve # Fallback for older SciPy
 from uqgrid.core.psydef import Psystem, Bus
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# Optional: PETSC4py
+try:
+    import petsc4py
+    petsc4py.init(sys.argv)
+    from petsc4py import PETSc
+except ImportError:
+    petsc4py = None
+    logger.warning("PETSc4py not available. Some functionality will not be available.")
 
 class PowerFlowSolution:
     def __init__(self, num_buses, num_gens):
@@ -97,34 +111,147 @@ def resfun_wrapper(x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type,
     return F
 
 
-@jit(nopython=True, cache=True)
-def compute_jac_nnz(graph_mat, PQ_idx, PQV_idx):
-    nnz = 0
-    for i in range(graph_mat.shape[0]):
-        if PQ_idx[i] >= 0:
-            nnz += 4
-        elif PQV_idx[i] >= 0:
-            nnz += 1
-        else:
-            continue
+def _jac_with_structure(x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx,
+        graph_mat, indptr, indices, data):
+    fill_jacobian_data(x, vmag, vang, Pinj, Qinj, ybus_mat,
+        bus_type, PQ_idx, PQV_idx, graph_mat, indptr, data)
+    return csr_matrix((data, indices, indptr), shape=(x.shape[0], x.shape[0]), copy=False)
 
-        for j in range(graph_mat[i, 0]):
-            to = graph_mat[i, j + 1]
-            if PQ_idx[to] >= 0 and PQ_idx[i] >= 0:
-                nnz += 4
-            elif PQ_idx[to] >= 0 and PQV_idx[i] >= 0:
-                nnz += 2
-            elif PQV_idx[to] >= 0 and PQ_idx[i] >= 0:
-                nnz += 2
-            elif PQV_idx[to] >= 0 and PQV_idx[i] >= 0:
-                nnz += 1
-    return nnz
+
+if petsc4py:
+    class PFlowPetsc(object):
+        def __init__(self, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat,
+                     indptr=None, indices=None, data=None):
+            self.vmag = vmag
+            self.vang = vang
+            self.Pinj = Pinj
+            self.Qinj = Qinj
+            self.ybus_mat = ybus_mat
+            self.bus_type = bus_type
+            self.PQ_idx = PQ_idx
+            self.PQV_idx = PQV_idx
+            self.graph_mat = graph_mat
+            self.indptr = indptr
+            self.indices = indices
+            self.data = data
+
+        def evalFunction(self, snes, x, f):
+            start, end = x.getOwnershipRange()
+            xx = np.array(x[start:end])
+            ff = resfun_wrapper(xx, self.vmag, self.vang, self.Pinj, self.Qinj,
+                                self.ybus_mat, self.bus_type, self.PQ_idx, self.PQV_idx,
+                                self.graph_mat)
+            f.setArray(ff)
+            f.assemble()
+
+        def evalJacobian(self, snes, x, J, P):
+            start, end = x.getOwnershipRange()
+            xx = np.array(x[start:end])
+            fill_jacobian_data(
+                xx, self.vmag, self.vang, self.Pinj, self.Qinj, self.ybus_mat,
+                self.bus_type, self.PQ_idx, self.PQV_idx, self.graph_mat,
+                self.indptr, self.data
+            )
+            P.setValuesCSR(self.indptr, self.indices, self.data)
+            P.assemble()
+            if J != P:
+                J.assemble()
+            return True
+
 
 @jit(nopython=True, cache=True)
-def fill_jacobian(x, vmag, vang, Pinj, Qinj, ybus_mat,
+def compute_row_counts(graph_mat, PQ_idx, PQV_idx):
+    nPQ = np.sum(PQ_idx >= 0)
+    nPQV = np.sum(PQV_idx >= 0)
+    nrows = nPQ + nPQV
+    row_counts = np.zeros(nrows, dtype=np.int64)
+
+    for fr in range(graph_mat.shape[0]):
+        if PQ_idx[fr] >= 0:
+            row = PQ_idx[fr]
+            # neighbor contributions
+            for j in range(graph_mat[fr, 0]):
+                to = graph_mat[fr, j + 1]
+                if PQV_idx[to] >= 0:
+                    row_counts[row] += 1
+                if PQ_idx[to] >= 0:
+                    row_counts[row] += 1
+            # self vmag + self vang
+            row_counts[row] += 2
+
+        if PQV_idx[fr] >= 0:
+            row = nPQ + PQV_idx[fr]
+            # neighbor contributions
+            for j in range(graph_mat[fr, 0]):
+                to = graph_mat[fr, j + 1]
+                if PQV_idx[to] >= 0:
+                    row_counts[row] += 1
+                if PQ_idx[to] >= 0:
+                    row_counts[row] += 1
+            # self vmag only for PQ buses
+            if PQ_idx[fr] >= 0:
+                row_counts[row] += 1
+            # self vang
+            row_counts[row] += 1
+
+    return row_counts
+
+
+@jit(nopython=True, cache=True)
+def build_jacobian_structure(graph_mat, PQ_idx, PQV_idx):
+    row_counts = compute_row_counts(graph_mat, PQ_idx, PQV_idx)
+    nrows = row_counts.shape[0]
+
+    indptr = np.zeros(nrows + 1, dtype=np.int64)
+    for i in range(nrows):
+        indptr[i + 1] = indptr[i] + row_counts[i]
+
+    nnz = indptr[-1]
+    indices = np.empty(nnz, dtype=np.int64)
+
+    # fill indices in the same order as value computation
+    row_ptrs = indptr.copy()
+    nPQ = np.sum(PQ_idx >= 0)
+
+    for fr in range(graph_mat.shape[0]):
+        if PQ_idx[fr] >= 0:
+            row = PQ_idx[fr]
+            for j in range(graph_mat[fr, 0]):
+                to = graph_mat[fr, j + 1]
+                if PQV_idx[to] >= 0:
+                    indices[row_ptrs[row]] = nPQ + PQV_idx[to]
+                    row_ptrs[row] += 1
+                if PQ_idx[to] >= 0:
+                    indices[row_ptrs[row]] = PQ_idx[to]
+                    row_ptrs[row] += 1
+            indices[row_ptrs[row]] = PQ_idx[fr]
+            row_ptrs[row] += 1
+            indices[row_ptrs[row]] = nPQ + PQV_idx[fr]
+            row_ptrs[row] += 1
+
+        if PQV_idx[fr] >= 0:
+            row = nPQ + PQV_idx[fr]
+            for j in range(graph_mat[fr, 0]):
+                to = graph_mat[fr, j + 1]
+                if PQV_idx[to] >= 0:
+                    indices[row_ptrs[row]] = nPQ + PQV_idx[to]
+                    row_ptrs[row] += 1
+                if PQ_idx[to] >= 0:
+                    indices[row_ptrs[row]] = PQ_idx[to]
+                    row_ptrs[row] += 1
+            if PQ_idx[fr] >= 0:
+                indices[row_ptrs[row]] = PQ_idx[fr]
+                row_ptrs[row] += 1
+            indices[row_ptrs[row]] = nPQ + PQV_idx[fr]
+            row_ptrs[row] += 1
+
+    return indptr, indices
+
+
+@jit(nopython=True, cache=True)
+def fill_jacobian_data(x, vmag, vang, Pinj, Qinj, ybus_mat,
         bus_type, PQ_idx, PQV_idx, graph_mat,
-        row, col, val):
-    ptr = 0
+        indptr, data):
     nPQ = np.sum(bus_type == 1)
     nbus = len(bus_type)
 
@@ -135,12 +262,11 @@ def fill_jacobian(x, vmag, vang, Pinj, Qinj, ybus_mat,
         if PQV_idx[i] >= 0:
             vang[i] = x[nPQ + PQV_idx[i]]
 
-    for (fr, elem) in enumerate(graph_mat):
-        if PQ_idx[fr] >= 0:
-            # self contribution
-            vmag_fr_idx = PQ_idx[fr]
-            vang_fr_idx = nPQ + PQV_idx[fr]
+    row_ptrs = indptr.copy()
 
+    for fr in range(nbus):
+        if PQ_idx[fr] >= 0:
+            row = PQ_idx[fr]
             bij = ybus_mat[fr, 0].imag
 
             accum_self_vmag = -2*vmag[fr]*bij
@@ -159,36 +285,23 @@ def fill_jacobian(x, vmag, vang, Pinj, Qinj, ybus_mat,
                         + bij*np.sin(angleij))
 
                 if PQV_idx[to] >= 0:
-                    vang_to_idx = nPQ + PQV_idx[to]
-                    row[ptr] = PQ_idx[fr]
-                    col[ptr] = vang_to_idx
-                    val[ptr] = vmag[fr]*vmag[to]*(-gij*np.cos(angleij)
+                    data[row_ptrs[row]] = vmag[fr]*vmag[to]*(-gij*np.cos(angleij)
                         - bij*np.sin(angleij))
-                    ptr += 1
+                    row_ptrs[row] += 1
 
                 if PQ_idx[to] >= 0:
-                    vmag_to_idx = PQ_idx[to]
-                    row[ptr] = PQ_idx[fr]
-                    col[ptr] = vmag_to_idx
-                    val[ptr] = vmag[fr]*(gij*np.sin(angleij)
+                    data[row_ptrs[row]] = vmag[fr]*(gij*np.sin(angleij)
                         - bij*np.cos(angleij))
-                    ptr += 1
+                    row_ptrs[row] += 1
 
-            row[ptr] = PQ_idx[fr]
-            col[ptr] = vmag_fr_idx
-            val[ptr] = accum_self_vmag
-            ptr += 1
-
-            row[ptr] = PQ_idx[fr]
-            col[ptr] = vang_fr_idx
-            val[ptr] = accum_self_vang
-            ptr += 1
+            data[row_ptrs[row]] = accum_self_vmag
+            row_ptrs[row] += 1
+            data[row_ptrs[row]] = accum_self_vang
+            row_ptrs[row] += 1
 
         if PQV_idx[fr] >= 0:
-            # self contribution
+            row = nPQ + PQV_idx[fr]
             gij = ybus_mat[fr, 0].real
-            #F[nPQ + PQV_idx[fr]] += vmag[fr]*vmag[fr]*gij
-
             bij = ybus_mat[fr, 0].imag
 
             accum_self_vmag = 2*vmag[fr]*gij
@@ -205,44 +318,20 @@ def fill_jacobian(x, vmag, vang, Pinj, Qinj, ybus_mat,
                         + bij*np.cos(angleij))
 
                 if PQV_idx[to] >= 0:
-                    vang_to_idx = nPQ + PQV_idx[to]
-                    row[ptr] = nPQ + PQV_idx[fr]
-                    col[ptr] = vang_to_idx
-                    val[ptr] = vmag[fr]*vmag[to]*(gij*np.sin(angleij)
+                    data[row_ptrs[row]] = vmag[fr]*vmag[to]*(gij*np.sin(angleij)
                         - bij*np.cos(angleij))
-                    ptr += 1
+                    row_ptrs[row] += 1
 
                 if PQ_idx[to] >= 0:
-                    vmag_to_idx = PQ_idx[to]
-                    row[ptr] = nPQ + PQV_idx[fr]
-                    col[ptr] = vmag_to_idx
-                    val[ptr] = vmag[fr]*(gij*np.cos(angleij)
+                    data[row_ptrs[row]] = vmag[fr]*(gij*np.cos(angleij)
                         + bij*np.sin(angleij))
-                    ptr += 1
+                    row_ptrs[row] += 1
 
             if PQ_idx[fr] >= 0:
-                vmag_fr_idx = PQ_idx[fr]
-                row[ptr] = nPQ + PQV_idx[fr]
-                col[ptr] = vmag_fr_idx
-                val[ptr] = accum_self_vmag
-                ptr += 1
-
-            vang_fr_idx = nPQ + PQV_idx[fr]
-            row[ptr] = nPQ + PQV_idx[fr]
-            col[ptr] = vang_fr_idx
-            val[ptr] = accum_self_vang
-            ptr += 1
-
-def jac_wrapper(x, vmag, vang, Pinj, Qinj, ybus_mat, bus_type, PQ_idx, PQV_idx, graph_mat):
-    nnz = compute_jac_nnz(graph_mat, PQ_idx, PQV_idx)
-    row = np.zeros(nnz)
-    col = np.zeros(nnz)
-    val = np.zeros(nnz)
-    fill_jacobian(x, vmag, vang, Pinj, Qinj, ybus_mat,
-        bus_type, PQ_idx, PQV_idx, graph_mat,
-        row, col, val)
-    J =  csr_matrix((val, (row, col)), shape=(x.shape[0], x.shape[0]))
-    return J
+                data[row_ptrs[row]] = accum_self_vmag
+                row_ptrs[row] += 1
+            data[row_ptrs[row]] = accum_self_vang
+            row_ptrs[row] += 1
 
 @jit(nopython=True, cache=True)
 def compute_pinj_alt(v, Sinj, ybus_mat, graph_mat, nbus):
@@ -284,7 +373,9 @@ def compute_pinj_alt(v, Sinj, ybus_mat, graph_mat, nbus):
             Sinj[2*fr_bus + 1] += vmag_i*vmag_j*(gij*np.sin(angleij)
                 - bij*np.cos(angleij))
 
-def runpf(psys, verbose=False):
+def runpf(psys, verbose=False, f_tol=1e-9, maxiter=None, use_krylov=False,
+          use_petsc=False, petsc_jacobian=False, petsc_options_prefix="pf_",
+          debug=False):
 
     # Slack  (1) variables: p, q. parameters: vmag, vang.
     # PV gen (2) variables: q, vang. parameters: P, vmag.
@@ -346,25 +437,103 @@ def runpf(psys, verbose=False):
     # pack data structures
     fun = lambda x : resfun_wrapper(x, vmag, vang, Pinj, Qinj, psys.ybus_mat, bus_type,
             PQ_idx, PQV_idx, psys.graph_mat)
-    jac = lambda x : jac_wrapper(x, vmag, vang, Pinj, Qinj, psys.ybus_mat, bus_type,
-            PQ_idx, PQV_idx, psys.graph_mat)
+    indptr, indices = build_jacobian_structure(psys.graph_mat, PQ_idx, PQV_idx)
+    jac_data = np.empty(indices.shape[0], dtype=np.float64)
+    jac = lambda x : _jac_with_structure(
+        x, vmag, vang, Pinj, Qinj, psys.ybus_mat, bus_type,
+        PQ_idx, PQV_idx, psys.graph_mat, indptr, indices, jac_data
+    )
 
     # https://github.com/scipy/scipy/blob/main/scipy/optimize/_nonlin.py#L116
     # The only solver in SciPy that allowed me to pass a sparse Jacobian
-    if verbose:
+    if verbose or debug:
         initial_residual = fun(x0)
         print(f"[Power Flow] Initial residual norm: {np.linalg.norm(initial_residual):.6e}")
+        if debug:
+            eq_bus = np.full_like(initial_residual, -1, dtype=int)
+            eq_kind = np.full(initial_residual.shape[0], "", dtype=object)
+            int2ext = None
+            if hasattr(psys, "ext2int"):
+                int2ext = {v: k for k, v in psys.ext2int.items()}
+            for i in range(psys.nbuses):
+                if PQ_idx[i] >= 0:
+                    eq_bus[PQ_idx[i]] = i
+                    eq_kind[PQ_idx[i]] = "Q"
+                if PQV_idx[i] >= 0:
+                    eq_bus[nPQ + PQV_idx[i]] = i
+                    eq_kind[nPQ + PQV_idx[i]] = "P"
+
+            finite_mask = np.isfinite(initial_residual)
+            if not finite_mask.all():
+                bad_idx = np.where(~finite_mask)[0]
+                print(f"[Power Flow] Non-finite residual entries: {bad_idx.size}")
+                for k in bad_idx[:10]:
+                    bus = eq_bus[k]
+                    ext = int2ext.get(bus, bus) if int2ext else bus
+                    print(f"  eq[{k}] bus={bus} ext={ext} type={eq_kind[k]} val={initial_residual[k]}")
+
+            abs_res = np.abs(initial_residual)
+            top = np.argsort(-abs_res)[:10]
+            print("[Power Flow] Top residual entries:")
+            for k in top:
+                bus = eq_bus[k]
+                ext = int2ext.get(bus, bus) if int2ext else bus
+                print(f"  eq[{k}] bus={bus} ext={ext} type={eq_kind[k]} |F|={abs_res[k]:.6e}")
     
-    sol, info = nonlin_solve(fun, x0, jacobian=jac, full_output=True, f_tol=1e-9)
+    if use_petsc:
+        if not petsc4py:
+            raise RuntimeError("PETSc requested but petsc4py is not available.")
+        n = x0.shape[0]
+        solver = PFlowPetsc(vmag, vang, Pinj, Qinj, psys.ybus_mat, bus_type,
+                            PQ_idx, PQV_idx, psys.graph_mat, indptr, indices, jac_data)
+
+        indptr_p = indptr.astype(PETSc.IntType, copy=False)
+        indices_p = indices.astype(PETSc.IntType, copy=False)
+        solver.indptr = indptr_p
+        solver.indices = indices_p
+
+        x = PETSc.Vec().createWithArray(x0, comm=PETSc.COMM_WORLD)
+        f = x.duplicate()
+        snes = PETSc.SNES().create(comm=PETSc.COMM_WORLD)
+        snes.setFunction(solver.evalFunction, f)
+
+        J = PETSc.Mat().createAIJ(size=(n, n), csr=(indptr_p, indices_p, jac_data),
+                                  comm=PETSc.COMM_WORLD)
+        if petsc_jacobian:
+            snes.setJacobian(solver.evalJacobian, J, J)
+        else:
+            snes.setJacobian(None, J, J)
+
+        if petsc_options_prefix:
+            snes.setOptionsPrefix(petsc_options_prefix)
+        snes.setFromOptions()
+        snes.solve(None, x)
+
+        sol = np.array(x.getArray())
+        info = {"success": snes.getConvergedReason() > 0,
+                "message": snes.getConvergedReason()}
+    elif use_krylov:
+        sol, info = nonlin_solve(fun, x0, jacobian="krylov", full_output=True,
+                                 f_tol=f_tol, maxiter=maxiter)
+    else:
+        sol, info = nonlin_solve(fun, x0, jacobian=jac, full_output=True,
+                                 f_tol=f_tol, maxiter=maxiter)
     
     if verbose:
         final_residual = fun(sol)
         print(f"[Power Flow] Final residual norm: {np.linalg.norm(final_residual):.6e}")
 
-    if info["success"]:
+    if isinstance(info, dict):
+        success = info.get("success", False)
+        message = info.get("message", "Unknown failure")
+    else:
+        success = False
+        message = str(info)
+
+    if success:
         if verbose: print("Power flow converged.")
     else:
-        print(info["message"])
+        print(message)
         raise Exception("Power flow solution did not converge")
     
     # Create PowerFlowSolution object to store results

@@ -573,12 +573,17 @@ class Psystem:
         """ for each bus with multiple loads, calculate weights """
         for bus in self.buses:
             if len(bus.loads) <= 1:
-                pass
+                continue
             tot_load = 0.0
             for load in bus.loads:
                 tot_load += load.pload
-            for load in bus.loads:
-                load.weight = load.pload/tot_load
+            if tot_load == 0.0:
+                equal_weight = 1.0 / len(bus.loads)
+                for load in bus.loads:
+                    load.weight = equal_weight
+            else:
+                for load in bus.loads:
+                    load.weight = load.pload/tot_load
 
         self.assembled = 1
 
