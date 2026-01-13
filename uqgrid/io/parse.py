@@ -41,24 +41,36 @@ def load_psse(raw_filename):
         fr_internal = psse_to_int[int(tran.fbus)]
         to_internal = psse_to_int[int(tran.tbus)]
 
+        baseKV1 = psys.buses[fr_internal].baseKV
+        baseKV2 = psys.buses[to_internal].baseKV
+
         if tran.CW == 2:
-            assert False, "Not implemented yet"
-            volt2 = tran.WINDV2
-            volt1 = tran.WINDV1
+            # winding voltages in kV
+            tap = (tran.WINDV1 / baseKV1) / (tran.WINDV2 / baseKV2)
+            z_scale = 1.0
+        elif tran.CW == 3:
+            # winding voltages in pu on nominal winding voltage
+            Vn1 = tran.NOMV1 if tran.NOMV1 != 0.0 else baseKV1
+            Vn2 = tran.NOMV2 if tran.NOMV2 != 0.0 else baseKV2
+            tap = tran.WINDV1 * (Vn1 / baseKV1) / (Vn2 / baseKV2)
+            z_scale = 1.0
         else:
-            volt2 = tran.WINDV2
-            volt1 = tran.WINDV1
+            # winding voltages in pu on bus base kV
+            tap = tran.WINDV1 if tran.WINDV1 != 0.0 else 1.0
+            if baseKV1 > 0 and tran.NOMV1 > 0.0:
+                z_scale = (tran.NOMV1 / baseKV1) ** 2
+            else:
+                z_scale = 1.0
 
         if tran.CZ == 1:
-            r12 = tran.r*(volt2)**2.0
-            x12 = tran.x*(volt2)**2.0
+            r12 = tran.r * z_scale
+            x12 = tran.x * z_scale
         elif tran.CZ == 2:
-            r12 = tran.r*(baseMVA/case.sbase12)*(volt2)**2.0
-            x12 = tran.x*(baseMVA/case.sbase12)*(volt2)**2.0
+            r12 = tran.r * (baseMVA / case.sbase12) * z_scale
+            x12 = tran.x * (baseMVA / case.sbase12) * z_scale
         elif tran.CZ == 3:
             assert False, "Not implemented yet"
 
-        tap = (volt1/volt2)
         psys.add_branch(fr_internal, to_internal, r12, x12, 
                 tran.MAG2 if abs(tran.MAG2) > 0.0 else 0.0, tap=tap, shift=tran.ANG1)
 
@@ -81,7 +93,7 @@ def load_psse(raw_filename):
         # first, we need to add a dummy bus
         bus_internal = len(psys.buses)
         psys.add_bus(bus_internal, bus_type=2)
-        psys.buses[bus_internal].set_vinit(tran.vmstar, tran.anstar)
+        psys.buses[bus_internal].set_vinit(tran.vmstar, (np.pi/180.0)*tran.anstar)
         psse_to_int[MAX_BUSN + kdummy] = bus_internal
         psys.buses[bus_internal].dummy = True
         kdummy += 1
@@ -184,10 +196,11 @@ def load_psse(raw_filename):
                      pgub=gen.pt, pglb=gen.pb, qgub=gen.qt, qglb=gen.qb,
                      mbase=gen.mbase)
 
-    # Downgrade PV buses to PQ only if they have no active generators
-    for (bus, idx) in psys.inactive_gens:
-        if bus not in buses_with_active_gens and psys.buses[bus].type == Bus.PV:
-            psys.buses[bus].type = Bus.PQ
+    # Downgrade PV buses to PQ if they have no active generators.
+    # This includes dummy buses created for three-winding transformers.
+    for bus_idx, bus in enumerate(psys.buses):
+        if bus.type == Bus.PV and bus_idx not in buses_with_active_gens:
+            bus.type = Bus.PQ
 
     # add loads
     for i in range(nloads):
