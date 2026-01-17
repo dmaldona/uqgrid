@@ -5,6 +5,9 @@ from uqgrid.io.parse_psse import read_raw
 import numpy as np
 import warnings
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 def load_psse(raw_filename):
 
@@ -399,7 +402,11 @@ def add_dyr(psys, dyr_filename, verbose=False):
             # Skip dynamic models for inactive generators
             if hasattr(psys, 'inactive_gens') and (bus, idx) in psys.inactive_gens:
                 if verbose:
-                    print("Skipping GENROU for inactive generator at bus %d, idx %s." % (int(device[0]), idx))
+                    logger.info(
+                        "Skipping GENROU for inactive generator at bus %d, idx %s.",
+                        int(device[0]),
+                        idx,
+                    )
                 continue
             
             T_d0p = float(device[3])
@@ -431,17 +438,29 @@ def add_dyr(psys, dyr_filename, verbose=False):
                     found_match = True
                     psys.gens[i].set_dynamic_true()
                     if verbose:
-                        print("Adding GENROU at bus %d. GENID %s." % (int(device[0]), idx))
+                        logger.info(
+                            "Adding GENROU at bus %d. GENID %s.",
+                            int(device[0]),
+                            idx,
+                        )
                     break
 
             if not found_match:
-                print("Cannot pair GENROU with bus %d and idx %s. Skipping." % (bus, idx))
+                logger.warning(
+                    "Cannot pair GENROU with bus %d and idx %s. Skipping.",
+                    bus,
+                    idx,
+                )
 
         if 'IEESGO' in device[1]:
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2])
             if verbose:
-                print("Adding IEESGO at bus %d. GENID %s." % (int(device[0]), gen_id))
+                logger.info(
+                    "Adding IEESGO at bus %d. GENID %s.",
+                    int(device[0]),
+                    gen_id,
+                )
 
             T1 = float(device[3])
             T2 = float(device[4])
@@ -465,7 +484,11 @@ def add_dyr(psys, dyr_filename, verbose=False):
             gen_id = str(device[2])
 
             if verbose:
-                print("Adding ESDC1A at bus %d. GENID %s." % (int(device[0]), gen_id))
+                logger.info(
+                    "Adding ESDC1A at bus %d. GENID %s.",
+                    int(device[0]),
+                    gen_id,
+                )
 
             TR = float(device[3])
             KA = float(device[4])
@@ -495,7 +518,11 @@ def add_dyr(psys, dyr_filename, verbose=False):
             bus = psys.ext2int[int(device[0])]
             load_id = str(device[2])
             if verbose:
-                print("Adding CIM5BL at bus %d. LOADID %s." % (int(device[0]), load_id))
+                logger.info(
+                    "Adding CIM5BL at bus %d. LOADID %s.",
+                    int(device[0]),
+                    load_id,
+                )
             ra = float(device[4])
             xa = float(device[5])
             xm = float(device[6])
@@ -542,7 +569,7 @@ def add_dyr(psys, dyr_filename, verbose=False):
             k += 1
 
     if k > 0:
-        print("We added %d dummy GENROU models to the system." % k)
+        logger.info("We added %d dummy GENROU models to the system.", k)
 
 def load_gic(psys, gis_filename):
 
