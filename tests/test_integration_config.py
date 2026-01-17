@@ -22,3 +22,13 @@ def test_integration_config_rejects_both_fast_and_slow_lists():
             arkimex_fast_differential=[1, 3],
             arkimex_slow_differential=[0, 2],
         )
+
+
+def test_integration_config_accepts_sparse_solver():
+    cfg = IntegrationConfig(sparse_solver="klu")
+    assert cfg.sparse_solver == "klu"
+
+
+def test_integration_config_rejects_unknown_solver():
+    with pytest.raises(ValueError):
+        IntegrationConfig(sparse_solver="unknown")

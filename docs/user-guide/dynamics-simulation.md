@@ -71,6 +71,8 @@ Key fields:
 - **comp_sens**: Enable adjoint-based sensitivities (requires PETSc).
 - **petsc**: Switch to PETSc-backed integrators for improved robustness and
   adjoint capabilities.
+- **sparse_solver**: Select `"scipy"` (default) or `"klu"` for the non-PETSc
+  linear solver used in power flow and dynamics.
 
 ## Run the integrator
 

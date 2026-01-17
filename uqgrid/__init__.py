@@ -14,6 +14,7 @@ from .core.psydef import Psystem
 from .io.parse import load_psse, add_dyr, load_matpower, load_gic
 from .simulation.pflow import runpf
 from .simulation.config import IntegrationConfig, IntegrationCtx
+from .simulation.sparse_solvers import klu_available
 
 # Check if PETSc is available
 try:
@@ -27,5 +28,6 @@ def get_info():
     info = {
         "version": __version__,
         "petsc_available": _PETSC_AVAILABLE,
+        "klu_available": klu_available(),
     }
     return info

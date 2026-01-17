@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 import numpy as np
@@ -14,6 +14,10 @@ class IntegrationConfig(BaseModel):
     ton: float = Field(0.25, description="Fault activation time.")
     toff: float = Field(0.4, description="Fault deactivation time.")
     petsc: bool = Field(False, description="Enable PETSc integration.")
+    sparse_solver: Literal["scipy", "klu"] = Field(
+        "scipy",
+        description="Sparse solver for power flow and non-PETSc dynamics."
+    )
     solve_powerflow_dynamics: bool = Field(True, description="Solve power flow before dynamics.")
     arkimex: bool = Field(False, description="Use ARKIMEX integrator.")
     arkimex_slow_differential: Optional[List[int]] = Field(

@@ -853,7 +853,8 @@ def run_single_scenario_worker(
             ton=int_cfg.get('ton', 0.25),             # Fault onset time [s]
             toff=int_cfg.get('toff', 0.4),            # Fault clearing time [s]
             verbose=int_cfg.get('verbose', False),
-            petsc=int_cfg.get('petsc', True)
+            petsc=int_cfg.get('petsc', True),
+            sparse_solver=int_cfg.get('sparse_solver', "scipy")
         )
 
         try:

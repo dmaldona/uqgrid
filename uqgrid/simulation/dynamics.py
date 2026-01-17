@@ -12,7 +12,6 @@ from numpy import linalg as LA
 from scipy import optimize
 from scipy.sparse import csr_matrix
 from scipy.sparse._sparsetools import csr_matvec
-from scipy.sparse.linalg import factorized, spsolve
 
 import logging
 logger = logging.getLogger(__name__)
@@ -31,6 +30,7 @@ from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 from uqgrid.core import Psystem
 from uqgrid.simulation.pflow import runpf, compute_pinj_alt, PowerFlowSolution
 from uqgrid.simulation.gradients import gradient_p, gradient_xp, gradient_pp
+from uqgrid.simulation.sparse_solvers import factorize_sparse_system, solve_sparse_system
 from uqgrid.simulation.residual import residual_function
 from uqgrid.simulation.jacobian import residual_jacobian
 from uqgrid.utils.tools import (
@@ -717,7 +717,8 @@ def integrate(zold,
               uold=None,
               vold=None,
               mold=None,
-              fsolve=False):
+              fsolve=False,
+              sparse_solver="scipy"):
     """
     Name: integrate
     Description: implements backward euler for the OMIB,
@@ -789,7 +790,7 @@ def integrate(zold,
                 assert jacobian_nd == True
 
             # step
-            zdelta = spsolve(J, F)
+            zdelta = solve_sparse_system(J, F, sparse_solver)
             z = z - zdelta
 
             # calculate new residual
@@ -820,7 +821,7 @@ def integrate(zold,
             csr_add_row(J.data, J.indptr, J.indices, 1, i, col, data)
         
         JJ = J.tocsc(copy=True)
-        sfact = factorized(JJ)
+        sfact = factorize_sparse_system(JJ, sparse_solver)
 
     if uold is not None:
         # Integrate 1st order sensitivity equations
@@ -1565,6 +1566,7 @@ def integrate_system(
     ton = config.ton
     toff = config.toff
     petsc = config.petsc
+    sparse_solver = config.sparse_solver
     power_injection = config.power_injection
     solve_power_flow = config.solve_powerflow_dynamics
     arkimex = config.arkimex
@@ -1576,8 +1578,12 @@ def integrate_system(
     results = {}
     psys.power_injection=power_injection
 
+    if petsc and sparse_solver != "scipy":
+        logger.warning("Sparse solver '%s' ignored because PETSc is enabled.", sparse_solver)
+        sparse_solver = "scipy"
+
     # retrieve parameters
-    pf_solution = runpf(psys, verbose=False)
+    pf_solution = runpf(psys, verbose=False, sparse_solver=sparse_solver)
     z0, theta = initialize_system(psys, pf_solution)
 
     # Use context if provided, otherwise fallback to config attributes
@@ -1819,6 +1825,7 @@ def integrate_system(
                                 None,
                                 verbose=verbose,
                                 fsolve=fsolve,
+                                sparse_solver=sparse_solver,
                                 uold=None,
                                 vold=None,
                                 mold=None)
@@ -1838,6 +1845,7 @@ def integrate_system(
                                     None,
                                     verbose=verbose,
                                     fsolve=True,
+                                    sparse_solver=sparse_solver,
                                     uold=None,
                                     vold=None,
                                     mold=None)
@@ -1855,6 +1863,7 @@ def integrate_system(
                                     None,
                                     verbose=verbose,
                                     fsolve=True,
+                                    sparse_solver=sparse_solver,
                                     uold=None,
                                     vold=None,
                                     mold=None)

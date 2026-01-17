@@ -226,6 +226,7 @@ Configuration files are stored in `config/` and define all simulation parameters
 | | `toff` | Fault clearing time [s] |
 | | `verbose` | Enable verbose solver output |
 | | `petsc` | Use PETSc solver |
+| | `sparse_solver` | Sparse solver for non-PETSc runs (`scipy` or `klu`) |
 
 ### Available Models
 

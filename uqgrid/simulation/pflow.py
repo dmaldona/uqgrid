@@ -8,6 +8,7 @@ try:
 except ImportError:
     from scipy.optimize.nonlin import nonlin_solve # Fallback for older SciPy
 from uqgrid.core.psydef import Psystem, Bus
+from uqgrid.simulation.sparse_solvers import solve_sparse_system, validate_sparse_solver
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +288,44 @@ def compute_pinj_alt(v, Sinj, ybus_mat, graph_mat, nbus):
             Sinj[2*fr_bus + 1] += vmag_i*vmag_j*(gij*np.sin(angleij)
                 - bij*np.cos(angleij))
 
-def runpf(psys, verbose=False):
+def _solve_power_flow_newton(
+    fun,
+    jac,
+    x0,
+    sparse_solver,
+    verbose=False,
+    f_tol=1e-9,
+    max_iter=100,
+):
+    x = x0
+    norm_res = np.inf
+    for iteration in range(max_iter):
+        residual = fun(x)
+        norm_res = np.linalg.norm(residual)
+        if verbose:
+            logger.info(
+                "[Power Flow] Iteration %d. Residual norm: %.6e",
+                iteration,
+                norm_res,
+            )
+        if norm_res <= f_tol:
+            return x, {
+                "success": True,
+                "message": "Converged",
+                "iterations": iteration,
+            }
+        jacobian = jac(x)
+        delta = solve_sparse_system(jacobian, residual, sparse_solver)
+        x = x - delta
+    return x, {
+        "success": False,
+        "message": "Power flow solution did not converge",
+        "iterations": max_iter,
+        "residual_norm": norm_res,
+    }
+
+
+def runpf(psys, verbose=False, sparse_solver="scipy"):
 
     # Slack  (1) variables: p, q. parameters: vmag, vang.
     # PV gen (2) variables: q, vang. parameters: P, vmag.
@@ -366,7 +404,18 @@ def runpf(psys, verbose=False):
             np.linalg.norm(initial_residual),
         )
     
-    sol, info = nonlin_solve(fun, x0, jacobian=jac, full_output=True, f_tol=1e-9)
+    sparse_solver = validate_sparse_solver(sparse_solver)
+    if sparse_solver == "scipy":
+        sol, info = nonlin_solve(fun, x0, jacobian=jac, full_output=True, f_tol=1e-9)
+    else:
+        sol, info = _solve_power_flow_newton(
+            fun,
+            jac,
+            x0,
+            sparse_solver,
+            verbose=verbose,
+            f_tol=1e-9,
+        )
     
     if verbose:
         final_residual = fun(sol)

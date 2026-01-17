@@ -34,6 +34,7 @@ Optional extras:
 
 - `pip install -e ".[dev]"` — linting, testing, and profiling tools.
 - `pip install -e ".[petsc]"` — PETSc/TS integrator and adjoint sensitivities.
+- `pip install -e ".[klu]"` — SuiteSparse KLU sparse solver for non-PETSc runs.
 - `pip install -e ".[docs]"` — MkDocs + mkdocstrings documentation toolchain.
 
 ## Quick Start
@@ -106,6 +107,7 @@ Adjoint tests require PETSc (`pip install -e ".[petsc]"`).
 - Python 3.8+
 - NumPy, SciPy, Numba, NetworkX, Matplotlib, Pydantic
 - PETSc4py (optional, for adjoint sensitivity analysis)
+- PyKLU (optional, for KLU sparse solves in non-PETSc workflows)
 - MkDocs + mkdocs-material (optional, for documentation builds)
 
 ## License

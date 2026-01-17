@@ -11,6 +11,7 @@ running your first dynamic simulation.
 Optional components:
 
 - [PETSc](https://petsc.org/release/) + `petsc4py` for adjoint sensitivities.
+- [PyKLU](https://github.com/PyKLU/PyKLU) for SuiteSparse KLU solves in non-PETSc workflows.
 - [MkDocs](https://www.mkdocs.org/) for local documentation builds.
 
 ## Installation
@@ -42,6 +43,14 @@ pip install -e ".[petsc]"
 
 PETSc must be compiled with complex-number support and shared libraries. Refer
 to the PETSc installation guide for platform-specific instructions.
+
+### KLU optional support
+
+Enable SuiteSparse KLU solves for the non-PETSc solver paths:
+
+```bash
+pip install -e ".[klu]"
+```
 
 ### Documentation toolchain
 
