@@ -3,15 +3,15 @@ import os
 import numpy as np
 import pytest
 
-from uqgrid.io.parse import load_matpower, load_matpower_raw
-from uqgrid.simulation.pflow import runpf
-
-
 pytest.importorskip("pypower")
+
 from pypower.ext2int import ext2int
 from pypower.makeYbus import makeYbus
 from pypower.ppoption import ppoption
 from pypower.runpf import runpf as pp_runpf
+
+from uqgrid.io.parse import load_matpower, load_matpower_raw
+from uqgrid.simulation.pflow import runpf
 
 
 CASES = ["case9.m", "case14.m", "case30.m", "case118.m"]
