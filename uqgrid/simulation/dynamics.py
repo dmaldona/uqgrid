@@ -30,7 +30,11 @@ from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 from uqgrid.core import Psystem
 from uqgrid.simulation.pflow import runpf, compute_pinj_alt, PowerFlowSolution
 from uqgrid.simulation.gradients import gradient_p, gradient_xp, gradient_pp
-from uqgrid.simulation.sparse_solvers import factorize_sparse_system, solve_sparse_system
+from uqgrid.simulation.sparse_solvers import (
+    DEFAULT_SPARSE_SOLVER,
+    factorize_sparse_system,
+    solve_sparse_system,
+)
 from uqgrid.simulation.residual import residual_function
 from uqgrid.simulation.jacobian import residual_jacobian
 from uqgrid.utils.tools import (
@@ -1578,9 +1582,9 @@ def integrate_system(
     results = {}
     psys.power_injection=power_injection
 
-    if petsc and sparse_solver != "scipy":
+    if petsc and sparse_solver != DEFAULT_SPARSE_SOLVER:
         logger.warning("Sparse solver '%s' ignored because PETSc is enabled.", sparse_solver)
-        sparse_solver = "scipy"
+        sparse_solver = DEFAULT_SPARSE_SOLVER
 
     # retrieve parameters
     pf_solution = runpf(psys, verbose=False, sparse_solver=sparse_solver)

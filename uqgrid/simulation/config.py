@@ -2,6 +2,7 @@ from typing import Any, List, Optional, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 import numpy as np
+from uqgrid.simulation.sparse_solvers import DEFAULT_SPARSE_SOLVER
 
 class IntegrationConfig(BaseModel):
     power_injection: bool = False
@@ -15,7 +16,7 @@ class IntegrationConfig(BaseModel):
     toff: float = Field(0.4, description="Fault deactivation time.")
     petsc: bool = Field(False, description="Enable PETSc integration.")
     sparse_solver: Literal["scipy", "klu"] = Field(
-        "scipy",
+        DEFAULT_SPARSE_SOLVER,
         description="Sparse solver for power flow and non-PETSc dynamics."
     )
     solve_powerflow_dynamics: bool = Field(True, description="Solve power flow before dynamics.")

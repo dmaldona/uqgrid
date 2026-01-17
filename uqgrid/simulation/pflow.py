@@ -8,7 +8,12 @@ try:
 except ImportError:
     from scipy.optimize.nonlin import nonlin_solve # Fallback for older SciPy
 from uqgrid.core.psydef import Psystem, Bus
-from uqgrid.simulation.sparse_solvers import solve_sparse_system, validate_sparse_solver
+from uqgrid.simulation.sparse_solvers import (
+    DEFAULT_SPARSE_SOLVER,
+    SparseSolverName,
+    solve_sparse_system,
+    validate_sparse_solver,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -292,7 +297,7 @@ def _solve_power_flow_newton(
     fun,
     jac,
     x0,
-    sparse_solver,
+    sparse_solver: SparseSolverName,
     verbose=False,
     f_tol=1e-9,
     max_iter=100,
@@ -325,7 +330,7 @@ def _solve_power_flow_newton(
     }
 
 
-def runpf(psys, verbose=False, sparse_solver="scipy"):
+def runpf(psys, verbose=False, sparse_solver: SparseSolverName = DEFAULT_SPARSE_SOLVER):
 
     # Slack  (1) variables: p, q. parameters: vmag, vang.
     # PV gen (2) variables: q, vang. parameters: P, vmag.

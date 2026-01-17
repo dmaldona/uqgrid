@@ -8,6 +8,7 @@ from scipy.sparse.linalg import factorized, spsolve
 
 SparseSolverName = Literal["scipy", "klu"]
 SUPPORTED_SPARSE_SOLVERS = ("scipy", "klu")
+DEFAULT_SPARSE_SOLVER: SparseSolverName = "scipy"
 
 try:
     from PyKLU import Klu
