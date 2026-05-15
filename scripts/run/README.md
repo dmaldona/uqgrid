@@ -793,7 +793,7 @@ magnetizing-impedance warning is expected and too noisy, suppress just that
 warning with Python's warning filter:
 
 ```bash
-PYTHONWARNINGS="ignore:Transformer Magnetizing Impedance not Implemented:UserWarning:uqgrid.io.parse" \
+PYTHONWARNINGS="ignore:Transformer Magnetizing Impedance not Implemented:UserWarning:uqgrid.io.parse,ignore:invalid value encountered in scalar divide::scipy.optimize._nonlin" \
 python generate_scenarios.py config/config_ACTIVSg500_stress.json
 ```
 
@@ -801,7 +801,7 @@ If the module-specific filter does not catch it in your environment, use the
 same message-level filter without the module qualifier:
 
 ```bash
-PYTHONWARNINGS="ignore:Transformer Magnetizing Impedance not Implemented:UserWarning" \
+PYTHONWARNINGS="ignore:Transformer Magnetizing Impedance not Implemented:UserWarning,ignore:invalid value encountered in scalar divide::scipy.optimize._nonlin" \
 python generate_scenarios.py config/config_ACTIVSg500_stress.json
 ```
 
@@ -809,7 +809,7 @@ For repeated production runs, export the filter for the session and unset it
 afterward:
 
 ```bash
-export PYTHONWARNINGS="ignore:Transformer Magnetizing Impedance not Implemented:UserWarning:uqgrid.io.parse"
+export PYTHONWARNINGS="ignore:Transformer Magnetizing Impedance not Implemented:UserWarning:uqgrid.io.parse,ignore:invalid value encountered in scalar divide::scipy.optimize._nonlin"
 python generate_scenarios.py config/config_ACTIVSg500_stress.json
 unset PYTHONWARNINGS
 ```
