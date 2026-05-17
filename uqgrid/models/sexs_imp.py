@@ -9,10 +9,10 @@ def _ordered_vals(cols, mapping):
 
 class ExcSEXS(Exciter):
     """
-    Simplified Excitation System (SEXS) with continuous limiter.
+    Simplified Excitation System (SEXS).
 
     Parameters are:
-    TA_TB, TB, K, TE, Emin, Emax.
+    TA_TB, TB, K, TE, Emin, Emax. Limits are parsed but ignored.
     """
 
     def __init__(self, id_tag, TA_TB, TB, K, TE, Emin, Emax):
@@ -84,10 +84,6 @@ class ExcSEXS(Exciter):
         dx1 = (-x1 + (1.0 - self.TA_TB) * (vref - vm)) / self.TB
         dedt = (-e_fd + self.K * y1) / self.TE
 
-        # continuous limiter: freeze at bounds when pushing further
-        if (e_fd >= self.Emax and dedt > 0.0) or (e_fd <= self.Emin and dedt < 0.0):
-            dedt = 0.0
-
         F[dp] = dx1
         F[dp + 1] = dedt
         return None
@@ -150,10 +146,6 @@ class ExcSEXS(Exciter):
 
         vref = self.vref
 
-        y1 = x1 + self.TA_TB * (vref - vm)
-        dedt = (-e_fd + self.K * y1) / self.TE
-        limited = (e_fd >= self.Emax and dedt > 0.0) or (e_fd <= self.Emin and dedt < 0.0)
-
         # Row for x1
         row = dp
         if power_injection:
@@ -173,20 +165,19 @@ class ExcSEXS(Exciter):
 
         # Row for e_fd
         row = dp + 1
-        if not limited:
-            if power_injection:
-                col_map = {
-                    dp: self.K / self.TE,
-                    dp + 1: -1.0 / self.TE,
-                    dev + 2 * self.bus: -(self.K * self.TA_TB) / self.TE,
-                }
-            else:
-                col_map = {
-                    dp: self.K / self.TE,
-                    dp + 1: -1.0 / self.TE,
-                    dev + 2 * self.bus: -(self.K * self.TA_TB) * dvm_dvr / self.TE,
-                    dev + 2 * self.bus + 1: -(self.K * self.TA_TB) * dvm_dvi / self.TE,
-                }
-            cols = np.array(self._jac_cols_efd, dtype=np.int32)
-            vals = _ordered_vals(cols, col_map)
-            csr_set_row(J.data, J.indptr, J.indices, len(cols), row, cols, vals)
+        cols = np.array(self._jac_cols_efd, dtype=np.int32)
+        if power_injection:
+            col_map = {
+                dp: self.K / self.TE,
+                dp + 1: -1.0 / self.TE,
+                dev + 2 * self.bus: -(self.K * self.TA_TB) / self.TE,
+            }
+        else:
+            col_map = {
+                dp: self.K / self.TE,
+                dp + 1: -1.0 / self.TE,
+                dev + 2 * self.bus: -(self.K * self.TA_TB) * dvm_dvr / self.TE,
+                dev + 2 * self.bus + 1: -(self.K * self.TA_TB) * dvm_dvi / self.TE,
+            }
+        vals = _ordered_vals(cols, col_map)
+        csr_set_row(J.data, J.indptr, J.indices, len(cols), row, cols, vals)

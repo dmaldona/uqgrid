@@ -73,9 +73,6 @@ class GovTGOV1(Governor):
         dx1 = (-x1 + (1.0 - t2_over_t3) * x2) / self.T3
         dx2 = ((self.pref - w) / self.R - x2) / self.T1
 
-        if (x2 >= self.VMAX and dx2 > 0.0) or (x2 <= self.VMIN and dx2 < 0.0):
-            dx2 = 0.0
-
         F[dp] = dx1
         F[dp + 1] = dx2
         F[ap] = x1 + t2_over_t3 * x2 - self.DT * w - p_m
@@ -116,13 +113,7 @@ class GovTGOV1(Governor):
         dp = idxs[0]
         ap = idxs[1]
 
-        x1 = z[dp]
-        x2 = z[dp + 1]
-        w = z[self.w_idx]
-
         t2_over_t3 = self.T2 / self.T3
-        dx2 = ((self.pref - w) / self.R - x2) / self.T1
-        limited = (x2 >= self.VMAX and dx2 > 0.0) or (x2 <= self.VMIN and dx2 < 0.0)
 
         # row for x1
         row = dp
@@ -137,10 +128,7 @@ class GovTGOV1(Governor):
         # row for x2
         row = dp + 1
         cols = np.array(self._jac_cols_x2, dtype=np.int32)
-        if limited:
-            col_map = {dp + 1: 0.0, self.w_idx: 0.0}
-        else:
-            col_map = {dp + 1: -1.0 / self.T1, self.w_idx: -1.0 / (self.R * self.T1)}
+        col_map = {dp + 1: -1.0 / self.T1, self.w_idx: -1.0 / (self.R * self.T1)}
         vals = _ordered_vals(cols, col_map)
         csr_set_row(J.data, J.indptr, J.indices, len(cols), row, cols, vals)
 
