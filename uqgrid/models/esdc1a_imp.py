@@ -21,7 +21,7 @@ class ExcESDC1A(Exciter):
         self.vref = None
         self.efd_idx = 2
 
-        parameter_list = ['Ka', 'Ta', 'Kf', 'Tf', 'Ke', 'Te', 'Tr', 'Ae', 'Be']
+        parameter_list = ['Ka', 'Ta', 'Kf', 'Tf', 'Ke', 'Te', 'Tr', 'Ae', 'Be', 'vref']
         state_list = ['vr1', 'vr2', 'e_fd']
 
         Exciter.__init__(self, id_tag, 3, 3, 0, len(parameter_list), state_list)
@@ -84,11 +84,13 @@ class ExcESDC1A(Exciter):
         theta[idx + 6] = self.Tr
         theta[idx + 7] = self.Ae
         theta[idx + 8] = self.Be
+        theta[idx + 9] = self.vref
 
     def residual_diff(self, F, z, v, theta, idxs, power_injection):
 
         dp = idxs[0]
         ap = idxs[1]
+        pp = idxs[2]
 
         # parameters
         Ka = self.Ka
@@ -100,14 +102,12 @@ class ExcESDC1A(Exciter):
         Tr = self.Tr
         Ae = self.Ae
         Be = self.Be
+        vref = theta[pp + 9]
 
         # states
         vr1 = z[dp]
         vr2 = z[dp + 1]
         e_fd = z[dp + 2]
-
-        # setpoint (to be implemented in external uref vector)
-        vref = self.vref
 
         if power_injection:
             vm = v[2*self.bus]
@@ -192,9 +192,6 @@ class ExcESDC1A(Exciter):
         vr1 = z[dp]
         vr2 = z[dp + 1]
         e_fd = z[dp + 2]
-
-        # setpoint (to be implemented in external uref vector)
-        vref = self.vref
 
         if power_injection:
             vm = v[2*self.bus]
@@ -316,9 +313,6 @@ class ExcESDC1A(Exciter):
         vr1 = z[dp]
         vr2 = z[dp + 1]
         e_fd = z[dp + 2]
-
-        # setpoint (to be implemented in external uref vector)
-        vref = self.vref
 
         vm = v[2*self.bus]
         va = v[2*self.bus + 1]

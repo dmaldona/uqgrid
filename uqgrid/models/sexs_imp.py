@@ -27,7 +27,7 @@ class ExcSEXS(Exciter):
         self.vref = None
         self.efd_idx = 1
 
-        parameter_list = ['TA_TB', 'TB', 'K', 'TE', 'Emin', 'Emax']
+        parameter_list = ['TA_TB', 'TB', 'K', 'TE', 'Emin', 'Emax', 'vref']
         state_list = ['x1', 'e_fd']
 
         Exciter.__init__(self, id_tag, 2, 2, 0, len(parameter_list), state_list)
@@ -55,6 +55,7 @@ class ExcSEXS(Exciter):
         theta[idx + 3] = self.TE
         theta[idx + 4] = self.Emin
         theta[idx + 5] = self.Emax
+        theta[idx + 6] = self.vref
 
     def _vm_from_v(self, v, power_injection):
         if power_injection:
@@ -75,7 +76,8 @@ class ExcSEXS(Exciter):
         e_fd = z[dp + 1]
 
         vm = self._vm_from_v(v, power_injection)
-        vref = self.vref
+        pp = idxs[2]
+        vref = theta[pp + 6]
 
         # lead-lag output
         y1 = x1 + self.TA_TB * (vref - vm)
@@ -143,8 +145,6 @@ class ExcSEXS(Exciter):
                 vm = 1e-12
             dvm_dvr = vr / vm
             dvm_dvi = vi / vm
-
-        vref = self.vref
 
         # Row for x1
         row = dp

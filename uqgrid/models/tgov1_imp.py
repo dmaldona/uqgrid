@@ -31,7 +31,7 @@ class GovTGOV1(Governor):
 
         self.pref = None
 
-        parameter_list = ["R", "T1", "VMAX", "VMIN", "T2", "T3", "DT"]
+        parameter_list = ["R", "T1", "VMAX", "VMIN", "T2", "T3", "DT", "pref"]
         state_list = ["x1", "x2", "p_m"]
 
         Governor.__init__(self, id_tag, 3, 2, 1, len(parameter_list), state_list)
@@ -59,6 +59,7 @@ class GovTGOV1(Governor):
         theta[idx + 4] = self.T2
         theta[idx + 5] = self.T3
         theta[idx + 6] = self.DT
+        theta[idx + 7] = self.pref
 
     def residual_diff(self, F, z, v, theta, idxs, power_injection):
         dp = idxs[0]
@@ -68,10 +69,11 @@ class GovTGOV1(Governor):
         x2 = z[dp + 1]
         p_m = z[ap]
         w = z[self.w_idx]
+        pref = theta[idxs[2] + 7]
 
         t2_over_t3 = self.T2 / self.T3
         dx1 = (-x1 + (1.0 - t2_over_t3) * x2) / self.T3
-        dx2 = ((self.pref - w) / self.R - x2) / self.T1
+        dx2 = ((pref - w) / self.R - x2) / self.T1
 
         F[dp] = dx1
         F[dp + 1] = dx2

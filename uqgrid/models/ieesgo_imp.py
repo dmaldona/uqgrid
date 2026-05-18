@@ -21,10 +21,10 @@ class GovIEESGO(Governor):
         # control variable
         self.pref = None
 
-        parameter_list = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'K1', 'K2', 'K3']
+        parameter_list = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'K1', 'K2', 'K3', 'pref']
         state_list = ['PF0', 'PLL', 'TP1', 'TP2', 'TP3', 'p_m']
 
-        Governor.__init__(self, id_tag, 6, 5, 1, 9, state_list)
+        Governor.__init__(self, id_tag, 6, 5, 1, len(parameter_list), state_list)
 
     def residualFinit(self, x, v, theta, p0, q0, w):
 
@@ -94,11 +94,13 @@ class GovIEESGO(Governor):
         theta[idx + 6] = self.K1
         theta[idx + 7] = self.K2
         theta[idx + 8] = self.K3
+        theta[idx + 9] = self.pref
 
     def residual_diff(self, F, z, v, theta, idxs, power_injection):
 
         dp = idxs[0]
         ap = idxs[1]
+        pp = idxs[2]
 
         # parameters
         T1 = self.T1
@@ -110,6 +112,7 @@ class GovIEESGO(Governor):
         K1 = self.K1
         K2 = self.K2
         K3 = self.K3
+        pref = theta[pp + 9]
 
         # states
         PF0 = z[dp]
@@ -120,7 +123,6 @@ class GovIEESGO(Governor):
         p_m = z[ap]
 
         w = z[self.w_idx]
-        pref = self.pref
 
         # resfun
         F[dp] = (1.0/T1)*(K1*w - PF0)
@@ -222,7 +224,6 @@ class GovIEESGO(Governor):
         p_m = z[ap]
 
         w = z[self.w_idx]
-        pref = self.pref
 
         # indeces
         PF0_idx = dp
