@@ -473,6 +473,9 @@ class GenGENROU(DynamicGenerator):
             cols_efd.append(efd_ctrl_col)
         coord.append([efd_out, cols_efd])
 
+        for row_cols in coord:
+            row_cols[1] = sorted(row_cols[1])
+
         return coord
 
     def preallocate_hessian(self, h_nnz, idxs, psys):

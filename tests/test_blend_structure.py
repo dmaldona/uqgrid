@@ -25,6 +25,53 @@ def data_dir():
     )
 
 
+def _initialized_jacobian_case(raw_path, dyr_path=None):
+    psys = load_psse(raw_filename=raw_path)
+    if dyr_path is not None:
+        add_dyr(psys, dyr_path)
+    psys.createYbusComplex()
+    pf_solution = runpf(psys, verbose=False)
+    sysvec, theta = initialize_system(psys, pf_solution)
+    J = preallocate_jacobian(psys)
+    residual_jacobian(J, sysvec, theta, psys)
+    return psys, J
+
+
+def _assert_genrou_preallocation_rows_sorted(psys):
+    dif_size = psys.num_dof_dif
+    alg_size = psys.num_dof_alg
+    for gen in psys.gendyn:
+        idxs = np.array([
+            gen.dif_ptr,
+            dif_size + gen.alg_ptr,
+            dif_size + alg_size,
+        ], dtype=np.int32)
+        for row, cols in gen.preallocate_jacobian(idxs, psys, psys.power_injection):
+            assert cols == sorted(cols), f"GENROU row {row} columns are not sorted: {cols}"
+
+
+def _assert_csr_rows_sorted(J):
+    for row in range(J.shape[0]):
+        cols = J.indices[J.indptr[row]:J.indptr[row + 1]]
+        assert np.all(cols[:-1] < cols[1:]), f"CSR row {row} columns are not sorted: {cols.tolist()}"
+
+
+def test_genrou_jacobian_rows_are_sorted_for_controller_cases(data_dir):
+    cases = [
+        ("2bus_33.raw", "GENROU.dyr"),
+        ("2bus_33.raw", "2bus_SEXS.dyr"),
+        ("2bus_33.raw", "2bus_TGOV1.dyr"),
+    ]
+
+    for raw_name, dyr_name in cases:
+        psys, J = _initialized_jacobian_case(
+            os.path.join(data_dir, raw_name),
+            os.path.join(data_dir, dyr_name),
+        )
+        _assert_genrou_preallocation_rows_sorted(psys)
+        _assert_csr_rows_sorted(J)
+
+
 def test_init_mappings_no_controllers(data_dir):
     """Test initialization mapping for system without controllers."""
     # Load system without controllers
