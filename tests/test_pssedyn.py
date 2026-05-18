@@ -161,7 +161,7 @@ def test_unmatched_sexs_logs_warning_and_is_skipped(data_dir, tmp_path, caplog):
     assert "Cannot pair SEXS" in caplog.text
 
 
-def test_valid_tgov1_and_sexs_records_attach_without_warning(data_dir, tmp_path, caplog):
+def test_valid_tgov1_and_sexs_records_attach_without_warning(data_dir, tmp_path, caplog, capsys):
     psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
     dyr_path = tmp_path / "valid_controllers.dyr"
     dyr_path.write_text(
@@ -175,7 +175,30 @@ def test_valid_tgov1_and_sexs_records_attach_without_warning(data_dir, tmp_path,
     with caplog.at_level("WARNING", logger="uqgrid.io.parse"):
         add_dyr(psys, str(dyr_path))
 
+    captured = capsys.readouterr()
     assert len(psys.gov) == 1
     assert len(psys.exc) == 1
     assert "Cannot pair TGOV1" not in caplog.text
     assert "Cannot pair SEXS" not in caplog.text
+    assert captured.out == ""
+
+
+def test_add_dyr_verbose_uses_info_logging_not_stdout(data_dir, tmp_path, caplog, capsys):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
+    dyr_path = tmp_path / "verbose_controllers.dyr"
+    dyr_path.write_text(
+        """
+1 'GENROU' 1 6.1 0.05 1.0 0.15 3.38 0.0 1.575 1.512 0.291 0.39 0.1733 0.0787 0.0 0.0 /
+1 'TGOV1' 1 0.05 0.1 1.2 -0.1 0.2 10.0 0.3 /
+1 'SEXS' 1 0.1 0.2 100.0 0.05 -999.0 999.0 /
+""".lstrip()
+    )
+
+    with caplog.at_level("INFO", logger="uqgrid.io.parse"):
+        add_dyr(psys, str(dyr_path), verbose=True)
+
+    captured = capsys.readouterr()
+    assert "Adding GENROU at bus 1. GENID 1." in caplog.text
+    assert "Adding TGOV1 at bus 1. GENID 1." in caplog.text
+    assert "Adding SEXS at bus 1. GENID 1." in caplog.text
+    assert captured.out == ""
