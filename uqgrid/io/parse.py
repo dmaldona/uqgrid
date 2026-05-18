@@ -454,7 +454,9 @@ def add_dyr(psys, dyr_filename, verbose=False):
 
         if 'IEESGO' in device[1]:
             bus = psys.ext2int[int(device[0])]
-            gen_id = str(device[2])
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
             if verbose:
                 logger.info(
                     "Adding IEESGO at bus %d. GENID %s.",
@@ -481,6 +483,8 @@ def add_dyr(psys, dyr_filename, verbose=False):
         if 'TGOV1' in device[1]:
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
             if verbose:
                 logger.info(
                     "Adding TGOV1 at bus %d. GENID %s.",
@@ -527,7 +531,9 @@ def add_dyr(psys, dyr_filename, verbose=False):
         if 'ESDC1A' in device[1]:
 
             bus = psys.ext2int[int(device[0])]
-            gen_id = str(device[2])
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
 
             if verbose:
                 logger.info(
@@ -555,13 +561,14 @@ def add_dyr(psys, dyr_filename, verbose=False):
 
             for gen in psys.gendyn:
                 if gen.bus == bus and gen.id_tag == gen_id:
-                    #psys.add_exc(gen, ExcESDC1A(gen_id, KA, TA, KF, TF1, KE, TE, TR, E1, E2))
-                    psys.add_exc(gen, ExcESDC1A(gen_id, 20.0, 1.0, 0.7, 0.7, 7.0, 0.5, 20.4, 0.006, 0.9))
+                    psys.add_exc(gen, ExcESDC1A(gen_id, KA, TA, KF, TF1, KE, TE, TR, E1, E2))
                     break
 
         if 'SEXS' in device[1]:
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
             if verbose:
                 logger.info(
                     "Adding SEXS at bus %d. GENID %s.",

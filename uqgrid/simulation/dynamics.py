@@ -1879,7 +1879,7 @@ def integrate_system(
                                         jacobian,
                                         None,
                                         verbose=verbose,
-                                        fsolve=True,
+                                        fsolve=False,
                                         uold=None,
                                         vold=None,
                                         mold=None)
@@ -1909,7 +1909,7 @@ def integrate_system(
                                         jacobian,
                                         None,
                                         verbose=verbose,
-                                        fsolve=True,
+                                        fsolve=False,
                                         uold=None,
                                         vold=None,
                                         mold=None)

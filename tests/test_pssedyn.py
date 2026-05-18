@@ -202,3 +202,28 @@ def test_add_dyr_verbose_uses_info_logging_not_stdout(data_dir, tmp_path, caplog
     assert "Adding TGOV1 at bus 1. GENID 1." in caplog.text
     assert "Adding SEXS at bus 1. GENID 1." in caplog.text
     assert captured.out == ""
+
+
+def test_esdc1a_parser_uses_dyr_parameters(data_dir, tmp_path):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
+    dyr_path = tmp_path / "esdc1a_distinctive.dyr"
+    dyr_path.write_text(
+        """
+1 'GENROU' 1 6.1 0.05 1.0 0.15 3.38 0.0 1.575 1.512 0.291 0.39 0.1733 0.0787 0.0 0.0 /
+1 'ESDC1A' 1 0.03 31.0 1.4 0.8 0.9 12.0 -11.0 6.5 0.45 0.6 0.75 0.0 1.3 0.02 1.7 0.04 /
+""".lstrip()
+    )
+
+    add_dyr(psys, str(dyr_path))
+
+    assert len(psys.exc) == 1
+    exc = psys.exc[0]
+    assert exc.Ka == pytest.approx(31.0)
+    assert exc.Ta == pytest.approx(1.4)
+    assert exc.Kf == pytest.approx(0.6)
+    assert exc.Tf == pytest.approx(0.75)
+    assert exc.Ke == pytest.approx(6.5)
+    assert exc.Te == pytest.approx(0.45)
+    assert exc.Tr == pytest.approx(0.03)
+    assert exc.Ae == pytest.approx(1.3)
+    assert exc.Be == pytest.approx(1.7)
