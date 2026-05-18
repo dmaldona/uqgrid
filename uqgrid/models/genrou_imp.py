@@ -47,7 +47,7 @@ def sat_se_nb(psi, sat_a, sat_b):
     return sat_b * (psi - sat_a) ** 2.0 / psi
 class GenGENROU(DynamicGenerator):
     def __init__(self, id_tag, x_d, x_q, x_dp, x_qp, x_ddp, xl, H, D, T_d0p,
-                 T_q0p, T_d0dp, T_q0dp, S1, S2):
+                 T_q0p, T_d0dp, T_q0dp, S1=0.0, S2=0.0):
 
         self.x_d = x_d
         self.x_q = x_q

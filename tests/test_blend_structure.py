@@ -11,6 +11,7 @@ import os
 import pytest
 import numpy as np
 from uqgrid.io.parse import load_psse, add_dyr
+from uqgrid.models import GenGENROU
 from uqgrid.simulation.pflow import runpf
 from uqgrid.simulation.jacobian import residual_jacobian
 from uqgrid.simulation.dynamics import preallocate_jacobian, initialize_system
@@ -72,13 +73,23 @@ def test_genrou_jacobian_rows_are_sorted_for_controller_cases(data_dir):
         _assert_csr_rows_sorted(J)
 
 
+def test_genrou_constructor_defaults_to_no_saturation():
+    gen = GenGENROU(
+        0, 1.575, 1.512, 0.291, 0.39, 0.1733,
+        0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15
+    )
+
+    assert gen.S1 == 0.0
+    assert gen.S2 == 0.0
+
+
 def test_init_mappings_no_controllers(data_dir):
     """Test initialization mapping for system without controllers."""
     # Load system without controllers
     psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
     psys.add_gen_dynamics(
         psys.gens[0],
-        __import__('uqgrid.models', fromlist=['GenGENROU']).GenGENROU(
+        GenGENROU(
             0, 1.575, 1.512, 0.291, 0.39, 0.1733,
             0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15, 0.0, 0.0
         )
@@ -132,7 +143,7 @@ def test_blend_structure_no_controllers(data_dir):
     psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
     psys.add_gen_dynamics(
         psys.gens[0],
-        __import__('uqgrid.models', fromlist=['GenGENROU']).GenGENROU(
+        GenGENROU(
             0, 1.575, 1.512, 0.291, 0.39, 0.1733,
             0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15, 0.0, 0.0
         )
@@ -169,7 +180,7 @@ def test_blend_values_at_t0(data_dir):
     psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
     psys.add_gen_dynamics(
         psys.gens[0],
-        __import__('uqgrid.models', fromlist=['GenGENROU']).GenGENROU(
+        GenGENROU(
             0, 1.575, 1.512, 0.291, 0.39, 0.1733,
             0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15, 0.0, 0.0
         )
