@@ -4,6 +4,106 @@ from uqgrid.utils.tools import csr_add_row, csr_set_row
 from uqgrid.core.base_models import Exciter
 from scipy import optimize
 
+
+@jit(nopython=True, cache=True)
+def esdc1a_resdiff(F, z, v, theta, idxs, power_injection, bus, Ka, Ta, Kf, Tf, Ke, Te, Ae, Be):
+    dp = idxs[0]
+    pp = idxs[2]
+
+    vref = theta[pp + 9]
+    vr1 = z[dp]
+    vr2 = z[dp + 1]
+    e_fd = z[dp + 2]
+
+    if power_injection:
+        vm = v[2 * bus]
+    else:
+        vr = v[2 * bus]
+        vi = v[2 * bus + 1]
+        vm = np.sqrt(vr * vr + vi * vi)
+        if vm == 0.0:
+            vm = 1e-12
+
+    F[dp] = (Ka * (vref - vm - vr2 - (Kf / Tf) * e_fd) - vr1) / Ta
+    F[dp + 1] = -((Kf / Tf) * e_fd + vr2) / Tf
+    F[dp + 2] = -(e_fd * (Ke + Ae * np.exp(Be * vm)) - vr1) / Te
+
+
+@jit(nopython=True, cache=True)
+def esdc1a_jac(data, indptr, indices, z, v, idxs, power_injection, bus, Ka, Ta, Kf, Tf, Ke, Te, Ae, Be):
+    dp = idxs[0]
+    dev = idxs[2]
+
+    vr1_idx = dp
+    vr2_idx = dp + 1
+    e_fd_idx = dp + 2
+    e_fd = z[e_fd_idx]
+
+    if power_injection:
+        vm_idx = dev + 2 * bus
+        vm = v[2 * bus]
+        dvm_dvr = 1.0
+        dvm_dvi = 0.0
+        n_row0 = 4
+        n_row2 = 3
+    else:
+        vr_idx = dev + 2 * bus
+        vi_idx = dev + 2 * bus + 1
+        vr = v[2 * bus]
+        vi = v[2 * bus + 1]
+        vm = np.sqrt(vr * vr + vi * vi)
+        if vm == 0.0:
+            vm = 1e-12
+        dvm_dvr = vr / vm
+        dvm_dvi = vi / vm
+        n_row0 = 5
+        n_row2 = 4
+
+    col = np.empty(5, dtype=np.int64)
+    val = np.empty(5, dtype=np.float64)
+
+    row = dp
+    col[0] = vr1_idx
+    val[0] = -1.0 / Ta
+    col[1] = vr2_idx
+    val[1] = -Ka / Ta
+    col[2] = e_fd_idx
+    val[2] = -Ka * Kf / (Ta * Tf)
+    if power_injection:
+        col[3] = vm_idx
+        val[3] = -Ka / Ta
+    else:
+        col[3] = vr_idx
+        val[3] = (-Ka / Ta) * dvm_dvr
+        col[4] = vi_idx
+        val[4] = (-Ka / Ta) * dvm_dvi
+    csr_set_row(data, indptr, indices, n_row0, row, col, val)
+
+    row = dp + 1
+    col[0] = vr2_idx
+    val[0] = -1.0 / Tf
+    col[1] = e_fd_idx
+    val[1] = -Kf / (Tf * Tf)
+    csr_set_row(data, indptr, indices, 2, row, col, val)
+
+    row = dp + 2
+    exp_term = np.exp(Be * vm)
+    col[0] = vr1_idx
+    val[0] = 1.0 / Te
+    col[1] = e_fd_idx
+    val[1] = -(Ke + Ae * exp_term) / Te
+    vm_deriv = -e_fd * (Ae * Be * exp_term) / Te
+    if power_injection:
+        col[2] = vm_idx
+        val[2] = vm_deriv
+    else:
+        col[2] = vr_idx
+        val[2] = vm_deriv * dvm_dvr
+        col[3] = vi_idx
+        val[3] = vm_deriv * dvm_dvi
+    csr_set_row(data, indptr, indices, n_row2, row, col, val)
+
+
 class ExcESDC1A(Exciter):
     def __init__(self, id_tag, Ka, Ta, Kf, Tf, Ke, Te, Tr, Ae, Be):
 
@@ -87,41 +187,11 @@ class ExcESDC1A(Exciter):
         theta[idx + 9] = self.vref
 
     def residual_diff(self, F, z, v, theta, idxs, power_injection):
-
-        dp = idxs[0]
-        ap = idxs[1]
-        pp = idxs[2]
-
-        # parameters
-        Ka = self.Ka
-        Ta = self.Ta
-        Kf = self.Kf
-        Tf = self.Tf
-        Ke = self.Ke
-        Te = self.Te
-        Tr = self.Tr
-        Ae = self.Ae
-        Be = self.Be
-        vref = theta[pp + 9]
-
-        # states
-        vr1 = z[dp]
-        vr2 = z[dp + 1]
-        e_fd = z[dp + 2]
-
-        if power_injection:
-            vm = v[2*self.bus]
-        else:
-            vr = v[2*self.bus]
-            vi = v[2*self.bus + 1]
-            vm = np.sqrt(vr*vr + vi*vi)
-            if vm == 0.0:
-                vm = 1e-12
-
-        F[dp] = (Ka*(vref - vm - vr2 - (Kf/Tf)*e_fd) - vr1)/Ta
-        F[dp + 1] = -((Kf/Tf)*e_fd + vr2)/Tf
-        F[dp + 2] = -(e_fd*(Ke + Ae*np.exp(Be*vm)) - vr1)/Te
-
+        esdc1a_resdiff(
+            F, z, v, theta, idxs, power_injection, self.bus,
+            self.Ka, self.Ta, self.Kf, self.Tf, self.Ke, self.Te,
+            self.Ae, self.Be,
+        )
         return None
 
     def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
@@ -173,97 +243,11 @@ class ExcESDC1A(Exciter):
         return coord
 
     def residual_jac(self, J, z, v, theta, idxs, power_injection):
-        dp = idxs[0]
-        ap = idxs[1]
-        dev = idxs[2]
-
-        # parameters
-        Ka = self.Ka
-        Ta = self.Ta
-        Kf = self.Kf
-        Tf = self.Tf
-        Ke = self.Ke
-        Te = self.Te
-        Tr = self.Tr
-        Ae = self.Ae
-        Be = self.Be
-
-        # states
-        vr1 = z[dp]
-        vr2 = z[dp + 1]
-        e_fd = z[dp + 2]
-
-        if power_injection:
-            vm = v[2*self.bus]
-        else:
-            vr = v[2*self.bus]
-            vi = v[2*self.bus + 1]
-            vm = np.sqrt(vr*vr + vi*vi)
-            if vm == 0.0:
-                vm = 1e-12
-
-        # indexes
-        vr1_idx = dp
-        vr2_idx = dp + 1
-        e_fd_idx = dp + 2
-        if power_injection:
-            vm_idx = dev + 2*self.bus
-        else:
-            vr_idx = dev + 2*self.bus
-            vi_idx = dev + 2*self.bus + 1
-
-        col = np.zeros(10)
-        val = np.zeros(10)
-
-        # first row
-        row = dp
-        col[0] = vr1_idx
-        val[0] = -1/Ta
-        col[1] = vr2_idx
-        val[1] = -Ka/Ta
-        col[2] = e_fd_idx
-        val[2] = -Ka*Kf/(Ta*Tf)
-        if power_injection:
-            col[3] = vm_idx
-            val[3] = -Ka/Ta
-            ncols = 4
-        else:
-            dvm_dvr = vr / vm
-            dvm_dvi = vi / vm
-            col[3] = vr_idx
-            val[3] = (-Ka/Ta) * dvm_dvr
-            col[4] = vi_idx
-            val[4] = (-Ka/Ta) * dvm_dvi
-            ncols = 5
-        csr_set_row(J.data, J.indptr, J.indices, ncols, row, col, val)
-
-        # second row
-        row = dp + 1
-        col[0] = vr2_idx
-        val[0] = -1/Tf
-        col[1] = e_fd_idx
-        val[1] = -Kf/Tf**2
-        csr_set_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-        # third row
-        row = dp + 2
-        col[0] = vr1_idx
-        val[0] = 1/Te
-        col[1] = e_fd_idx
-        val[1] = -(Ke + Ae*np.exp(Be*vm))/Te
-        if power_injection:
-            col[2] = vm_idx
-            val[2] = -e_fd*(Ae*Be*np.exp(Be*vm))/Te
-            ncols = 3
-        else:
-            dvm_dvr = vr / vm
-            dvm_dvi = vi / vm
-            col[2] = vr_idx
-            val[2] = (-e_fd*(Ae*Be*np.exp(Be*vm))/Te) * dvm_dvr
-            col[3] = vi_idx
-            val[3] = (-e_fd*(Ae*Be*np.exp(Be*vm))/Te) * dvm_dvi
-            ncols = 4
-        csr_set_row(J.data, J.indptr, J.indices, ncols, row, col, val)
+        esdc1a_jac(
+            J.data, J.indptr, J.indices, z, v, idxs, power_injection, self.bus,
+            self.Ka, self.Ta, self.Kf, self.Tf, self.Ke, self.Te,
+            self.Ae, self.Be,
+        )
 
     def preallocate_hessian(self, h_nnz, idxs, psys):
 

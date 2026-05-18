@@ -1,10 +1,85 @@
 import numpy as np
+from numba import jit
 from uqgrid.core.base_models import Governor
 from uqgrid.utils.tools import csr_set_row
 
 
-def _ordered_vals(cols, mapping):
-    return np.array([mapping[c] for c in cols], dtype=np.float64)
+@jit(nopython=True, cache=True)
+def tgov1_resdiff(F, z, theta, idxs, w_idx, R, T1, T2, T3, DT):
+    dp = idxs[0]
+    ap = idxs[1]
+    pp = idxs[2]
+
+    x1 = z[dp]
+    x2 = z[dp + 1]
+    p_m = z[ap]
+    w = z[w_idx]
+    pref = theta[pp + 7]
+
+    t2_over_t3 = T2 / T3
+    F[dp] = (-x1 + (1.0 - t2_over_t3) * x2) / T3
+    F[dp + 1] = ((pref - w) / R - x2) / T1
+    F[ap] = x1 + t2_over_t3 * x2 - DT * w - p_m
+
+
+@jit(nopython=True, cache=True)
+def tgov1_jac(data, indptr, indices, idxs, w_idx, R, T1, T2, T3, DT):
+    dp = idxs[0]
+    ap = idxs[1]
+    t2_over_t3 = T2 / T3
+
+    col = np.empty(4, dtype=np.int64)
+    val = np.empty(4, dtype=np.float64)
+
+    row = dp
+    col[0] = dp
+    val[0] = -1.0 / T3
+    col[1] = dp + 1
+    val[1] = (1.0 - t2_over_t3) / T3
+    csr_set_row(data, indptr, indices, 2, row, col, val)
+
+    row = dp + 1
+    if w_idx < dp + 1:
+        col[0] = w_idx
+        val[0] = -1.0 / (R * T1)
+        col[1] = dp + 1
+        val[1] = -1.0 / T1
+    else:
+        col[0] = dp + 1
+        val[0] = -1.0 / T1
+        col[1] = w_idx
+        val[1] = -1.0 / (R * T1)
+    csr_set_row(data, indptr, indices, 2, row, col, val)
+
+    row = ap
+    if w_idx < dp:
+        col[0] = w_idx
+        val[0] = -DT
+        col[1] = dp
+        val[1] = 1.0
+        col[2] = dp + 1
+        val[2] = t2_over_t3
+        col[3] = ap
+        val[3] = -1.0
+    elif w_idx < ap:
+        col[0] = dp
+        val[0] = 1.0
+        col[1] = dp + 1
+        val[1] = t2_over_t3
+        col[2] = w_idx
+        val[2] = -DT
+        col[3] = ap
+        val[3] = -1.0
+    else:
+        col[0] = dp
+        val[0] = 1.0
+        col[1] = dp + 1
+        val[1] = t2_over_t3
+        col[2] = ap
+        val[2] = -1.0
+        col[3] = w_idx
+        val[3] = -DT
+    csr_set_row(data, indptr, indices, 4, row, col, val)
 
 
 class GovTGOV1(Governor):
@@ -62,22 +137,10 @@ class GovTGOV1(Governor):
         theta[idx + 7] = self.pref
 
     def residual_diff(self, F, z, v, theta, idxs, power_injection):
-        dp = idxs[0]
-        ap = idxs[1]
-
-        x1 = z[dp]
-        x2 = z[dp + 1]
-        p_m = z[ap]
-        w = z[self.w_idx]
-        pref = theta[idxs[2] + 7]
-
-        t2_over_t3 = self.T2 / self.T3
-        dx1 = (-x1 + (1.0 - t2_over_t3) * x2) / self.T3
-        dx2 = ((pref - w) / self.R - x2) / self.T1
-
-        F[dp] = dx1
-        F[dp + 1] = dx2
-        F[ap] = x1 + t2_over_t3 * x2 - self.DT * w - p_m
+        tgov1_resdiff(
+            F, z, theta, idxs, self.w_idx,
+            self.R, self.T1, self.T2, self.T3, self.DT,
+        )
         return None
 
     def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
@@ -112,31 +175,7 @@ class GovTGOV1(Governor):
         pass
 
     def residual_jac(self, J, z, v, theta, idxs, power_injection):
-        dp = idxs[0]
-        ap = idxs[1]
-
-        t2_over_t3 = self.T2 / self.T3
-
-        # row for x1
-        row = dp
-        cols = np.array(self._jac_cols_x1, dtype=np.int32)
-        col_map = {
-            dp: -1.0 / self.T3,
-            dp + 1: (1.0 - t2_over_t3) / self.T3,
-        }
-        vals = _ordered_vals(cols, col_map)
-        csr_set_row(J.data, J.indptr, J.indices, len(cols), row, cols, vals)
-
-        # row for x2
-        row = dp + 1
-        cols = np.array(self._jac_cols_x2, dtype=np.int32)
-        col_map = {dp + 1: -1.0 / self.T1, self.w_idx: -1.0 / (self.R * self.T1)}
-        vals = _ordered_vals(cols, col_map)
-        csr_set_row(J.data, J.indptr, J.indices, len(cols), row, cols, vals)
-
-        # algebraic p_m row
-        row = ap
-        cols = np.array(self._jac_cols_pm, dtype=np.int32)
-        col_map = {dp: 1.0, dp + 1: t2_over_t3, self.w_idx: -self.DT, ap: -1.0}
-        vals = _ordered_vals(cols, col_map)
-        csr_set_row(J.data, J.indptr, J.indices, len(cols), row, cols, vals)
+        tgov1_jac(
+            J.data, J.indptr, J.indices, idxs, self.w_idx,
+            self.R, self.T1, self.T2, self.T3, self.DT,
+        )

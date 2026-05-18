@@ -5,6 +5,93 @@ from uqgrid.core.base_models import Governor
 from scipy import optimize
 
 
+@jit(nopython=True, cache=True)
+def ieesgo_resdiff(F, z, theta, idxs, w_idx, T1, T2, T3, T4, T5, T6, K1, K2, K3):
+    dp = idxs[0]
+    ap = idxs[1]
+    pp = idxs[2]
+
+    PF0 = z[dp]
+    PLL = z[dp + 1]
+    TP1 = z[dp + 2]
+    TP2 = z[dp + 3]
+    TP3 = z[dp + 4]
+    p_m = z[ap]
+    w = z[w_idx]
+    pref = theta[pp + 9]
+
+    F[dp] = (1.0 / T1) * (K1 * w - PF0)
+    F[dp + 1] = (1.0 / T3) * ((1.0 - (T2 / T3)) * PF0 - PLL)
+    SatP = pref - (T2 / T3) * PF0 - PLL
+    F[dp + 2] = (1.0 / T4) * (SatP - TP1)
+    F[dp + 3] = (1.0 / T5) * (K2 * TP1 - TP2)
+    F[dp + 4] = (1.0 / T6) * (K3 * TP2 - TP3)
+    F[ap] = TP1 * (1 - K2) + TP2 * (1 - K3) + TP3 - p_m
+
+
+@jit(nopython=True, cache=True)
+def ieesgo_jac(data, indptr, indices, idxs, w_idx, T1, T2, T3, T4, T5, T6, K1, K2, K3):
+    dp = idxs[0]
+    ap = idxs[1]
+
+    col = np.empty(4, dtype=np.int64)
+    val = np.empty(4, dtype=np.float64)
+
+    row = dp
+    if w_idx < dp:
+        col[0] = w_idx
+        val[0] = K1 / T1
+        col[1] = dp
+        val[1] = -1.0 / T1
+    else:
+        col[0] = dp
+        val[0] = -1.0 / T1
+        col[1] = w_idx
+        val[1] = K1 / T1
+    csr_set_row(data, indptr, indices, 2, row, col, val)
+
+    row = dp + 1
+    col[0] = dp
+    val[0] = (1.0 - T2 / T3) / T3
+    col[1] = dp + 1
+    val[1] = -1.0 / T3
+    csr_set_row(data, indptr, indices, 2, row, col, val)
+
+    row = dp + 2
+    col[0] = dp
+    val[0] = -T2 / (T3 * T4)
+    col[1] = dp + 1
+    val[1] = -1.0 / T4
+    col[2] = dp + 2
+    val[2] = -1.0 / T4
+    csr_set_row(data, indptr, indices, 3, row, col, val)
+
+    row = dp + 3
+    col[0] = dp + 2
+    val[0] = K2 / T5
+    col[1] = dp + 3
+    val[1] = -1.0 / T5
+    csr_set_row(data, indptr, indices, 2, row, col, val)
+
+    row = dp + 4
+    col[0] = dp + 3
+    val[0] = K3 / T6
+    col[1] = dp + 4
+    val[1] = -1.0 / T6
+    csr_set_row(data, indptr, indices, 2, row, col, val)
+
+    row = ap
+    col[0] = dp + 2
+    val[0] = -K2 + 1
+    col[1] = dp + 3
+    val[1] = -K3 + 1
+    col[2] = dp + 4
+    val[2] = 1.0
+    col[3] = ap
+    val[3] = -1.0
+    csr_set_row(data, indptr, indices, 4, row, col, val)
+
+
 class GovIEESGO(Governor):
     def __init__(self, id_tag, T1, T2, T3, T4, T5, T6, K1, K2, K3):
 
@@ -97,45 +184,11 @@ class GovIEESGO(Governor):
         theta[idx + 9] = self.pref
 
     def residual_diff(self, F, z, v, theta, idxs, power_injection):
-
-        dp = idxs[0]
-        ap = idxs[1]
-        pp = idxs[2]
-
-        # parameters
-        T1 = self.T1
-        T2 = self.T2
-        T3 = self.T3
-        T4 = self.T4
-        T5 = self.T5
-        T6 = self.T6
-        K1 = self.K1
-        K2 = self.K2
-        K3 = self.K3
-        pref = theta[pp + 9]
-
-        # states
-        PF0 = z[dp]
-        PLL = z[dp + 1]
-        TP1 = z[dp + 2]
-        TP2 = z[dp + 3]
-        TP3 = z[dp + 4]
-        p_m = z[ap]
-
-        w = z[self.w_idx]
-
-        # resfun
-        F[dp] = (1.0/T1)*(K1*w - PF0)
-        F[dp + 1] = (1.0/T3)*((1.0 - (T2/T3))*PF0 - PLL)
-
-        SatP = pref - (T2/T3)*PF0 - PLL
-
-        F[dp + 2] = (1.0/T4)*(SatP - TP1)
-        F[dp + 3] = (1.0/T5)*(K2*TP1 - TP2)
-        F[dp + 4] = (1.0/T6)*(K3*TP2 - TP3)
-
-        F[ap] = TP1*(1 - K2) + TP2*(1 - K3) + TP3 - p_m
-
+        ieesgo_resdiff(
+            F, z, theta, idxs, self.w_idx,
+            self.T1, self.T2, self.T3, self.T4, self.T5, self.T6,
+            self.K1, self.K2, self.K3,
+        )
         return None
 
     def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
@@ -200,95 +253,11 @@ class GovIEESGO(Governor):
         pass
 
     def residual_jac(self, J, z, v, theta, idxs, power_injection):
-        dp = idxs[0]
-        ap = idxs[1]
-        dev = idxs[2]
-
-        # parameters
-        T1 = self.T1
-        T2 = self.T2
-        T3 = self.T3
-        T4 = self.T4
-        T5 = self.T5
-        T6 = self.T6
-        K1 = self.K1
-        K2 = self.K2
-        K3 = self.K3
-
-        # states
-        PF0 = z[dp]
-        PLL = z[dp + 1]
-        TP1 = z[dp + 2]
-        TP2 = z[dp + 3]
-        TP3 = z[dp + 4]
-        p_m = z[ap]
-
-        w = z[self.w_idx]
-
-        # indeces
-        PF0_idx = dp
-        PLL_idx = dp + 1
-        TP1_idx = dp + 2
-        TP2_idx = dp + 3
-        TP3_idx = dp + 4
-        p_m_idx = ap
-
-        w_idx = self.w_idx
-
-        # column and value vectors
-        col = np.zeros(10)
-        val = np.zeros(10)
-
-        # first row
-        row = dp
-        col[0] = w_idx
-        val[0] = 1.0*K1/T1
-        col[1] = PF0_idx
-        val[1] = -1.0/T1
-        csr_set_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-        # second  row
-        row = dp + 1
-        col[0] = PF0_idx
-        val[0] = 1.0*(-T2/T3 + 1.0)/T3
-        col[1] = PLL_idx
-        val[1] = -1.0/T3
-        csr_set_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-        # third  row
-        row = dp + 2
-        col[0] = PF0_idx
-        val[0] = -1.0*T2/(T3*T4)
-        col[1] = PLL_idx
-        val[1] = -1.0/T4
-        col[2] = TP1_idx
-        val[2] = -1.0/T4
-        csr_set_row(J.data, J.indptr, J.indices, 3, row, col, val)
-
-        row = dp + 3
-        col[0] = TP1_idx
-        val[0] = 1.0*K2/T5
-        col[1] = TP2_idx
-        val[1] = -1.0/T5
-        csr_set_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-        row = dp + 4
-        col[0] = TP2_idx
-        val[0] = 1.0*K3/T6
-        col[1] = TP3_idx
-        val[1] = -1.0/T6
-        csr_set_row(J.data, J.indptr, J.indices, 2, row, col, val)
-
-        row = ap
-        col[0] = TP1_idx
-        val[0] = -K2 + 1
-        col[1] = TP2_idx
-        val[1] = -K3 + 1
-        col[2] = TP3_idx
-        val[2] = 1.0
-        col[3] = p_m_idx
-        val[3] = -1.0
-        csr_set_row(J.data, J.indptr, J.indices, 4, row, col, val)
+        ieesgo_jac(
+            J.data, J.indptr, J.indices, idxs, self.w_idx,
+            self.T1, self.T2, self.T3, self.T4, self.T5, self.T6,
+            self.K1, self.K2, self.K3,
+        )
 
 if __name__ == "__main__":
     import sympy as sp

@@ -1,10 +1,97 @@
 import numpy as np
+from numba import jit
 from uqgrid.core.base_models import Exciter
 from uqgrid.utils.tools import csr_set_row
 
 
-def _ordered_vals(cols, mapping):
-    return np.array([mapping[c] for c in cols], dtype=np.float64)
+@jit(nopython=True, cache=True)
+def sexs_resdiff(F, z, v, theta, idxs, power_injection, bus, TA_TB, TB, K, TE):
+    dp = idxs[0]
+    pp = idxs[2]
+
+    x1 = z[dp]
+    e_fd = z[dp + 1]
+
+    if power_injection:
+        vm = v[2 * bus]
+    else:
+        vr = v[2 * bus]
+        vi = v[2 * bus + 1]
+        vm = np.sqrt(vr * vr + vi * vi)
+        if vm == 0.0:
+            vm = 1e-12
+
+    vref = theta[pp + 6]
+    y1 = x1 + TA_TB * (vref - vm)
+
+    F[dp] = (-x1 + (1.0 - TA_TB) * (vref - vm)) / TB
+    F[dp + 1] = (-e_fd + K * y1) / TE
+
+
+@jit(nopython=True, cache=True)
+def sexs_jac(data, indptr, indices, v, idxs, power_injection, bus, TA_TB, TB, K, TE):
+    dp = idxs[0]
+    dev = idxs[2]
+
+    x1_idx = dp
+    e_fd_idx = dp + 1
+
+    if power_injection:
+        vm_idx = dev + 2 * bus
+        vm = v[2 * bus]
+        dvm_dvr = 1.0
+        dvm_dvi = 0.0
+        n_x1 = 2
+        n_efd = 3
+    else:
+        vr_idx = dev + 2 * bus
+        vi_idx = dev + 2 * bus + 1
+        vr = v[2 * bus]
+        vi = v[2 * bus + 1]
+        vm = np.sqrt(vr * vr + vi * vi)
+        if vm == 0.0:
+            vm = 1e-12
+        dvm_dvr = vr / vm
+        dvm_dvi = vi / vm
+        n_x1 = 3
+        n_efd = 4
+
+    row = dp
+    col = np.empty(4, dtype=np.int64)
+    val = np.empty(4, dtype=np.float64)
+
+    if power_injection:
+        col[0] = x1_idx
+        val[0] = -1.0 / TB
+        col[1] = vm_idx
+        val[1] = -(1.0 - TA_TB) / TB
+    else:
+        col[0] = x1_idx
+        val[0] = -1.0 / TB
+        col[1] = vr_idx
+        val[1] = -(1.0 - TA_TB) * dvm_dvr / TB
+        col[2] = vi_idx
+        val[2] = -(1.0 - TA_TB) * dvm_dvi / TB
+    csr_set_row(data, indptr, indices, n_x1, row, col, val)
+
+    row = dp + 1
+    if power_injection:
+        col[0] = x1_idx
+        val[0] = K / TE
+        col[1] = e_fd_idx
+        val[1] = -1.0 / TE
+        col[2] = vm_idx
+        val[2] = -(K * TA_TB) / TE
+    else:
+        col[0] = x1_idx
+        val[0] = K / TE
+        col[1] = e_fd_idx
+        val[1] = -1.0 / TE
+        col[2] = vr_idx
+        val[2] = -(K * TA_TB) * dvm_dvr / TE
+        col[3] = vi_idx
+        val[3] = -(K * TA_TB) * dvm_dvi / TE
+    csr_set_row(data, indptr, indices, n_efd, row, col, val)
 
 
 class ExcSEXS(Exciter):
@@ -69,25 +156,10 @@ class ExcSEXS(Exciter):
         return vm
 
     def residual_diff(self, F, z, v, theta, idxs, power_injection):
-        dp = idxs[0]
-
-        # states
-        x1 = z[dp]
-        e_fd = z[dp + 1]
-
-        vm = self._vm_from_v(v, power_injection)
-        pp = idxs[2]
-        vref = theta[pp + 6]
-
-        # lead-lag output
-        y1 = x1 + self.TA_TB * (vref - vm)
-
-        # dynamics
-        dx1 = (-x1 + (1.0 - self.TA_TB) * (vref - vm)) / self.TB
-        dedt = (-e_fd + self.K * y1) / self.TE
-
-        F[dp] = dx1
-        F[dp + 1] = dedt
+        sexs_resdiff(
+            F, z, v, theta, idxs, power_injection, self.bus,
+            self.TA_TB, self.TB, self.K, self.TE,
+        )
         return None
 
     def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
@@ -129,55 +201,7 @@ class ExcSEXS(Exciter):
         return coord
 
     def residual_jac(self, J, z, v, theta, idxs, power_injection):
-        dp = idxs[0]
-        dev = idxs[2]
-
-        x1 = z[dp]
-        e_fd = z[dp + 1]
-
-        if power_injection:
-            vm = v[2 * self.bus]
-        else:
-            vr = v[2 * self.bus]
-            vi = v[2 * self.bus + 1]
-            vm = np.sqrt(vr * vr + vi * vi)
-            if vm == 0.0:
-                vm = 1e-12
-            dvm_dvr = vr / vm
-            dvm_dvi = vi / vm
-
-        # Row for x1
-        row = dp
-        if power_injection:
-            col_map = {
-                dp: -1.0 / self.TB,
-                dev + 2 * self.bus: -(1.0 - self.TA_TB) / self.TB,
-            }
-        else:
-            col_map = {
-                dp: -1.0 / self.TB,
-                dev + 2 * self.bus: -(1.0 - self.TA_TB) * dvm_dvr / self.TB,
-                dev + 2 * self.bus + 1: -(1.0 - self.TA_TB) * dvm_dvi / self.TB,
-            }
-        cols = np.array(self._jac_cols_x1, dtype=np.int32)
-        vals = _ordered_vals(cols, col_map)
-        csr_set_row(J.data, J.indptr, J.indices, len(cols), row, cols, vals)
-
-        # Row for e_fd
-        row = dp + 1
-        cols = np.array(self._jac_cols_efd, dtype=np.int32)
-        if power_injection:
-            col_map = {
-                dp: self.K / self.TE,
-                dp + 1: -1.0 / self.TE,
-                dev + 2 * self.bus: -(self.K * self.TA_TB) / self.TE,
-            }
-        else:
-            col_map = {
-                dp: self.K / self.TE,
-                dp + 1: -1.0 / self.TE,
-                dev + 2 * self.bus: -(self.K * self.TA_TB) * dvm_dvr / self.TE,
-                dev + 2 * self.bus + 1: -(self.K * self.TA_TB) * dvm_dvi / self.TE,
-            }
-        vals = _ordered_vals(cols, col_map)
-        csr_set_row(J.data, J.indptr, J.indices, len(cols), row, cols, vals)
+        sexs_jac(
+            J.data, J.indptr, J.indices, v, idxs, power_injection, self.bus,
+            self.TA_TB, self.TB, self.K, self.TE,
+        )
