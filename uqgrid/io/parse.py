@@ -5,6 +5,9 @@ from uqgrid.io.parse_psse import read_raw
 import numpy as np
 import warnings
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 def load_psse(raw_filename):
 
@@ -487,10 +490,19 @@ def add_dyr(psys, dyr_filename, verbose=False):
             VMIN *= power_ratio
             DT *= inverse_power_ratio
 
+            found_match = False
             for gen in psys.gendyn:
                 if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
                     psys.add_gov(gen, GovTGOV1(gen_id, R, T1, VMAX, VMIN, T2, T3, DT))
+                    found_match = True
                     break
+
+            if not found_match:
+                logger.warning(
+                    "Cannot pair TGOV1 with bus %d and idx %s. Skipping.",
+                    int(device[0]),
+                    gen_id,
+                )
 
         if 'ESDC1A' in device[1]:
 
@@ -536,10 +548,19 @@ def add_dyr(psys, dyr_filename, verbose=False):
             EMIN = float(device[7])
             EMAX = float(device[8])
 
+            found_match = False
             for gen in psys.gendyn:
                 if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
                     psys.add_exc(gen, ExcSEXS(gen_id, TA_TB, TB, K, TE, EMIN, EMAX))
+                    found_match = True
                     break
+
+            if not found_match:
+                logger.warning(
+                    "Cannot pair SEXS with bus %d and idx %s. Skipping.",
+                    int(device[0]),
+                    gen_id,
+                )
 
 
         if 'CIM5BL' in device[1]:
