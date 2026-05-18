@@ -473,17 +473,19 @@ def add_dyr(psys, dyr_filename, verbose=False):
             T3 = float(device[8])
             DT = float(device[9])
 
-            ratio = 1.0
+            power_ratio = 1.0
+            inverse_power_ratio = 1.0
             for gen in psys.gens:
                 static_id = gen.idx.replace("'", "").strip()
                 if gen.bus == bus and static_id == gen_id.strip():
                     if gen.mbase > 0:
-                        ratio = psys.basemva / gen.mbase
+                        power_ratio = psys.basemva / gen.mbase
+                        inverse_power_ratio = gen.mbase / psys.basemva
                     break
-            R *= ratio
-            VMAX *= ratio
-            VMIN *= ratio
-            DT *= ratio
+            R *= power_ratio
+            VMAX *= power_ratio
+            VMIN *= power_ratio
+            DT *= inverse_power_ratio
 
             for gen in psys.gendyn:
                 if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():

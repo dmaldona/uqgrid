@@ -101,3 +101,27 @@ def test_two_bus_system(data_dir):
     assert error_volt2 < 0.01, 'Voltage 2 trajectory differs'
     assert error_eqp < 0.01, 'E\'q trajectory differs'
     assert error_speed < 0.01, 'Speed trajectory differs'
+
+
+def test_tgov1_dt_uses_machine_to_system_base_scaling(data_dir, tmp_path):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    dyr_path = tmp_path / "ieee9_tgov1_scaling.dyr"
+    dyr_path.write_text(
+        """
+1 'GENROU' 1 7.729 0.047 0.859 0.068 4.31 0.0 1.9266 1.8442 0.3812 0.5469 0.2889 0.2443 0.115 0.627 /
+1 'TGOV1' 1 0.05 0.1 1.2 -0.1 0.2 10.0 0.3 /
+""".lstrip()
+    )
+
+    add_dyr(psys, str(dyr_path))
+
+    gov = psys.gov[0]
+    mbase = psys.gens[0].mbase
+    sbase = psys.basemva
+    system_to_machine = sbase / mbase
+    machine_to_system = mbase / sbase
+
+    assert gov.R == pytest.approx(0.05 * system_to_machine)
+    assert gov.VMAX == pytest.approx(1.2 * system_to_machine)
+    assert gov.VMIN == pytest.approx(-0.1 * system_to_machine)
+    assert gov.DT == pytest.approx(0.3 * machine_to_system)
