@@ -127,6 +127,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Optional, Dict, Any, Tuple
 import time
+from pathlib import Path
 import scipy.io as scio
 
 # =============================================================================
@@ -582,7 +583,10 @@ def display_dataset_info(
 
     return result
     
-def create_training_samples(filepath: str = "tsi_probml_fullinputs.npz") -> None:
+def create_training_samples(
+    filepath: str = "tsi_probml_fullinputs.npz",
+    output_path: Optional[str] = None,
+) -> str:
     """
     Create training samples in MATLAB format for machine learning.
 
@@ -593,6 +597,15 @@ def create_training_samples(filepath: str = "tsi_probml_fullinputs.npz") -> None
     ----------
     filepath : str, default='tsi_probml_fullinputs.npz'
         Path to the .npz file containing TSI data.
+    output_path : str, optional
+        Output .mat file path or directory. If omitted, writes a timestamped
+        .mat file in the current working directory. If a directory is provided,
+        writes the timestamped file inside that directory.
+
+    Returns
+    -------
+    str
+        Path to the written .mat file.
     """
     # Load dataset
     data = load_tsi_data(filepath)
@@ -687,13 +700,25 @@ def create_training_samples(filepath: str = "tsi_probml_fullinputs.npz") -> None
 
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    filename = f"uqgrid_{N}_samples_{timestamp}.mat"
-    print(f"./Save samples to {filename}")    
-    scio.savemat(filename, {
+    default_filename = f"uqgrid_{N}_samples_{timestamp}.mat"
+    if output_path is None:
+        filename = Path(default_filename)
+    else:
+        output = Path(output_path)
+        if output.suffix.lower() == ".mat":
+            filename = output
+            filename.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            output.mkdir(parents=True, exist_ok=True)
+            filename = output / default_filename
+
+    print(f"Saving samples to {filename}")
+    scio.savemat(str(filename), {
             'Data': Data,
             'DataPlus': DataMisc,
             'col_name': np.array(col_name, dtype=object)  # saves as cellstr-like
         })
+    return str(filename)
 
 
 
@@ -1309,6 +1334,12 @@ Examples:
   # Show per-unit statistics
   python TSI_histogram_utils.py my_dataset.npz --per-unit
 
+  # Export MATLAB training samples
+  python TSI_histogram_utils.py my_dataset.npz --export-mat
+
+  # Export MATLAB training samples to a specific file
+  python TSI_histogram_utils.py my_dataset.npz --export-mat --mat-output samples.mat
+
   # Full analysis with all options
   python TSI_histogram_utils.py my_dataset.npz -s 0 --histogram --per-unit
         """
@@ -1358,6 +1389,21 @@ Examples:
         "--quiet", "-q",
         action="store_true",
         help="Suppress dataset info output (only show histograms/per-unit stats if requested)"
+    )
+    parser.add_argument(
+        "--export-mat",
+        action="store_true",
+        help="Export MATLAB training samples from the TSI dataset"
+    )
+    parser.add_argument(
+        "--mat-output",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "MATLAB output .mat file or directory. If provided without "
+            "--export-mat, MATLAB export is enabled."
+        )
     )
 
     args = parser.parse_args()
@@ -1419,10 +1465,9 @@ Examples:
         if not args.no_show:
             plt.show()
 
-    # Save
-    savemat = True
-    if savemat:
-        create_training_samples(args.filepath)
+    # Export MATLAB training samples only when explicitly requested.
+    if args.export_mat or args.mat_output is not None:
+        create_training_samples(args.filepath, output_path=args.mat_output)
         
     print("\nDone.")
 

@@ -7,7 +7,7 @@ This folder contains scripts for analyzing simulation results and generating dat
 The postprocessing pipeline takes raw simulation outputs from `/scripts/run` and transforms them into analysis-ready formats, including Transient Stability Index (TSI) computation and visualization.
 
 ```
-scripts/postprocessing/
+scripts/postprocess/
 ├── TSI_analysis.py          # TSI computation and ML dataset export
 └── TSI_histogram_utils.py   # TSI distribution visualization
 ```
@@ -19,13 +19,13 @@ scripts/postprocessing/
 cd /path/to/simulation/output
 
 # Compute TSI and export dataset
-python /path/to/scripts/postprocessing/TSI_analysis.py
+python /path/to/scripts/postprocess/TSI_analysis.py
 
 # Display dataset information and statistics
-python /path/to/scripts/postprocessing/TSI_histogram_utils.py tsi_probml_fullinputs.npz
+python /path/to/scripts/postprocess/TSI_histogram_utils.py tsi_probml_fullinputs.npz
 
 # Generate and display TSI histograms
-python /path/to/scripts/postprocessing/TSI_histogram_utils.py tsi_probml_fullinputs.npz --histogram
+python /path/to/scripts/postprocess/TSI_histogram_utils.py tsi_probml_fullinputs.npz --histogram
 ```
 
 ---
@@ -143,6 +143,15 @@ python TSI_histogram_utils.py my_dataset.npz --histogram --no-show
 # Show per-unit statistics (per generator/load)
 python TSI_histogram_utils.py my_dataset.npz --per-unit
 
+# Export MATLAB training samples
+python TSI_histogram_utils.py my_dataset.npz --export-mat
+
+# Export MATLAB training samples to an exact file path
+python TSI_histogram_utils.py my_dataset.npz --export-mat --mat-output samples.mat
+
+# Export MATLAB training samples to a directory with a timestamped filename
+python TSI_histogram_utils.py my_dataset.npz --export-mat --mat-output ./mat_exports
+
 # Full analysis with custom output directory
 python TSI_histogram_utils.py my_dataset.npz -s 0 --histogram --per-unit -o ./output
 
@@ -165,6 +174,26 @@ python TSI_histogram_utils.py --help
 | `-o, --output-dir DIR` | Directory for output files (default: current) |
 | `--bins N` | Number of histogram bins (default: 50) |
 | `-q, --quiet` | Suppress dataset info output |
+| `--export-mat` | Export MATLAB training samples |
+| `--mat-output PATH` | MATLAB output `.mat` path or output directory; also enables export |
+
+**MATLAB Export Behavior:**
+
+`TSI_histogram_utils.py` does not write `.mat` files by default. Use
+`--export-mat` when you explicitly want a MATLAB training-sample export.
+If `--mat-output` is omitted, the script writes a timestamped file in the
+current working directory using `uqgrid_<N>_samples_<timestamp>.mat`. If
+`--mat-output` ends in `.mat`, that exact file path is used. Otherwise,
+`--mat-output` is treated as a directory and the timestamped file is written
+inside it.
+
+The exported `.mat` file contains:
+
+| MATLAB Variable | Description |
+|-----------------|-------------|
+| `Data` | Rows are operating-point samples; columns are `Pg`, `Pl`, `Ql`, and worst-case TSI |
+| `DataPlus` | Fault-location index, fault-impedance index, and sample ID for each row |
+| `col_name` | Column names for `Data` |
 
 **Programmatic Usage:**
 
@@ -175,6 +204,7 @@ from TSI_histogram_utils import (
     plot_histogram_single_scenario,
     display_dataset_info,
     extract_power_variables,
+    create_training_samples,
     display_per_unit_statistics
 )
 
@@ -198,6 +228,12 @@ powers_s0 = extract_power_variables(data, scenario_idx=0)
 
 # Display per-unit statistics
 display_per_unit_statistics("tsi_probml_fullinputs.npz")
+
+# Export MATLAB training samples explicitly
+mat_path = create_training_samples(
+    "tsi_probml_fullinputs.npz",
+    output_path="samples.mat"
+)
 
 # Plot aggregate histogram (all scenarios combined)
 fig1 = plot_histogram_all_samples(
@@ -281,7 +317,7 @@ DATASET INFORMATION: tsi_probml_fullinputs.npz
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│               /scripts/postprocessing/                      │
+│                 /scripts/postprocess/                       │
 │                                                             │
 │  TSI_analysis.py                                            │
 │    ├── Load simulation results                              │
@@ -294,7 +330,8 @@ DATASET INFORMATION: tsi_probml_fullinputs.npz
 │    ├── Display dataset info & statistics                    │
 │    ├── Extract power variables (Pg, Qg, Pl, Ql)             │
 │    ├── Compute per-scenario & per-unit statistics           │
-│    └── Generate visualization plots                         │
+│    ├── Generate visualization plots                         │
+│    └── Optionally export MATLAB training samples (.mat)     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
