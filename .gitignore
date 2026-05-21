@@ -55,5 +55,6 @@ Thumbs.db
 *.pdf
 *.swo
 
+
 # Documentation builds
 site/
