@@ -1,6 +1,7 @@
 # Power Grid Simulation Scripts
 
 This folder contains scripts for generating, monitoring, and recovering power grid transient stability simulation scenarios.
+The commands below assume they are run from `scripts/run/`.
 
 ## Overview
 
@@ -40,7 +41,7 @@ python ../postprocess/TSI_analysis.py
 Main script for generating perturbed scenarios and running transient stability simulations.
 
 **Features:**
-- Multiplicative perturbations with configurable noise distributions (normal/uniform)
+- Multiplicative perturbations with configurable noise distributions (`normal`, `uniform`, or `none`)
 - Independent control over load and generator perturbations
 - Power factor preservation
 - Deterministic load stress via `load_scale` and `load_mean_shift`
@@ -73,8 +74,9 @@ python generate_scenarios.py config/config_IEEE-9.json --continue --additional-s
 - `simulation_data/scenario_*.npz` - Per-scenario simulation results
 - `simulation_log.json` - Simulation outcomes and metadata
 - `scenario_metadata.json` - Scenario parameter definitions
-- `scenario_diagnostics.jsonl` - Per-scenario operating-point diagnostics when stress/PF screening is active
-- `scenario_diagnostics_summary.json` - Compact summary of diagnostics and rejection reasons
+- `scenario_diagnostics.jsonl` - Per-scenario operating-point diagnostics when stress/PF screening is active; name is configurable
+- `scenario_diagnostics_summary.json` - Compact summary of diagnostics and rejection reasons; name is configurable
+- `simulation_checkpoint.json` - Temporary checkpoint for interrupted fixed-grid runs; removed after successful completion
 
 ---
 
@@ -183,8 +185,8 @@ baseline config may omit those optional fields and still run.
 {
     "model": {
         "name": "IEEE-9",
-        "raw": "../data/ieee9_v33.raw",
-        "dyr": "../data/ieee9bus_gov.dyr",
+        "raw": "../../data/ieee9_v33.raw",
+        "dyr": "../../data/ieee9bus_gov.dyr",
         "n_bus": 9
     },
     "scenarios": {
@@ -266,10 +268,10 @@ baseline config may omit those optional fields and still run.
 | **execution** | `n_jobs` | Number of parallel workers |
 | | `batch_size` | Scenarios per batch |
 | | `checkpoint_interval` | Checkpoint every N batches |
-| **perturbation** | `load_noise_type` | `"normal"` or `"uniform"` |
-| | `load_noise_var` | Noise variance for loads |
-| | `gen_noise_type` | `"normal"` or `"uniform"` |
-| | `gen_noise_var` | Noise variance for generators |
+| **perturbation** | `load_noise_type` | `"normal"`, `"uniform"`, or `"none"` |
+| | `load_noise_var` | Load noise parameter: standard deviation for `"normal"`, target variance for `"uniform"` |
+| | `gen_noise_type` | `"normal"`, `"uniform"`, or `"none"` |
+| | `gen_noise_var` | Generator noise parameter: standard deviation for `"normal"`, target variance for `"uniform"` |
 | | `balance_generation` | Rebalance Pg to match Pl |
 | | `perturb_loads` | Apply perturbations to loads |
 | | `perturb_gens` | Apply perturbations to generators |
@@ -365,13 +367,16 @@ using the same `P_load`, `Q_load`, `P_gen`, and `Q_gen` arrays.
   target.
 - A candidate counts only if every fault simulation succeeds and writes a
   trajectory file.
-- The script starts with sample indices `0..samples_per_fault_location-1`, then
-  continues with higher sample indices until the target is reached or
-  `max_total_attempts` is exhausted.
+- A fresh target-mode run samples candidate operating points sequentially from
+  sample index `0`, then continues with higher sample indices until the target
+  is reached or `max_total_attempts` is exhausted. In target mode,
+  `samples_per_fault_location` is retained for configuration compatibility and
+  summary display; the stopping criterion is `target_accepted_scenarios`.
 - With `--continue`, `target_accepted_scenarios` is interpreted as the desired
   total number of complete accepted operating points, not the number of new
   operating points to add. Existing complete operating-point groups in
-  `simulation_log.json` count toward the target.
+  `simulation_log.json` count toward the target, and new sampling starts after
+  the largest existing `sample_idx`.
 - Fault-level `scenario_metadata.json` and `simulation_log.json` stay compatible
   with postprocessing; each row also records `operating_point_id` and
   `accepted_operating_point_index`.
@@ -460,7 +465,8 @@ prepare and screen AC PF operating points.
 non-slack PV generators that exceed `Qmin/Qmax` are clamped at the violated
 limit, and their buses are temporarily switched from PV to PQ for the next PF
 solve. This trades fixed voltage control for fixed reactive output at the
-generator limit. It is not ACOPF and does not modify core UQGrid PF behavior.
+generator limit. The temporary bus-type changes are restored before dynamics
+are launched. It is not ACOPF and does not modify core UQGrid PF behavior.
 
 ### Available Models
 
@@ -470,6 +476,10 @@ generator limit. It is not ACOPF and does not modify core UQGrid PF behavior.
 | IEEE-39 | 39 | New England test system |
 | ACTIVSg200 | 200 | Synthetic 200-bus system |
 | ACTIVSg500 | 500 | Synthetic 500-bus system |
+
+The default-config generator knows about the ACTIVSg systems, but the tracked
+example configs in this directory are the IEEE configs above. ACTIVSg runs
+require the corresponding RAW/DYR files to be available locally.
 
 ---
 
@@ -658,15 +668,18 @@ Each scenario file contains:
 - `p_load_noise`, `q_load_noise` - Effective load perturbation factors
 - `p_gen_noise`, `q_gen_noise` - Effective generator perturbation factors
 - `load_scale`, `load_mean_shift` - Deterministic load-stress settings
+- `operating_point_id`, `accepted_operating_point_index` - Present for target
+  accepted operating-point mode
 
 ### scenario_diagnostics.jsonl
 
 When deterministic load stress or operating-point screening is active, the
-script writes one JSON object per line. Resampling attempts are recorded
-individually, so rejection summaries include failed internal attempts rather
-than only the final accepted/rejected scenario. JSONL is used because large
-Monte Carlo runs can append diagnostics incrementally without rewriting one huge
-JSON array. If a run stops early, all completed lines are still readable.
+script writes one JSON object per line to `diagnostics_file`. Resampling
+attempts are recorded individually, so rejection summaries include failed
+internal attempts rather than only the final accepted/rejected scenario. JSONL
+is used because large Monte Carlo runs can append diagnostics incrementally
+without rewriting one huge JSON array. If a run stops early, all completed
+lines are still readable.
 
 Typical fields:
 
@@ -743,9 +756,10 @@ mode candidate/fault counts when enabled.
 ### High Failure Rate
 
 1. Check for mismatched RAW/DYR files (generators without dynamic models)
-2. Reduce noise variance (`load_noise_var`, `gen_noise_var`)
+2. Reduce noise parameters (`load_noise_var`, `gen_noise_var`)
 3. Try excluding problematic fault locations
-4. Increase fault clearing time (`toff`) in the integration config
+4. Decrease fault clearing time (`toff`) to reduce fault severity, or increase
+   it only when intentionally creating harder stability cases
 
 ### Zero Accepted Operating Points
 
@@ -794,7 +808,7 @@ warning with Python's warning filter:
 
 ```bash
 PYTHONWARNINGS="ignore:Transformer Magnetizing Impedance not Implemented:UserWarning:uqgrid.io.parse,ignore:invalid value encountered in scalar divide::scipy.optimize._nonlin" \
-python generate_scenarios.py config/config_ACTIVSg500_stress.json
+python generate_scenarios.py config/config_IEEE-39_stress.json
 ```
 
 If the module-specific filter does not catch it in your environment, use the
@@ -802,7 +816,7 @@ same message-level filter without the module qualifier:
 
 ```bash
 PYTHONWARNINGS="ignore:Transformer Magnetizing Impedance not Implemented:UserWarning,ignore:invalid value encountered in scalar divide::scipy.optimize._nonlin" \
-python generate_scenarios.py config/config_ACTIVSg500_stress.json
+python generate_scenarios.py config/config_IEEE-39_stress.json
 ```
 
 For repeated production runs, export the filter for the session and unset it
@@ -810,7 +824,7 @@ afterward:
 
 ```bash
 export PYTHONWARNINGS="ignore:Transformer Magnetizing Impedance not Implemented:UserWarning:uqgrid.io.parse,ignore:invalid value encountered in scalar divide::scipy.optimize._nonlin"
-python generate_scenarios.py config/config_ACTIVSg500_stress.json
+python generate_scenarios.py config/config_IEEE-39_stress.json
 unset PYTHONWARNINGS
 ```
 
