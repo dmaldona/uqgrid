@@ -126,7 +126,9 @@ Display dataset statistics::
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Optional, Dict, Any, Tuple
-
+import time
+from pathlib import Path
+import scipy.io as scio
 
 # =============================================================================
 # Data Loading
@@ -370,7 +372,8 @@ def compute_variable_statistics(arr: np.ndarray) -> Dict[str, float]:
 def display_dataset_info(
     filepath: str = "tsi_probml_fullinputs.npz",
     scenario_idx: Optional[int] = None,
-    print_output: bool = True
+    print_output: bool = True,
+    verbose: bool = False,
 ) -> Dict[str, Any]:
     """
     Display comprehensive information about a TSI dataset.
@@ -392,6 +395,9 @@ def display_dataset_info(
     print_output : bool, default=True
         If True, print formatted output to stdout.
         If False, only return the info dictionary.
+    verbose : bool, default=False
+        If True, print additional diagnostic arrays used for stability
+        breakdown debugging.
 
     Returns
     -------
@@ -478,15 +484,90 @@ def display_dataset_info(
         # Add stability breakdown
         Y_flat = Y.flatten()
         Y_valid = Y_flat[~np.isnan(Y_flat)]
+        if verbose:
+            print(f"y val = {Y_valid}")
+        
         if len(Y_valid) > 0:
             n_stable = np.sum(Y_valid > 0)
             n_unstable = np.sum(Y_valid < 0)
-            n_marginal = np.sum(Y_valid == 0)
+            n_marginal = len(Y_valid) - n_stable - n_unstable
             result["Y_stats"]["n_stable"] = int(n_stable)
             result["Y_stats"]["n_unstable"] = int(n_unstable)
             result["Y_stats"]["n_marginal"] = int(n_marginal)
             result["Y_stats"]["pct_stable"] = 100.0 * n_stable / len(Y_valid)
             result["Y_stats"]["pct_unstable"] = 100.0 * n_unstable / len(Y_valid)
+
+            y_by_sample = Y.reshape(Y.shape[0], -1)
+            valid_sample_mask = np.any(~np.isnan(y_by_sample), axis=1)
+            min_vals = np.full(Y.shape[0], np.nan)
+            if np.any(valid_sample_mask):
+                min_vals[valid_sample_mask] = np.nanmin(
+                    y_by_sample[valid_sample_mask],
+                    axis=1,
+                )
+            unstable_idx = np.where(min_vals < 0)[0]
+            if verbose:
+                print(f"Ymin shape {np.shape(min_vals)}")
+                print(f"unstable sample index: {unstable_idx}")
+                print(f"Ymin(unstable) = {min_vals[unstable_idx]}")
+    
+            n_stable_sample = (min_vals > 0).sum()
+#            print(f"unstable_idx: {unstable_idx}")
+            
+            n_unstable_sample = len(unstable_idx)
+            n_marginal_sample = (min_vals == 0).sum()
+            n_valid_sample = int(valid_sample_mask.sum())
+            result["Y_stats"]["n_stable_sample"] = int(n_stable_sample)
+            result["Y_stats"]["n_unstable_sample"] = int(n_unstable_sample)
+            result["Y_stats"]["pct_stable_sample"] = (
+                100.0 * n_stable_sample / n_valid_sample
+                if n_valid_sample > 0 else np.nan
+            )
+            result["Y_stats"]["pct_unstable_sample"] = (
+                100.0 * n_unstable_sample / n_valid_sample
+                if n_valid_sample > 0 else np.nan
+            )
+
+            if "fault_locations" not in data:
+                result["Y_stats"]["fault_location_warning"] = (
+                    "fault_locations missing; skipped per-fault-location statistics"
+                )
+            elif Y.ndim != 3:
+                result["Y_stats"]["fault_location_warning"] = (
+                    f"Y must have shape (N, F, Z) for per-fault-location "
+                    f"statistics; got shape {Y.shape}"
+                )
+            else:
+                fault_locations_all = data["fault_locations"]
+                fault_locations = np.unique(fault_locations_all)
+                if len(fault_locations) != Y.shape[1]:
+                    result["Y_stats"]["fault_location_warning"] = (
+                        "fault_locations unique count does not match Y.shape[1]; "
+                        "skipped per-fault-location statistics"
+                    )
+                else:
+                    # Sum over N and Z -> per fault location (F,)
+                    axis = (0, 2)
+                    mask_vaild_Y = ~np.isnan(Y)
+                    mask_stable_Y   = mask_vaild_Y & (Y > 0)
+                    mask_unstable_Y = mask_vaild_Y & (Y < 0)
+                    mask_marginal_Y = mask_vaild_Y & (Y == 0)
+                    n_valid_f    = mask_vaild_Y.sum(axis=axis)
+                    n_stable_f   = mask_stable_Y.sum(axis=axis)
+                    n_unstable_f = mask_unstable_Y.sum(axis=axis)
+                    n_marginal_f = mask_marginal_Y.sum(axis=axis)
+
+                    pct_stable_f = np.where(n_valid_f > 0, 100.0 * n_stable_f / n_valid_f, np.nan)
+                    pct_unstable_f = np.where(n_valid_f > 0, 100.0 * n_unstable_f / n_valid_f, np.nan)
+                    pct_marginal_f = np.where(n_valid_f > 0, 100.0 * n_marginal_f / n_valid_f, np.nan)
+
+                    result["Y_stats"]["fault_locations"] =  list(fault_locations)
+                    result["Y_stats"]["n_stable_f"] = n_stable_f.astype(int).tolist()
+                    result["Y_stats"]["n_unstable_f"] = n_unstable_f.astype(int).tolist()
+                    result["Y_stats"]["n_marginal_f"] = n_marginal_f.astype(int).tolist()
+                    result["Y_stats"]["pct_stable_f"] = pct_stable_f.tolist()
+                    result["Y_stats"]["pct_unstable_f"] = pct_unstable_f.tolist()
+                    result["Y_stats"]["pct_marginal_f"] = pct_marginal_f.tolist()
 
     # -------------------------------------------------------------------------
     # Section 4: Power variable statistics (all scenarios)
@@ -531,6 +612,144 @@ def display_dataset_info(
         _print_dataset_info(result)
 
     return result
+    
+def create_training_samples(
+    filepath: str = "tsi_probml_fullinputs.npz",
+    output_path: Optional[str] = None,
+) -> str:
+    """
+    Create training samples in MATLAB format for machine learning.
+
+    Exports simulation results as a MATLAB .mat file with features (power
+    setpoints) and labels (TSI values) suitable for training ML models.
+
+    Parameters
+    ----------
+    filepath : str, default='tsi_probml_fullinputs.npz'
+        Path to the .npz file containing TSI data.
+    output_path : str, optional
+        Output .mat file path or directory. If omitted, writes a timestamped
+        .mat file in the current working directory. If a directory is provided,
+        writes the timestamped file inside that directory.
+
+    Returns
+    -------
+    str
+        Path to the written .mat file.
+    """
+    # Load dataset
+    data = load_tsi_data(filepath)
+
+    # Get metadata
+    if "meta" not in data:
+        raise ValueError("Dataset does not contain 'meta' field")
+
+    meta = data["meta"]
+    if isinstance(meta, np.ndarray):
+        meta = meta.item() if meta.ndim == 0 else meta[0]
+
+    Ngen = meta.get("Ngen")
+    Nload = meta.get("Nload")
+    concat_mode = meta.get("concat_generators_and_loads", True)
+
+    if Ngen is None or Nload is None:
+        raise ValueError("Metadata missing 'Ngen' or 'Nload' fields")
+
+    if "Y" not in data:
+        raise ValueError("Dataset does not contain 'Y' field")
+    Y = data["Y"]  
+    N_y, F, Z = Y.shape
+
+    # Min over BOTH fault location and impedance
+    Y_flat = Y.reshape(N_y, -1)                 # (N, F*Z)
+    all_nan = np.all(np.isnan(Y_flat), axis=1)
+    TSI_per_sample = np.nanmin(Y_flat, axis=1)
+    TSI_per_sample[all_nan] = np.nan
+
+    argmin_flat = np.zeros(N_y, dtype=int)
+    valid = ~all_nan
+    argmin_flat[valid] = np.nanargmin(Y_flat[valid], axis=1)
+
+    fault_loc_idx = argmin_flat // Z
+    fault_imp_idx = argmin_flat % Z
+
+    # MATLAB-friendly 1-based indices:
+    fault_loc = fault_loc_idx + 1
+    fault_impedance = fault_imp_idx + 1
+    sample_id = np.arange(N_y) + 1
+
+    if concat_mode:
+        if "X" not in data:
+            raise ValueError("Dataset missing 'X' array (expected for concatenated mode)")
+
+        X = data["X"]  # Shape: (N, 2, Ngen+Nload)
+        if X.shape[0] != N_y:
+            raise ValueError(f"Mismatch: X has N={X.shape[0]} but Y has N={N_y}")
+        N = N_y
+
+        # Extract for all samples
+        pg = X[:, 0, :Ngen]
+        qg = X[:, 1, :Ngen]
+        pl = X[:, 0, Ngen:]
+        ql = X[:, 1, Ngen:]
+    else:
+        # Separate storage mode
+        if "X_gen" not in data or "X_load" not in data:
+            raise ValueError(
+                "Dataset missing 'X_gen' or 'X_load' arrays "
+                "(expected for separate storage mode)"
+            )
+
+        X_gen = data["X_gen"]    # Shape: (N, 2, Ngen)
+        X_load = data["X_load"]  # Shape: (N, 2, Nload)
+        if X_gen.shape[0] != N_y:
+            raise ValueError(f"Mismatch: X_gen has N={X_gen.shape[0]} but Y has N={N_y}")
+        N = N_y
+
+        # Extract for all scenarios
+        pg = X_gen[:, 0, :]
+        qg = X_gen[:, 1, :]
+        pl = X_load[:, 0, :]
+        ql = X_load[:, 1, :]
+        
+    Data = np.hstack([
+        pg,                         # (N, Ngen)
+        pl,                         # (N, Nload)
+        ql,                         # (N, Nload)
+        TSI_per_sample[:, None],    # (N, 1)
+    ])
+    DataMisc = np.column_stack([fault_loc, fault_impedance, sample_id])
+    
+    # ---- Column names (matches Data layout) ----
+    col_name = (
+        [f'pg_{i+1}' for i in range(Ngen)] +
+        [f'pl_{i+1}' for i in range(Nload)] +
+        [f'ql_{i+1}' for i in range(Nload)] +
+        ['tsi']
+    )
+
+
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    default_filename = f"uqgrid_{N}_samples_{timestamp}.mat"
+    if output_path is None:
+        filename = Path(default_filename)
+    else:
+        output = Path(output_path)
+        if output.suffix.lower() == ".mat":
+            filename = output
+            filename.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            output.mkdir(parents=True, exist_ok=True)
+            filename = output / default_filename
+
+    print(f"Saving samples to {filename}")
+    scio.savemat(str(filename), {
+            'Data': Data,
+            'DataPlus': DataMisc,
+            'col_name': np.array(col_name, dtype=object)  # saves as cellstr-like
+        })
+    return str(filename)
+
 
 
 def _print_dataset_info(info: Dict[str, Any]) -> None:
@@ -576,10 +795,32 @@ def _print_dataset_info(info: Dict[str, Any]) -> None:
         print(f"  Q25:       {stats.get('q25', 'N/A'):.4f}")
         print(f"  Q75:       {stats.get('q75', 'N/A'):.4f}")
         if "n_stable" in stats:
-            print(f"\n  Stability breakdown:")
+            total_scenarios = stats['n_stable']+stats['n_unstable']+stats['n_marginal']
+            total_samples = info['arrays']['X']['shape'][0]
+            print(f"\n  Scenario Stability breakdown:")
+            print(f"    Total Scenarios:    {total_scenarios:,}")
             print(f"    Stable (TSI > 0):   {stats['n_stable']:,} ({stats['pct_stable']:.2f}%)")
             print(f"    Unstable (TSI < 0): {stats['n_unstable']:,} ({stats['pct_unstable']:.2f}%)")
             print(f"    Marginal (TSI = 0): {stats['n_marginal']:,}")
+
+            print("\nStability breakdown per fault location:")
+            print(f"    Total Samples:    {total_samples:,}")
+            print(f"    Stable (TSI > 0):   {stats['n_stable_sample']:,} ({stats['pct_stable_sample']:.2f}%)")
+            print(f"    Unstable (TSI < 0): {stats['n_unstable_sample']:,} ({stats['pct_unstable_sample']:.2f}%)")
+            print("Fault Loc| n_stable | n_unstable | n_marginal |  %stable  | %unstable")
+            print("---------|----------|------------|------------|-----------|-----------")
+
+            for f in range(len(stats['fault_locations'])):
+                print(
+                    f"{stats['fault_locations'][f]:8d} | "
+                    f"{stats['n_stable_f'][f]:8d} | "
+                    f"{stats['n_unstable_f'][f]:10d} | "
+                    f"{stats['n_marginal_f'][f]:10d} | "
+                    f"{stats['pct_stable_f'][f]:9.2f} | "
+                    f"{stats['pct_unstable_f'][f]:9.2f}"
+                )
+
+
     else:
         print("  (Y array not found)")
 
@@ -1123,6 +1364,15 @@ Examples:
   # Show per-unit statistics
   python TSI_histogram_utils.py my_dataset.npz --per-unit
 
+  # Export MATLAB training samples
+  python TSI_histogram_utils.py my_dataset.npz --export-mat
+
+  # Export MATLAB training samples to a specific file
+  python TSI_histogram_utils.py my_dataset.npz --export-mat --mat-output samples.mat
+
+  # Show verbose diagnostic arrays
+  python TSI_histogram_utils.py my_dataset.npz --verbose
+
   # Full analysis with all options
   python TSI_histogram_utils.py my_dataset.npz -s 0 --histogram --per-unit
         """
@@ -1173,6 +1423,26 @@ Examples:
         action="store_true",
         help="Suppress dataset info output (only show histograms/per-unit stats if requested)"
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print additional diagnostic arrays while displaying dataset info"
+    )
+    parser.add_argument(
+        "--export-mat",
+        action="store_true",
+        help="Export MATLAB training samples from the TSI dataset"
+    )
+    parser.add_argument(
+        "--mat-output",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "MATLAB output .mat file or directory. If provided without "
+            "--export-mat, MATLAB export is enabled."
+        )
+    )
 
     args = parser.parse_args()
 
@@ -1191,7 +1461,11 @@ Examples:
         print("\n" + "=" * 80)
         print("DATASET INFORMATION")
         print("=" * 80)
-        info = display_dataset_info(args.filepath, scenario_idx=args.scenario)
+        info = display_dataset_info(
+            args.filepath,
+            scenario_idx=args.scenario,
+            verbose=args.verbose,
+        )
 
     # Display per-unit statistics if requested
     if args.per_unit:
@@ -1233,6 +1507,10 @@ Examples:
         if not args.no_show:
             plt.show()
 
+    # Export MATLAB training samples only when explicitly requested.
+    if args.export_mat or args.mat_output is not None:
+        create_training_samples(args.filepath, output_path=args.mat_output)
+        
     print("\nDone.")
 
 

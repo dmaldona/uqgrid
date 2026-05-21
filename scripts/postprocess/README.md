@@ -7,9 +7,10 @@ This folder contains scripts for analyzing simulation results and generating dat
 The postprocessing pipeline takes raw simulation outputs from `/scripts/run` and transforms them into analysis-ready formats, including Transient Stability Index (TSI) computation and visualization.
 
 ```
-scripts/postprocessing/
+scripts/postprocess/
 ├── TSI_analysis.py          # TSI computation and ML dataset export
-└── TSI_histogram_utils.py   # TSI distribution visualization
+├── TSI_histogram_utils.py   # TSI distribution visualization
+└── TSI_merge_multi_npz.py   # Merge TSI .npz datasets across campaigns
 ```
 
 ## Quick Start
@@ -19,13 +20,13 @@ scripts/postprocessing/
 cd /path/to/simulation/output
 
 # Compute TSI and export dataset
-python /path/to/scripts/postprocessing/TSI_analysis.py
+python /path/to/scripts/postprocess/TSI_analysis.py
 
 # Display dataset information and statistics
-python /path/to/scripts/postprocessing/TSI_histogram_utils.py tsi_probml_fullinputs.npz
+python /path/to/scripts/postprocess/TSI_histogram_utils.py tsi_probml_fullinputs.npz
 
 # Generate and display TSI histograms
-python /path/to/scripts/postprocessing/TSI_histogram_utils.py tsi_probml_fullinputs.npz --histogram
+python /path/to/scripts/postprocess/TSI_histogram_utils.py tsi_probml_fullinputs.npz --histogram
 ```
 
 ---
@@ -143,11 +144,23 @@ python TSI_histogram_utils.py my_dataset.npz --histogram --no-show
 # Show per-unit statistics (per generator/load)
 python TSI_histogram_utils.py my_dataset.npz --per-unit
 
+# Export MATLAB training samples
+python TSI_histogram_utils.py my_dataset.npz --export-mat
+
+# Export MATLAB training samples to an exact file path
+python TSI_histogram_utils.py my_dataset.npz --export-mat --mat-output samples.mat
+
+# Export MATLAB training samples to a directory with a timestamped filename
+python TSI_histogram_utils.py my_dataset.npz --export-mat --mat-output ./mat_exports
+
 # Full analysis with custom output directory
 python TSI_histogram_utils.py my_dataset.npz -s 0 --histogram --per-unit -o ./output
 
 # Quiet mode (suppress info, only generate histograms)
 python TSI_histogram_utils.py my_dataset.npz -q --histogram
+
+# Show debug arrays used by the dataset-info stability breakdown
+python TSI_histogram_utils.py my_dataset.npz --verbose
 
 # Show all options
 python TSI_histogram_utils.py --help
@@ -165,6 +178,27 @@ python TSI_histogram_utils.py --help
 | `-o, --output-dir DIR` | Directory for output files (default: current) |
 | `--bins N` | Number of histogram bins (default: 50) |
 | `-q, --quiet` | Suppress dataset info output |
+| `--verbose` | Print diagnostic arrays used by dataset-info stability breakdown |
+| `--export-mat` | Export MATLAB training samples |
+| `--mat-output PATH` | MATLAB output `.mat` path or output directory; also enables export |
+
+**MATLAB Export Behavior:**
+
+`TSI_histogram_utils.py` does not write `.mat` files by default. Use
+`--export-mat` when you explicitly want a MATLAB training-sample export.
+If `--mat-output` is omitted, the script writes a timestamped file in the
+current working directory using `uqgrid_<N>_samples_<timestamp>.mat`. If
+`--mat-output` ends in `.mat`, that exact file path is used. Otherwise,
+`--mat-output` is treated as a directory and the timestamped file is written
+inside it.
+
+The exported `.mat` file contains:
+
+| MATLAB Variable | Description |
+|-----------------|-------------|
+| `Data` | Rows are operating-point samples; columns are `Pg`, `Pl`, `Ql`, and worst-case TSI |
+| `DataPlus` | Fault-location index, fault-impedance index, and sample ID for each row |
+| `col_name` | Column names for `Data` |
 
 **Programmatic Usage:**
 
@@ -175,6 +209,7 @@ from TSI_histogram_utils import (
     plot_histogram_single_scenario,
     display_dataset_info,
     extract_power_variables,
+    create_training_samples,
     display_per_unit_statistics
 )
 
@@ -183,6 +218,9 @@ info = display_dataset_info("tsi_probml_fullinputs.npz")
 
 # Display info for a specific scenario
 info = display_dataset_info("tsi_probml_fullinputs.npz", scenario_idx=5)
+
+# Include verbose diagnostic arrays in stdout
+info = display_dataset_info("tsi_probml_fullinputs.npz", verbose=True)
 
 # Load dataset for custom analysis
 data = load_tsi_data("tsi_probml_fullinputs.npz")
@@ -198,6 +236,12 @@ powers_s0 = extract_power_variables(data, scenario_idx=0)
 
 # Display per-unit statistics
 display_per_unit_statistics("tsi_probml_fullinputs.npz")
+
+# Export MATLAB training samples explicitly
+mat_path = create_training_samples(
+    "tsi_probml_fullinputs.npz",
+    output_path="samples.mat"
+)
 
 # Plot aggregate histogram (all scenarios combined)
 fig1 = plot_histogram_all_samples(
@@ -222,12 +266,52 @@ plt.show()
 | Function | Description |
 |----------|-------------|
 | `load_tsi_data(filepath)` | Load TSI dataset from .npz file |
-| `display_dataset_info(filepath, scenario_idx, print_output)` | Display comprehensive dataset information |
+| `display_dataset_info(filepath, scenario_idx, print_output, verbose)` | Display comprehensive dataset information |
 | `extract_power_variables(data, scenario_idx)` | Extract Pg, Qg, Pl, Ql from dataset |
 | `compute_variable_statistics(arr)` | Compute min, max, mean, median, std, percentiles |
 | `display_per_unit_statistics(filepath, scenario_idx)` | Show per-generator and per-load statistics |
 | `plot_histogram_all_samples(...)` | Aggregate histogram across all scenarios |
 | `plot_histogram_single_scenario(...)` | Histogram for one operating condition |
+
+---
+
+### TSI_merge_multi_npz.py
+
+Merges multiple `.npz` TSI datasets into one output file. This is useful when
+separate simulation campaigns or folders each produce their own
+`tsi_probml_fullinputs.npz`.
+
+**Usage:**
+
+```bash
+# Merge all folder_*/tsi_probml_fullinputs.npz files under the current directory
+python TSI_merge_multi_npz.py
+
+# Merge files under a different campaign directory
+python TSI_merge_multi_npz.py --base-dir /path/to/campaigns
+
+# Use a custom glob pattern and output path
+python TSI_merge_multi_npz.py --pattern "run_*/tsi_probml_fullinputs.npz" --out merged_tsi.npz
+
+# Explicitly skip known-bad files by zero-based position in the sorted file list
+python TSI_merge_multi_npz.py --exclude-indices 107,331,454
+```
+
+**CLI Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--base-dir DIR` | Parent directory searched for input `.npz` files |
+| `--pattern GLOB` | Glob pattern under `--base-dir` (default: `folder_*/tsi_probml_fullinputs.npz`) |
+| `--out FILE` | Output merged `.npz` path (default: `merged_results.npz`) |
+| `--axis N` | Concatenation axis for compatible arrays (default: `0`) |
+| `--exclude-indices I,J,K` | Explicitly skip zero-based positions in the sorted input file list |
+| `--no-allow-pickle` | Disable `allow_pickle` while loading inputs |
+| `--quiet` | Reduce verbose progress output |
+
+`--exclude-indices` defaults to no exclusions. The script no longer skips any
+files implicitly; if a file should be omitted, provide its position explicitly
+after checking the sorted input list printed by the script.
 
 **Example Output (display_dataset_info):**
 
@@ -281,7 +365,7 @@ DATASET INFORMATION: tsi_probml_fullinputs.npz
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│               /scripts/postprocessing/                      │
+│                 /scripts/postprocess/                       │
 │                                                             │
 │  TSI_analysis.py                                            │
 │    ├── Load simulation results                              │
@@ -294,7 +378,8 @@ DATASET INFORMATION: tsi_probml_fullinputs.npz
 │    ├── Display dataset info & statistics                    │
 │    ├── Extract power variables (Pg, Qg, Pl, Ql)             │
 │    ├── Compute per-scenario & per-unit statistics           │
-│    └── Generate visualization plots                         │
+│    ├── Generate visualization plots                         │
+│    └── Optionally export MATLAB training samples (.mat)     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
