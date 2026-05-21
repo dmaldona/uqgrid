@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""
+r"""
 Power Grid Scenario Generation with Perturbation and Simulation.
 
 This module generates perturbed operating scenarios for power grid transient
@@ -637,7 +637,7 @@ def generate_perturbations(base_p, base_q,
                            rng=None, return_noise=False,
                            preserve_power_factor=True,
                            basemva=100.0):
-    """
+    r"""
     Apply multiplicative perturbations to active and reactive power.
 
     Generates perturbed power values using the multiplicative noise model:

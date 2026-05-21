@@ -479,10 +479,6 @@ def display_dataset_info(
     # -------------------------------------------------------------------------
     if "Y" in data:
         Y = data["Y"]
-        fault_locations_all = data["fault_locations"]
-        fault_locations, inv = np.unique(fault_locations_all, return_inverse=True)
-        assert len(fault_locations) == Y.shape[1], "fault_locations length must match Y.shape[1] (number of fault locations)"
-
         result["Y_stats"] = compute_variable_statistics(Y)
 
         # Add stability breakdown
@@ -500,24 +496,15 @@ def display_dataset_info(
             result["Y_stats"]["n_marginal"] = int(n_marginal)
             result["Y_stats"]["pct_stable"] = 100.0 * n_stable / len(Y_valid)
             result["Y_stats"]["pct_unstable"] = 100.0 * n_unstable / len(Y_valid)
-            
-            # Sum over N and Z -> per fault location (F,)
-            axis = (0, 2)
-            mask_vaild_Y = ~np.isnan(Y)
-            mask_stable_Y   = mask_vaild_Y & (Y > 0)
-            mask_unstable_Y = mask_vaild_Y & (Y < 0)
-            mask_marginal_Y = mask_vaild_Y & (Y == 0)
-            n_valid_f    = mask_vaild_Y.sum(axis=axis)
-            n_stable_f   = mask_stable_Y.sum(axis=axis)
-            n_unstable_f = mask_unstable_Y.sum(axis=axis)
-            n_marginal_f = mask_marginal_Y.sum(axis=axis)
 
-            pct_stable_f = np.where(n_valid_f > 0, 100.0 * n_stable_f / n_valid_f, np.nan)
-            pct_unstable_f = np.where(n_valid_f > 0, 100.0 * n_unstable_f / n_valid_f, np.nan)
-            pct_marginal_f = np.where(n_valid_f > 0, 100.0 * n_marginal_f / n_valid_f, np.nan)
-
-
-            min_vals = np.nanmin(Y, axis=1)         # min tsi over fault locations
+            y_by_sample = Y.reshape(Y.shape[0], -1)
+            valid_sample_mask = np.any(~np.isnan(y_by_sample), axis=1)
+            min_vals = np.full(Y.shape[0], np.nan)
+            if np.any(valid_sample_mask):
+                min_vals[valid_sample_mask] = np.nanmin(
+                    y_by_sample[valid_sample_mask],
+                    axis=1,
+                )
             unstable_idx = np.where(min_vals < 0)[0]
             if verbose:
                 print(f"Ymin shape {np.shape(min_vals)}")
@@ -529,19 +516,58 @@ def display_dataset_info(
             
             n_unstable_sample = len(unstable_idx)
             n_marginal_sample = (min_vals == 0).sum()
-            n_valid_sample = n_stable_sample + n_unstable_sample + n_marginal_sample
+            n_valid_sample = int(valid_sample_mask.sum())
             result["Y_stats"]["n_stable_sample"] = int(n_stable_sample)
             result["Y_stats"]["n_unstable_sample"] = int(n_unstable_sample)
-            result["Y_stats"]["pct_stable_sample"] = 100.0 * n_stable_sample / n_valid_sample
-            result["Y_stats"]["pct_unstable_sample"] = 100.0 * n_unstable_sample / n_valid_sample
+            result["Y_stats"]["pct_stable_sample"] = (
+                100.0 * n_stable_sample / n_valid_sample
+                if n_valid_sample > 0 else np.nan
+            )
+            result["Y_stats"]["pct_unstable_sample"] = (
+                100.0 * n_unstable_sample / n_valid_sample
+                if n_valid_sample > 0 else np.nan
+            )
 
-            result["Y_stats"]["fault_locations"] =  list(fault_locations)
-            result["Y_stats"]["n_stable_f"] = n_stable_f.astype(int).tolist()
-            result["Y_stats"]["n_unstable_f"] = n_unstable_f.astype(int).tolist()
-            result["Y_stats"]["n_marginal_f"] = n_marginal_f.astype(int).tolist()
-            result["Y_stats"]["pct_stable_f"] = pct_stable_f.tolist()
-            result["Y_stats"]["pct_unstable_f"] = pct_unstable_f.tolist()
-            result["Y_stats"]["pct_marginal_f"] = pct_marginal_f.tolist()
+            if "fault_locations" not in data:
+                result["Y_stats"]["fault_location_warning"] = (
+                    "fault_locations missing; skipped per-fault-location statistics"
+                )
+            elif Y.ndim != 3:
+                result["Y_stats"]["fault_location_warning"] = (
+                    f"Y must have shape (N, F, Z) for per-fault-location "
+                    f"statistics; got shape {Y.shape}"
+                )
+            else:
+                fault_locations_all = data["fault_locations"]
+                fault_locations = np.unique(fault_locations_all)
+                if len(fault_locations) != Y.shape[1]:
+                    result["Y_stats"]["fault_location_warning"] = (
+                        "fault_locations unique count does not match Y.shape[1]; "
+                        "skipped per-fault-location statistics"
+                    )
+                else:
+                    # Sum over N and Z -> per fault location (F,)
+                    axis = (0, 2)
+                    mask_vaild_Y = ~np.isnan(Y)
+                    mask_stable_Y   = mask_vaild_Y & (Y > 0)
+                    mask_unstable_Y = mask_vaild_Y & (Y < 0)
+                    mask_marginal_Y = mask_vaild_Y & (Y == 0)
+                    n_valid_f    = mask_vaild_Y.sum(axis=axis)
+                    n_stable_f   = mask_stable_Y.sum(axis=axis)
+                    n_unstable_f = mask_unstable_Y.sum(axis=axis)
+                    n_marginal_f = mask_marginal_Y.sum(axis=axis)
+
+                    pct_stable_f = np.where(n_valid_f > 0, 100.0 * n_stable_f / n_valid_f, np.nan)
+                    pct_unstable_f = np.where(n_valid_f > 0, 100.0 * n_unstable_f / n_valid_f, np.nan)
+                    pct_marginal_f = np.where(n_valid_f > 0, 100.0 * n_marginal_f / n_valid_f, np.nan)
+
+                    result["Y_stats"]["fault_locations"] =  list(fault_locations)
+                    result["Y_stats"]["n_stable_f"] = n_stable_f.astype(int).tolist()
+                    result["Y_stats"]["n_unstable_f"] = n_unstable_f.astype(int).tolist()
+                    result["Y_stats"]["n_marginal_f"] = n_marginal_f.astype(int).tolist()
+                    result["Y_stats"]["pct_stable_f"] = pct_stable_f.tolist()
+                    result["Y_stats"]["pct_unstable_f"] = pct_unstable_f.tolist()
+                    result["Y_stats"]["pct_marginal_f"] = pct_marginal_f.tolist()
 
     # -------------------------------------------------------------------------
     # Section 4: Power variable statistics (all scenarios)
