@@ -158,6 +158,9 @@ python TSI_histogram_utils.py my_dataset.npz -s 0 --histogram --per-unit -o ./ou
 # Quiet mode (suppress info, only generate histograms)
 python TSI_histogram_utils.py my_dataset.npz -q --histogram
 
+# Show debug arrays used by the dataset-info stability breakdown
+python TSI_histogram_utils.py my_dataset.npz --verbose
+
 # Show all options
 python TSI_histogram_utils.py --help
 ```
@@ -174,6 +177,7 @@ python TSI_histogram_utils.py --help
 | `-o, --output-dir DIR` | Directory for output files (default: current) |
 | `--bins N` | Number of histogram bins (default: 50) |
 | `-q, --quiet` | Suppress dataset info output |
+| `--verbose` | Print diagnostic arrays used by dataset-info stability breakdown |
 | `--export-mat` | Export MATLAB training samples |
 | `--mat-output PATH` | MATLAB output `.mat` path or output directory; also enables export |
 
@@ -213,6 +217,9 @@ info = display_dataset_info("tsi_probml_fullinputs.npz")
 
 # Display info for a specific scenario
 info = display_dataset_info("tsi_probml_fullinputs.npz", scenario_idx=5)
+
+# Include verbose diagnostic arrays in stdout
+info = display_dataset_info("tsi_probml_fullinputs.npz", verbose=True)
 
 # Load dataset for custom analysis
 data = load_tsi_data("tsi_probml_fullinputs.npz")
@@ -258,7 +265,7 @@ plt.show()
 | Function | Description |
 |----------|-------------|
 | `load_tsi_data(filepath)` | Load TSI dataset from .npz file |
-| `display_dataset_info(filepath, scenario_idx, print_output)` | Display comprehensive dataset information |
+| `display_dataset_info(filepath, scenario_idx, print_output, verbose)` | Display comprehensive dataset information |
 | `extract_power_variables(data, scenario_idx)` | Extract Pg, Qg, Pl, Ql from dataset |
 | `compute_variable_statistics(arr)` | Compute min, max, mean, median, std, percentiles |
 | `display_per_unit_statistics(filepath, scenario_idx)` | Show per-generator and per-load statistics |

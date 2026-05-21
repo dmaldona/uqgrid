@@ -372,7 +372,8 @@ def compute_variable_statistics(arr: np.ndarray) -> Dict[str, float]:
 def display_dataset_info(
     filepath: str = "tsi_probml_fullinputs.npz",
     scenario_idx: Optional[int] = None,
-    print_output: bool = True
+    print_output: bool = True,
+    verbose: bool = False,
 ) -> Dict[str, Any]:
     """
     Display comprehensive information about a TSI dataset.
@@ -394,6 +395,9 @@ def display_dataset_info(
     print_output : bool, default=True
         If True, print formatted output to stdout.
         If False, only return the info dictionary.
+    verbose : bool, default=False
+        If True, print additional diagnostic arrays used for stability
+        breakdown debugging.
 
     Returns
     -------
@@ -484,7 +488,8 @@ def display_dataset_info(
         # Add stability breakdown
         Y_flat = Y.flatten()
         Y_valid = Y_flat[~np.isnan(Y_flat)]
-        print(f"y val = {Y_valid}")
+        if verbose:
+            print(f"y val = {Y_valid}")
         
         if len(Y_valid) > 0:
             n_stable = np.sum(Y_valid > 0)
@@ -513,12 +518,11 @@ def display_dataset_info(
 
 
             min_vals = np.nanmin(Y, axis=1)         # min tsi over fault locations
-            print(f"Ymin shape {np.shape(min_vals)}")
-#            print(f"Ymin {min_vals}")
-#            print(f"Ymin {np.where(min_vals < 0)}")
             unstable_idx = np.where(min_vals < 0)[0]
-            print(f"unstable sample index: {unstable_idx}")
-            print(f"Ymin(unstable) = {min_vals[unstable_idx]}")
+            if verbose:
+                print(f"Ymin shape {np.shape(min_vals)}")
+                print(f"unstable sample index: {unstable_idx}")
+                print(f"Ymin(unstable) = {min_vals[unstable_idx]}")
     
             n_stable_sample = (min_vals > 0).sum()
 #            print(f"unstable_idx: {unstable_idx}")
@@ -1340,6 +1344,9 @@ Examples:
   # Export MATLAB training samples to a specific file
   python TSI_histogram_utils.py my_dataset.npz --export-mat --mat-output samples.mat
 
+  # Show verbose diagnostic arrays
+  python TSI_histogram_utils.py my_dataset.npz --verbose
+
   # Full analysis with all options
   python TSI_histogram_utils.py my_dataset.npz -s 0 --histogram --per-unit
         """
@@ -1391,6 +1398,11 @@ Examples:
         help="Suppress dataset info output (only show histograms/per-unit stats if requested)"
     )
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print additional diagnostic arrays while displaying dataset info"
+    )
+    parser.add_argument(
         "--export-mat",
         action="store_true",
         help="Export MATLAB training samples from the TSI dataset"
@@ -1423,7 +1435,11 @@ Examples:
         print("\n" + "=" * 80)
         print("DATASET INFORMATION")
         print("=" * 80)
-        info = display_dataset_info(args.filepath, scenario_idx=args.scenario)
+        info = display_dataset_info(
+            args.filepath,
+            scenario_idx=args.scenario,
+            verbose=args.verbose,
+        )
 
     # Display per-unit statistics if requested
     if args.per_unit:
