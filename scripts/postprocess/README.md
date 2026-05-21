@@ -9,7 +9,8 @@ The postprocessing pipeline takes raw simulation outputs from `/scripts/run` and
 ```
 scripts/postprocess/
 ├── TSI_analysis.py          # TSI computation and ML dataset export
-└── TSI_histogram_utils.py   # TSI distribution visualization
+├── TSI_histogram_utils.py   # TSI distribution visualization
+└── TSI_merge_multi_npz.py   # Merge TSI .npz datasets across campaigns
 ```
 
 ## Quick Start
@@ -271,6 +272,46 @@ plt.show()
 | `display_per_unit_statistics(filepath, scenario_idx)` | Show per-generator and per-load statistics |
 | `plot_histogram_all_samples(...)` | Aggregate histogram across all scenarios |
 | `plot_histogram_single_scenario(...)` | Histogram for one operating condition |
+
+---
+
+### TSI_merge_multi_npz.py
+
+Merges multiple `.npz` TSI datasets into one output file. This is useful when
+separate simulation campaigns or folders each produce their own
+`tsi_probml_fullinputs.npz`.
+
+**Usage:**
+
+```bash
+# Merge all folder_*/tsi_probml_fullinputs.npz files under the current directory
+python TSI_merge_multi_npz.py
+
+# Merge files under a different campaign directory
+python TSI_merge_multi_npz.py --base-dir /path/to/campaigns
+
+# Use a custom glob pattern and output path
+python TSI_merge_multi_npz.py --pattern "run_*/tsi_probml_fullinputs.npz" --out merged_tsi.npz
+
+# Explicitly skip known-bad files by zero-based position in the sorted file list
+python TSI_merge_multi_npz.py --exclude-indices 107,331,454
+```
+
+**CLI Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--base-dir DIR` | Parent directory searched for input `.npz` files |
+| `--pattern GLOB` | Glob pattern under `--base-dir` (default: `folder_*/tsi_probml_fullinputs.npz`) |
+| `--out FILE` | Output merged `.npz` path (default: `merged_results.npz`) |
+| `--axis N` | Concatenation axis for compatible arrays (default: `0`) |
+| `--exclude-indices I,J,K` | Explicitly skip zero-based positions in the sorted input file list |
+| `--no-allow-pickle` | Disable `allow_pickle` while loading inputs |
+| `--quiet` | Reduce verbose progress output |
+
+`--exclude-indices` defaults to no exclusions. The script no longer skips any
+files implicitly; if a file should be omitted, provide its position explicitly
+after checking the sorted input list printed by the script.
 
 **Example Output (display_dataset_info):**
 

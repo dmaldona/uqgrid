@@ -21,6 +21,50 @@ import math
 def find_npz_files(base_dir: Path, pattern="folder_*/tsi_probml_fullinputs.npz"):
     return sorted(base_dir.glob(pattern))
 
+def parse_exclude_indices(value: str):
+    """Parse a comma-separated list of zero-based file indices."""
+    if value is None or value.strip() == "":
+        return []
+    indices = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            idx = int(item)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"Invalid excluded index {item!r}; expected comma-separated integers"
+            ) from exc
+        if idx < 0:
+            raise argparse.ArgumentTypeError(
+                f"Invalid excluded index {idx}; indices must be non-negative"
+            )
+        indices.append(idx)
+    return indices
+
+def filter_files_by_indices(file_paths, exclude_indices=None, verbose=False):
+    """Remove explicitly requested zero-based positions from a sorted file list."""
+    if not exclude_indices:
+        return list(file_paths)
+
+    files = list(file_paths)
+    unique_indices = sorted(set(exclude_indices))
+    out_of_range = [idx for idx in unique_indices if idx >= len(files)]
+    if out_of_range:
+        raise ValueError(
+            "Excluded file indices out of range: "
+            f"{out_of_range}; found {len(files)} input files"
+        )
+
+    excluded = {idx: files[idx] for idx in unique_indices}
+    if verbose:
+        print("Excluding files by zero-based index:")
+        for idx, path in excluded.items():
+            print(f"  {idx}: {path}")
+
+    return [path for idx, path in enumerate(files) if idx not in excluded]
+
 def load_npz(path: Path, allow_pickle=True):
     return np.load(path, allow_pickle=allow_pickle)
 
@@ -159,12 +203,21 @@ def analyze_merged(merged, report_keys=None, print_summary=True):
     return stats
 
 def main(base_dir=".", glob_pattern="folder_*/*.npz", out_name="merged_results.npz",
-         concat_axis=0, allow_pickle=True, verbose=True):
+         concat_axis=0, allow_pickle=True, verbose=True, exclude_indices=None):
     base = Path(base_dir)
     files = find_npz_files(base, glob_pattern)
     print(f"number of files = {len(files)}")
     if len(files) == 0:
         raise SystemExit(f"No .npz files found with pattern {glob_pattern} under {base.resolve()}")
+
+    try:
+        files = filter_files_by_indices(files, exclude_indices=exclude_indices, verbose=verbose)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    if len(files) == 0:
+        raise SystemExit("No .npz files remain after applying --exclude-indices")
+    if exclude_indices:
+        print(f"number of files after exclusions = {len(files)}")
 
     if verbose:
         print(f"Found {len(files)} files. First few:\n", "\n".join(str(p) for p in files[:10]))
@@ -177,10 +230,6 @@ def main(base_dir=".", glob_pattern="folder_*/*.npz", out_name="merged_results.n
         print("Saved merged file to", out_path)
 
     stats = analyze_merged(merged)
-    
-    bad_indices = [107, 331, 454, 517, 563, 594, 651, 713, 767, 859, 906, 923]
-    for i in bad_indices:
-        print(i, files[i])
 
     return merged, stats
 
@@ -192,9 +241,20 @@ if __name__ == "__main__":
     parser.add_argument("--axis", type=int, default=0, help="Axis to concatenate arrays along when possible")
     parser.add_argument("--no-allow-pickle", dest="allow_pickle", action="store_false", help="Disable allow_pickle when opening npz files")
     parser.set_defaults(allow_pickle=True)
+    parser.add_argument(
+        "--exclude-indices",
+        type=parse_exclude_indices,
+        default=[],
+        metavar="I,J,K",
+        help=(
+            "Comma-separated zero-based positions in the sorted input file list "
+            "to exclude before merging (default: none)"
+        ),
+    )
     
     parser.add_argument("--quiet", action="store_true", help="Less verbose output")
     args = parser.parse_args()
 
     main(base_dir=args.base_dir, glob_pattern=args.pattern, out_name=args.out,
-         concat_axis=args.axis, allow_pickle=args.allow_pickle, verbose=not args.quiet)
+         concat_axis=args.axis, allow_pickle=args.allow_pickle,
+         verbose=not args.quiet, exclude_indices=args.exclude_indices)
