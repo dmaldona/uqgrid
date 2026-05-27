@@ -1,0 +1,58 @@
+{
+    "model": {
+        "name": "IEEE-9",
+        "raw": "../../data/ieee9_v33.raw",
+        "dyr": "../../data/ieee9bus_gov.dyr",
+        "n_bus": 9
+    },
+    "scenarios": {
+        "samples_per_fault_location": 5,
+        "fault_impedances": [0.00001],
+        "fault_locations": "all"
+    },
+    "execution": {
+        "n_jobs": 5,
+        "batch_size": 10,
+        "checkpoint_interval": 5
+    },
+    "perturbation": {
+        "load_noise_type": "normal",
+        "load_noise_var": 0.25,
+        "gen_noise_type": "normal",
+        "gen_noise_var": 0.25,
+        "balance_generation": true,
+        "perturb_loads": true,
+        "perturb_gens": true,
+        "keep_power_factor": true,
+        "clamp_gens": true,
+        "load_scale": 1.25,
+        "load_mean_shift": 0.0,
+        "generation_dispatch_init": "perturbed"
+    },
+    "operating_point": {
+        "enabled": true,
+        "run_power_flow": true,
+        "rebalance_non_slack": true,
+        "redistribute_slack_mismatch": true,
+        "max_iterations": 5,
+        "max_attempts_per_scenario": 50,
+        "pf_residual_tol": 1e-8,
+        "slack_p_tolerance_pu": 1e-4,
+        "max_slack_p_deviation_fraction_of_load": 0.02,
+        "voltage_min": 0.9,
+        "voltage_max": 1.1,
+        "gen_limit_tolerance": 1e-6,
+        "branch_loading_max": 1.0,
+        "diagnostics_file": "scenario_diagnostics.jsonl",
+        "diagnostics_summary_file": "scenario_diagnostics_summary.json"
+    },
+    "integration": {
+        "tend": 10.0,
+        "dt": 0.008333333333333333,
+        "power_injection": false,
+        "ton": 0.25,
+        "toff": 0.4,
+        "verbose": false,
+        "petsc": true
+    }
+}
