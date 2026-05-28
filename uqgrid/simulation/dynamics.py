@@ -717,7 +717,9 @@ def integrate(zold,
               uold=None,
               vold=None,
               mold=None,
-              fsolve=False):
+              fsolve=False,
+              newton_tol=1e-10,
+              newton_max_iter=500):
     """
     Name: integrate
     Description: implements backward euler for the OMIB,
@@ -736,8 +738,8 @@ def integrate(zold,
         x (numpy array): state vector at (t+1)
     """
 
-    eps = 1e-10  # N-R tolerance
-    max_iter = 500
+    eps = newton_tol
+    max_iter = newton_max_iter
     iteration = 0
     z = zold
 
@@ -1562,6 +1564,8 @@ def integrate_system(
     verbose = config.verbose
     comp_sens = config.comp_sens
     fsolve = config.fsolve
+    newton_tol = config.newton_tol
+    newton_max_iter = config.newton_max_iter
     ton = config.ton
     toff = config.toff
     petsc = config.petsc
@@ -1861,6 +1865,8 @@ def integrate_system(
                                 None,
                                 verbose=verbose,
                                 fsolve=fsolve,
+                                newton_tol=newton_tol,
+                                newton_max_iter=newton_max_iter,
                                 uold=None,
                                 vold=None,
                                 mold=None)
@@ -1880,6 +1886,8 @@ def integrate_system(
                                         None,
                                         verbose=verbose,
                                         fsolve=False,
+                                        newton_tol=newton_tol,
+                                        newton_max_iter=newton_max_iter,
                                         uold=None,
                                         vold=None,
                                         mold=None)
@@ -1893,6 +1901,8 @@ def integrate_system(
                                         None,
                                         verbose=verbose,
                                         fsolve=False,
+                                        newton_tol=newton_tol,
+                                        newton_max_iter=newton_max_iter,
                                         uold=None,
                                         vold=None,
                                         mold=None)
@@ -1910,6 +1920,8 @@ def integrate_system(
                                         None,
                                         verbose=verbose,
                                         fsolve=False,
+                                        newton_tol=newton_tol,
+                                        newton_max_iter=newton_max_iter,
                                         uold=None,
                                         vold=None,
                                         mold=None)
@@ -1923,6 +1935,8 @@ def integrate_system(
                                         None,
                                         verbose=verbose,
                                         fsolve=False,
+                                        newton_tol=newton_tol,
+                                        newton_max_iter=newton_max_iter,
                                         uold=None,
                                         vold=None,
                                         mold=None)

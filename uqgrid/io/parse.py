@@ -52,9 +52,13 @@ def load_psse(raw_filename):
             volt2 = tran.WINDV2
             volt1 = tran.WINDV1
 
+        zbase_ratio = 1.0
+        if tran.CW == 1 and tran.NOMV1 > 0.0:
+            zbase_ratio = (tran.NOMV1 / psys.buses[fr_internal].baseKV) ** 2.0
+
         if tran.CZ == 1:
-            r12 = tran.r*(volt2)**2.0
-            x12 = tran.x*(volt2)**2.0
+            r12 = tran.r*(volt2)**2.0*zbase_ratio
+            x12 = tran.x*(volt2)**2.0*zbase_ratio
         elif tran.CZ == 2:
             r12 = tran.r*(baseMVA/case.sbase12)*(volt2)**2.0
             x12 = tran.x*(baseMVA/case.sbase12)*(volt2)**2.0
@@ -76,15 +80,15 @@ def load_psse(raw_filename):
 
 
     # we will need to create dummy buses if we find three-winding transformers
-    MAX_BUSN = max(psse_to_int, key=psse_to_int.get) + 1
+    MAX_BUSN = max(psse_to_int) + 1
     kdummy = 0
 
     for tran in case.transthree:
 
         # first, we need to add a dummy bus
         bus_internal = len(psys.buses)
-        psys.add_bus(bus_internal, bus_type=2)
-        psys.buses[bus_internal].set_vinit(tran.vmstar, tran.anstar)
+        psys.add_bus(bus_internal, bus_type=Bus.PQ)
+        psys.buses[bus_internal].set_vinit(tran.vmstar, (np.pi/180.0)*tran.anstar)
         psse_to_int[MAX_BUSN + kdummy] = bus_internal
         psys.buses[bus_internal].dummy = True
         kdummy += 1

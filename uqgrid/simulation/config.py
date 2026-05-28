@@ -11,6 +11,8 @@ class IntegrationConfig(BaseModel):
     verbose: bool = Field(False, description="Enable verbose output.")
     comp_sens: bool = Field(False, description="Compute first and second-order sensitivities.")
     fsolve: bool = Field(False, description="Use fsolve for solving nonlinear equations.")
+    newton_tol: float = Field(1e-10, gt=0.0, description="Newton residual norm tolerance.")
+    newton_max_iter: int = Field(500, gt=0, description="Maximum Newton iterations per integration step.")
     ton: float = Field(0.25, description="Fault activation time.")
     toff: float = Field(0.4, description="Fault deactivation time.")
     petsc: bool = Field(False, description="Enable PETSc integration.")
