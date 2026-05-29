@@ -3,9 +3,11 @@ import pytest
 import numpy as np
 from uqgrid.core.psydef import Psystem
 from uqgrid.models import GenGENROU
-from uqgrid.simulation.dynamics import integrate_system
+from uqgrid.models.esdc1a_imp import esdc1a_sat_coefficients
+from uqgrid.simulation.dynamics import initialize_system, integrate_system
 from uqgrid.io.parse import load_psse, add_dyr
 from uqgrid.simulation.pflow import runpf
+from uqgrid.simulation.residual import residual_function
 from uqgrid.simulation.config import IntegrationConfig
 
 EPS = 1e-10  # Tolerance for floating-point comparisons
@@ -225,5 +227,41 @@ def test_esdc1a_parser_uses_dyr_parameters(data_dir, tmp_path):
     assert exc.Ke == pytest.approx(6.5)
     assert exc.Te == pytest.approx(0.45)
     assert exc.Tr == pytest.approx(0.03)
-    assert exc.Ae == pytest.approx(1.3)
-    assert exc.Be == pytest.approx(1.7)
+    assert exc.Tb == pytest.approx(0.8)
+    assert exc.Tc == pytest.approx(0.9)
+    assert exc.Vrmax == pytest.approx(12.0)
+    assert exc.Vrmin == pytest.approx(-11.0)
+    assert exc.Sw == pytest.approx(0.0)
+    assert exc.E1 == pytest.approx(1.3)
+    assert exc.SE1 == pytest.approx(0.02)
+    assert exc.E2 == pytest.approx(1.7)
+    assert exc.SE2 == pytest.approx(0.04)
+
+    sat_a, sat_b = esdc1a_sat_coefficients(exc.E1, exc.SE1, exc.E2, exc.SE2)
+    assert exc.sat_a == pytest.approx(sat_a)
+    assert exc.sat_b == pytest.approx(sat_b)
+    assert sat_b * (exc.E1 - sat_a) ** 2 == pytest.approx(exc.E1 * exc.SE1)
+    assert sat_b * (exc.E2 - sat_a) ** 2 == pytest.approx(exc.E2 * exc.SE2)
+
+
+def test_esdc1a_initialization_residual_uses_saturation_points(data_dir, tmp_path):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
+    dyr_path = tmp_path / "esdc1a_saturated.dyr"
+    dyr_path.write_text(
+        """
+1 'GENROU' 1 6.1 0.05 1.0 0.15 3.38 0.0 1.575 1.512 0.291 0.39 0.1733 0.0787 0.0 0.0 /
+1 'ESDC1A' 1 0.03 31.0 1.4 0.0 0.0 12.0 -11.0 6.5 0.45 0.6 0.75 0.0 1.0 0.02 1.2 0.04 /
+""".lstrip()
+    )
+
+    add_dyr(psys, str(dyr_path))
+    psys.createYbusComplex()
+    pf_solution = runpf(psys, verbose=False)
+    sysvec, theta = initialize_system(psys, pf_solution)
+
+    F = np.zeros_like(sysvec)
+    residual_function(F, sysvec, theta, psys)
+
+    exc = psys.exc[0]
+    exc_slice = slice(exc.dif_ptr, exc.dif_ptr + exc.dif_dim)
+    assert np.linalg.norm(F[exc_slice], np.inf) < 1e-10

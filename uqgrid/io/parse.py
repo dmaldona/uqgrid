@@ -565,7 +565,13 @@ def add_dyr(psys, dyr_filename, verbose=False):
 
             for gen in psys.gendyn:
                 if gen.bus == bus and gen.id_tag == gen_id:
-                    psys.add_exc(gen, ExcESDC1A(gen_id, KA, TA, KF, TF1, KE, TE, TR, E1, E2))
+                    psys.add_exc(
+                        gen,
+                        ExcESDC1A(
+                            gen_id, KA, TA, KF, TF1, KE, TE, TR,
+                            E1, SE1, E2, SE2, TB, TC, VRMAX, VRMIN, SW,
+                        ),
+                    )
                     break
 
         if 'SEXS' in device[1]:
