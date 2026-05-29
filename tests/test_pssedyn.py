@@ -2,7 +2,7 @@ import os
 import pytest
 import numpy as np
 from uqgrid.core.psydef import Psystem
-from uqgrid.models import GenGENROU
+from uqgrid.models import GenGENROU, GovTGOV1
 from uqgrid.models.esdc1a_imp import esdc1a_sat_coefficients
 from uqgrid.simulation.dynamics import initialize_system, integrate_system
 from uqgrid.io.parse import load_psse, add_dyr
@@ -127,6 +127,20 @@ def test_tgov1_dt_uses_machine_to_system_base_scaling(data_dir, tmp_path):
     assert gov.VMAX == pytest.approx(1.2 * system_to_machine)
     assert gov.VMIN == pytest.approx(-0.1 * system_to_machine)
     assert gov.DT == pytest.approx(0.3 * machine_to_system)
+
+
+def test_tgov1_limits_are_stored_but_disabled_by_default():
+    gov = GovTGOV1("1", R=0.05, T1=0.1, VMAX=1.2, VMIN=-0.1, T2=0.2, T3=10.0, DT=0.3)
+    gov.par_ptr = 0
+    gov.pref = 0.7
+    theta = np.zeros(gov.par_dim)
+
+    gov.initialize_theta(theta)
+
+    assert gov.VMAX == 1.2
+    assert gov.VMIN == -0.1
+    assert gov.enable_limits is False
+    assert theta[7] == 0.0
 
 
 def test_unmatched_tgov1_logs_warning_and_is_skipped(data_dir, tmp_path, caplog):
