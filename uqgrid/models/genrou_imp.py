@@ -5,9 +5,49 @@ from uqgrid.utils.tools import csr_add_row, csr_set_row
 from uqgrid.core.base_models import DynamicGenerator
 from scipy import optimize
 
+
+def sat_coefficients(s1, s2):
+    """Return (A, B) for quadratic saturation S(E)=B*(E-A)^2/E with E1=1.0, E2=1.2."""
+    if s1 <= 0.0 or s2 <= 0.0:
+        return 0.0, 0.0
+    e1 = 1.0
+    e2 = 1.2
+    a = np.sqrt(s1 * e1 / (s2 * e2))
+    if a == 1.0:
+        return 0.0, 0.0
+    sat_a = e2 - (e1 - e2) / (a - 1.0)
+    sat_b = s2 * e2 * (a - 1.0) ** 2.0 / (e1 - e2) ** 2.0
+    return sat_a, sat_b
+
+
+def sat_se(psi, sat_a, sat_b):
+    if sat_b == 0.0 or psi <= sat_a or psi == 0.0:
+        return 0.0
+    return sat_b * (psi - sat_a) ** 2.0 / psi
+
+
+@jit(nopython=True, cache=True)
+def sat_coefficients_nb(s1, s2):
+    if s1 <= 0.0 or s2 <= 0.0:
+        return 0.0, 0.0
+    e1 = 1.0
+    e2 = 1.2
+    a = np.sqrt(s1 * e1 / (s2 * e2))
+    if a == 1.0:
+        return 0.0, 0.0
+    sat_a = e2 - (e1 - e2) / (a - 1.0)
+    sat_b = s2 * e2 * (a - 1.0) ** 2.0 / (e1 - e2) ** 2.0
+    return sat_a, sat_b
+
+
+@jit(nopython=True, cache=True)
+def sat_se_nb(psi, sat_a, sat_b):
+    if sat_b == 0.0 or psi <= sat_a or psi == 0.0:
+        return 0.0
+    return sat_b * (psi - sat_a) ** 2.0 / psi
 class GenGENROU(DynamicGenerator):
     def __init__(self, id_tag, x_d, x_q, x_dp, x_qp, x_ddp, xl, H, D, T_d0p,
-                 T_q0p, T_d0dp, T_q0dp):
+                 T_q0p, T_d0dp, T_q0dp, S1=0.0, S2=0.0):
 
         self.x_d = x_d
         self.x_q = x_q
@@ -22,6 +62,8 @@ class GenGENROU(DynamicGenerator):
         self.T_q0p = T_q0p
         self.T_d0dp = T_d0dp
         self.T_q0dp = T_q0dp
+        self.S1 = S1
+        self.S2 = S2
         # (MBASE/SBASE) ratio. To be modified depending on MBASE.
         self.ratio = 1.0
 
@@ -44,7 +86,7 @@ class GenGENROU(DynamicGenerator):
 
         par_list = [
             'x_d', 'x_q', 'x_dp', 'x_qp', 'x_ddp', 'x_qdp', 'xl', 'H', 'D',
-            'T_d0p', 'T_q0p', 'T_d0dp', 'T_q0dp'
+            'T_d0p', 'T_q0p', 'T_d0dp', 'T_q0dp', 'S1', 'S2'
         ]
         INIT_DIM = 12
         DYN_DIM = 8
@@ -53,18 +95,21 @@ class GenGENROU(DynamicGenerator):
                                   state_list)
 
     def set_ratio(self, ratio):
-        """ Modify machine parameters for a given MBASE/SBASE ratio"""
+        """Modify machine parameters for a given MBASE/SBASE ratio."""
 
+        if ratio <= 0.0:
+            return
         self.ratio = ratio
-        self.x_d = self.x_d*(1.0/ratio)
-        self.x_q = self.x_q*(1.0/ratio)
-        self.x_dp = self.x_dp*(1.0/ratio)
-        self.x_qp = self.x_qp*(1.0/ratio)
-        self.x_ddp = self.x_ddp*(1.0/ratio)
-        self.x_qdp = self.x_qdp*(1.0/ratio)
-        self.xl = self.xl*(1.0/ratio)
-        self.H = self.H*ratio
-        self.D = self.D*ratio
+        inv_ratio = 1.0 / ratio
+        self.x_d *= inv_ratio
+        self.x_q *= inv_ratio
+        self.x_dp *= inv_ratio
+        self.x_qp *= inv_ratio
+        self.x_ddp *= inv_ratio
+        self.x_qdp *= inv_ratio
+        self.xl *= inv_ratio
+        self.H *= ratio
+        self.D *= ratio
 
     def initialize_theta(self, theta):
 
@@ -83,6 +128,8 @@ class GenGENROU(DynamicGenerator):
         theta[idx + 10] = self.T_q0p
         theta[idx + 11] = self.T_d0dp
         theta[idx + 12] = self.T_q0dp
+        theta[idx + 13] = self.S1
+        theta[idx + 14] = self.S2
 
     def residualFinit(self, x, v, theta, p0, q0):
 
@@ -125,17 +172,22 @@ class GenGENROU(DynamicGenerator):
         psi_qe = -(x_ddp - xl)/(x_qp - xl)*e_dp + \
             (x_qp - x_ddp)/(x_qp - xl)*phi_2q
 
+        # saturation
+        sat_a, sat_b = sat_coefficients(self.S1, self.S2)
+        psi2 = np.sqrt(psi_de*psi_de + psi_qe*psi_qe)
+        Se = sat_se(psi2, sat_a, sat_b)
+
         # Machine states
         F[0] = (-e_qp + e_fd - (i_d - (-x_ddp + x_dp)*(-e_qp + i_d*
                                                        (x_dp - xl) + phi_1d)/
-                                ((x_dp - xl)**2.0))*(x_d - x_dp))/T_d0p
+                                ((x_dp - xl)**2.0))*(x_d - x_dp) - Se*psi_de)/T_d0p
         F[1] = (-e_dp + (i_q - (-x_qdp + x_qp)*
                          (e_dp + i_q*(x_qp - xl) + phi_2q)/((x_qp - xl)**2.0))*
                 (x_q - x_qp))/T_q0p
         F[2] = (e_qp - i_d*(x_dp - xl) - phi_1d)/T_d0dp
         F[3] = (-e_dp - i_q*(x_qp - xl) - phi_2q)/T_q0dp
 
-        F[4] = (p_m - psi_de*i_q + psi_qe*i_d)/(2.0*H)
+        F[4] = (p_m - psi_de*i_q + psi_qe*i_d - D*w)/(2.0*H)
         F[5] = 2.0*np.pi*60.0*w
 
         # Stator currents
@@ -191,7 +243,14 @@ class GenGENROU(DynamicGenerator):
         phi_1d =  e_qp - (x_dp - xl)*i_d
         phi_2q =  -e_dp - (x_qp - xl)*i_q
     
-        e_fd = e_qp + (x_d - x_dp)*i_d
+        psi_de = (x_ddp - xl)/(x_dp - xl)*e_qp + \
+            (x_dp - x_ddp)/(x_dp - xl)*phi_1d
+        psi_qe = -(x_ddp - xl)/(x_qp - xl)*e_dp + \
+            (x_qp - x_ddp)/(x_qp - xl)*phi_2q
+        sat_a, sat_b = sat_coefficients(self.S1, self.S2)
+        psi2 = np.sqrt(psi_de*psi_de + psi_qe*psi_qe)
+        Se0 = sat_se(psi2, sat_a, sat_b)
+        e_fd = e_qp + (x_d - x_dp)*i_d + Se0*psi_de
         p_m = p
 
         x0[0] = e_qp
@@ -281,11 +340,24 @@ class GenGENROU(DynamicGenerator):
         if pm_ctrl_col >= 0:
             cols.append(pm_ctrl_col)
             vals.append(-psys.gov_mask[g])
+        if len(cols) == 2:
+            if cols[0] > cols[1]:
+                cols[0], cols[1] = cols[1], cols[0]
+                vals[0], vals[1] = vals[1], vals[0]
+        elif len(cols) == 3:
+            if cols[0] > cols[1]:
+                cols[0], cols[1] = cols[1], cols[0]
+                vals[0], vals[1] = vals[1], vals[0]
+            if cols[1] > cols[2]:
+                cols[1], cols[2] = cols[2], cols[1]
+                vals[1], vals[2] = vals[2], vals[1]
+            if cols[0] > cols[1]:
+                cols[0], cols[1] = cols[1], cols[0]
+                vals[0], vals[1] = vals[1], vals[0]
         cols_arr = np.array(cols, dtype=np.int32)
         vals_arr = np.array(vals, dtype=np.float64)
-        order = np.argsort(cols_arr)
         csr_set_row(J.data, J.indptr, J.indices, len(cols_arr), ap + 4,
-                    cols_arr[order], vals_arr[order])
+                    cols_arr, vals_arr)
 
         # e_fd_out row
         cols = [ap + 5, dp + 7]
@@ -293,11 +365,24 @@ class GenGENROU(DynamicGenerator):
         if efd_ctrl_col >= 0:
             cols.append(efd_ctrl_col)
             vals.append(-psys.exc_mask[g])
+        if len(cols) == 2:
+            if cols[0] > cols[1]:
+                cols[0], cols[1] = cols[1], cols[0]
+                vals[0], vals[1] = vals[1], vals[0]
+        elif len(cols) == 3:
+            if cols[0] > cols[1]:
+                cols[0], cols[1] = cols[1], cols[0]
+                vals[0], vals[1] = vals[1], vals[0]
+            if cols[1] > cols[2]:
+                cols[1], cols[2] = cols[2], cols[1]
+                vals[1], vals[2] = vals[2], vals[1]
+            if cols[0] > cols[1]:
+                cols[0], cols[1] = cols[1], cols[0]
+                vals[0], vals[1] = vals[1], vals[0]
         cols_arr = np.array(cols, dtype=np.int32)
         vals_arr = np.array(vals, dtype=np.float64)
-        order = np.argsort(cols_arr)
         csr_set_row(J.data, J.indptr, J.indices, len(cols_arr), ap + 5,
-                    cols_arr[order], vals_arr[order])
+                    cols_arr, vals_arr)
 
     def residual_pinj(self, F, z, v, theta, idxs, alpha=False):
 
@@ -351,42 +436,45 @@ class GenGENROU(DynamicGenerator):
             vi = dev + 2 * self.bus + 1
 
         # Differential rows
-        coord.append([dp, sorted([e_qp, phi_1d, efd_out, i_d])])
+        coord.append([dp, [e_qp, e_dp, phi_1d, phi_2q, i_d, efd_out]])
         coord.append([dp + 1, [e_dp, phi_2q, i_q]])
         coord.append([dp + 2, [e_qp, phi_1d, i_d]])
         coord.append([dp + 3, [e_dp, phi_2q, i_q]])
-        coord.append([dp + 4, sorted([e_qp, e_dp, phi_1d, phi_2q, pm_out, i_q, i_d, w])])
+        coord.append([dp + 4, [e_qp, e_dp, phi_1d, phi_2q, w, i_q, i_d, pm_out]])
         coord.append([dp + 5, [w]])
 
         # Generator algebraic currents
-        coord.append([ap, sorted([e_qp, phi_1d, v_q, i_d])])
-        coord.append([ap + 1, sorted([e_dp, phi_2q, v_d, i_q])])
+        coord.append([ap, [e_qp, phi_1d, v_q, i_d]])
+        coord.append([ap + 1, [e_dp, phi_2q, v_d, i_q]])
 
         if power_injection:
-            coord.append([ap + 2, sorted([delta, v_d, vm, va])])
-            coord.append([ap + 3, sorted([delta, v_q, vm, va])])
-            coord.append([dev + 2 * self.bus, sorted([v_q, v_d, i_q, i_d])])
-            coord.append([dev + 2 * self.bus + 1, sorted([v_q, v_d, i_q, i_d])])
+            coord.append([ap + 2, [delta, v_d, vm, va]])
+            coord.append([ap + 3, [delta, v_q, vm, va]])
+            coord.append([dev + 2 * self.bus, [v_q, v_d, i_q, i_d]])
+            coord.append([dev + 2 * self.bus + 1, [v_q, v_d, i_q, i_d]])
         else:
-            coord.append([ap + 2, sorted([delta, v_d, vr, vi])])
-            coord.append([ap + 3, sorted([delta, v_q, vr, vi])])
-            coord.append([dev + 2 * self.bus, sorted([delta, i_q, i_d])])
-            coord.append([dev + 2 * self.bus + 1, sorted([delta, i_q, i_d])])
+            coord.append([ap + 2, [delta, v_d, vr, vi]])
+            coord.append([ap + 3, [delta, v_q, vr, vi]])
+            coord.append([dev + 2 * self.bus, [delta, i_q, i_d]])
+            coord.append([dev + 2 * self.bus + 1, [delta, i_q, i_d]])
 
         # Frozen reference rows
         coord.append([pm_ref, [pm_ref]])
         coord.append([efd_ref, [efd_ref]])
 
         # Blend rows
-        cols_pm = [pm_out, pm_ref]
+        cols_pm = [pm_ref, pm_out]
         if pm_ctrl_col >= 0:
             cols_pm.append(pm_ctrl_col)
-        coord.append([pm_out, sorted(cols_pm)])
+        coord.append([pm_out, cols_pm])
 
-        cols_efd = [efd_out, efd_ref]
+        cols_efd = [efd_ref, efd_out]
         if efd_ctrl_col >= 0:
             cols_efd.append(efd_ctrl_col)
-        coord.append([efd_out, sorted(cols_efd)])
+        coord.append([efd_out, cols_efd])
+
+        for row_cols in coord:
+            row_cols[1] = sorted(row_cols[1])
 
         return coord
 
@@ -547,6 +635,8 @@ def resdiff_genrou(F, z, v, theta, idxs, power_injection):
     T_q0p = theta[pp + 10]
     T_d0dp = theta[pp + 11]
     T_q0dp = theta[pp + 12]
+    S1 = theta[pp + 13]
+    S2 = theta[pp + 14]
 
     # states
     e_qp     = z[dp]
@@ -574,8 +664,6 @@ def resdiff_genrou(F, z, v, theta, idxs, power_injection):
     p_m = z[ap + 4]
     e_fd = z[ap + 5]
     
-    tmech = (p_m - D*w)/(1.0 + w)
-
     # auxiliary variables
     psi_de = (x_ddp - xl)/(x_dp - xl)*e_qp + \
         (x_dp - x_ddp)/(x_dp - xl)*phi_1d
@@ -583,14 +671,18 @@ def resdiff_genrou(F, z, v, theta, idxs, power_injection):
     psi_qe = -(x_ddp - xl)/(x_qp - xl)*e_dp + \
         (x_qp - x_ddp)/(x_qp - xl)*phi_2q
 
+    sat_a, sat_b = sat_coefficients_nb(S1, S2)
+    psi2 = np.sqrt(psi_de*psi_de + psi_qe*psi_qe)
+    Se = sat_se_nb(psi2, sat_a, sat_b)
+
     # equations
     F[dp] = (-e_qp + e_fd - (i_d - (-x_ddp + x_dp)*(-e_qp + i_d*(x_dp - xl) \
-        + phi_1d)/((x_dp - xl)**2.0))*(x_d - x_dp))/T_d0p
+        + phi_1d)/((x_dp - xl)**2.0))*(x_d - x_dp) - Se*psi_de)/T_d0p
     F[dp + 1] = (-e_dp + (i_q - (-x_qdp + x_qp)*( e_dp + i_q*(x_qp - xl) \
         + phi_2q)/((x_qp - xl)**2.0))*(x_q - x_qp))/T_q0p
     F[dp + 2] = ( e_qp - i_d*(x_dp - xl) - phi_1d)/T_d0dp
     F[dp + 3] = (-e_dp - i_q*(x_qp - xl) - phi_2q)/T_q0dp
-    F[dp + 4] = (tmech - psi_de*i_q + psi_qe*i_d)/(2.0*H)
+    F[dp + 4] = (p_m - psi_de*i_q + psi_qe*i_d - D*w)/(2.0*H)
     F[dp + 5] = 2.0*np.pi*60.0*w
 
     # Stator currents
@@ -646,6 +738,8 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     T_q0p = theta[pp + 10]
     T_d0dp = theta[pp + 11]
     T_q0dp = theta[pp + 12]
+    S1 = theta[pp + 13]
+    S2 = theta[pp + 14]
 
     # states
     e_qp     = z[dp]
@@ -671,6 +765,43 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     p_m = z[ap + 4]
     e_fd = z[ap + 5]
 
+    # saturation terms
+    psi_de = (x_ddp - xl)/(x_dp - xl)*e_qp + (x_dp - x_ddp)/(x_dp - xl)*phi_1d
+    psi_qe = -(x_ddp - xl)/(x_qp - xl)*e_dp + (x_qp - x_ddp)/(x_qp - xl)*phi_2q
+
+    sat_a, sat_b = sat_coefficients_nb(S1, S2)
+    psi2 = np.sqrt(psi_de*psi_de + psi_qe*psi_qe)
+    Se = sat_se_nb(psi2, sat_a, sat_b)
+
+    if sat_b == 0.0 or psi2 <= sat_a or psi2 == 0.0:
+        dSe_dpsi = 0.0
+    else:
+        g = psi2 - sat_a
+        dSe_dpsi = sat_b * (2.0 * g * psi2 - g * g) / (psi2 * psi2)
+
+    if psi2 == 0.0:
+        dpsi_dpsi_de = 0.0
+        dpsi_dpsi_qe = 0.0
+    else:
+        dpsi_dpsi_de = psi_de / psi2
+        dpsi_dpsi_qe = psi_qe / psi2
+
+    dpsi_de_deqp = (x_ddp - xl) / (x_dp - xl)
+    dpsi_de_phi1d = (x_dp - x_ddp) / (x_dp - xl)
+    dpsi_qe_dedp = -(x_ddp - xl) / (x_qp - xl)
+    dpsi_qe_phi2q = (x_qp - x_ddp) / (x_qp - xl)
+
+    dSe_dpsi_de = dSe_dpsi * dpsi_dpsi_de
+    dSe_dpsi_qe = dSe_dpsi * dpsi_dpsi_qe
+
+    dT_dpsi_de = -(dSe_dpsi_de * psi_de + Se)
+    dT_dpsi_qe = -(dSe_dpsi_qe * psi_de)
+
+    dT_deqp = dT_dpsi_de * dpsi_de_deqp
+    dT_dphi1d = dT_dpsi_de * dpsi_de_phi1d
+    dT_dedp = dT_dpsi_qe * dpsi_qe_dedp
+    dT_dphi2q = dT_dpsi_qe * dpsi_qe_phi2q
+
     # indexes
     e_qp_idx = dp
     e_dp_idx = dp + 1
@@ -693,18 +824,21 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
         vi_idx = dev + 2*bus + 1
 
     # differential rows
-    cols = np.empty(4, dtype=np.int32)
-    vals = np.empty(4, dtype=np.float64)
+    cols = np.empty(6, dtype=np.int32)
+    vals = np.empty(6, dtype=np.float64)
     cols[0] = e_qp_idx
-    vals[0] = (-(x_d - x_dp)*(-x_ddp + x_dp)*(x_dp - xl)**(-2.0) - 1)/T_d0p
-    cols[1] = phi_1d_idx
-    vals[1] = (x_d - x_dp)*(-x_ddp + x_dp)*(x_dp - xl)**(-2.0)/T_d0p
-    cols[2] = efd_idx
-    vals[2] = 1.0/T_d0p
-    cols[3] = i_d_idx
-    vals[3] = -(x_d - x_dp)*(-(-x_ddp + x_dp)*(x_dp - xl)**(-1.0) + 1)/T_d0p
-    order = np.argsort(cols)
-    csr_set_row(J_data, J_ptr, J_idx, 4, dp, cols[order], vals[order])
+    vals[0] = (-(x_d - x_dp)*(-x_ddp + x_dp)*(x_dp - xl)**(-2.0) - 1)/T_d0p + dT_deqp / T_d0p
+    cols[1] = e_dp_idx
+    vals[1] = dT_dedp / T_d0p
+    cols[2] = phi_1d_idx
+    vals[2] = (x_d - x_dp)*(-x_ddp + x_dp)*(x_dp - xl)**(-2.0)/T_d0p + dT_dphi1d / T_d0p
+    cols[3] = phi_2q_idx
+    vals[3] = dT_dphi2q / T_d0p
+    cols[4] = i_d_idx
+    vals[4] = -(x_d - x_dp)*(-(-x_ddp + x_dp)*(x_dp - xl)**(-1.0) + 1)/T_d0p
+    cols[5] = efd_idx
+    vals[5] = 1.0/T_d0p
+    csr_set_row(J_data, J_ptr, J_idx, 6, dp, cols, vals)
 
     cols = np.empty(3, dtype=np.int32)
     vals = np.empty(3, dtype=np.float64)
@@ -714,8 +848,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     vals[1] = -(x_q - x_qp)*(-x_qdp + x_qp)*(x_qp - xl)**(-2.0)/T_q0p
     cols[2] = i_q_idx
     vals[2] = (x_q - x_qp)*(-(-x_qdp + x_qp)*(x_qp - xl)**(-1.0) + 1)/T_q0p
-    order = np.argsort(cols)
-    csr_set_row(J_data, J_ptr, J_idx, 3, dp + 1, cols[order], vals[order])
+    csr_set_row(J_data, J_ptr, J_idx, 3, dp + 1, cols, vals)
 
     cols = np.empty(3, dtype=np.int32)
     vals = np.empty(3, dtype=np.float64)
@@ -725,8 +858,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     vals[1] = -1.0/T_d0dp
     cols[2] = i_d_idx
     vals[2] = (-x_dp + xl)/T_d0dp
-    order = np.argsort(cols)
-    csr_set_row(J_data, J_ptr, J_idx, 3, dp + 2, cols[order], vals[order])
+    csr_set_row(J_data, J_ptr, J_idx, 3, dp + 2, cols, vals)
 
     cols = np.empty(3, dtype=np.int32)
     vals = np.empty(3, dtype=np.float64)
@@ -736,8 +868,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     vals[1] = -1.0/T_q0dp
     cols[2] = i_q_idx
     vals[2] = (-x_qp + xl)/T_q0dp
-    order = np.argsort(cols)
-    csr_set_row(J_data, J_ptr, J_idx, 3, dp + 3, cols[order], vals[order])
+    csr_set_row(J_data, J_ptr, J_idx, 3, dp + 3, cols, vals)
 
     cols = np.empty(8, dtype=np.int32)
     vals = np.empty(8, dtype=np.float64)
@@ -750,15 +881,14 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     cols[3] = phi_2q_idx
     vals[3] = 0.5*i_d*(-x_ddp + x_qp)/(H*(x_qp - xl))
     cols[4] = w_idx
-    vals[4] = 0.5*(-D/(w + 1.0) - (-D*w + p_m)/(w + 1.0)**2.0)/H
-    cols[5] = pm_idx
-    vals[5] = 0.5/(H*(w + 1.0))
-    cols[6] = i_q_idx
-    vals[6] = 0.5*(-e_qp*(x_ddp - xl)/(x_dp - xl) - phi_1d*(-x_ddp + x_dp)/(x_dp - xl))/H
-    cols[7] = i_d_idx
-    vals[7] = 0.5*(e_dp*(-x_ddp + xl)/(x_qp - xl) + phi_2q*(-x_ddp + x_qp)/(x_qp - xl))/H
-    order = np.argsort(cols)
-    csr_set_row(J_data, J_ptr, J_idx, 8, dp + 4, cols[order], vals[order])
+    vals[4] = -0.5*D/H
+    cols[5] = i_q_idx
+    vals[5] = 0.5*(-e_qp*(x_ddp - xl)/(x_dp - xl) - phi_1d*(-x_ddp + x_dp)/(x_dp - xl))/H
+    cols[6] = i_d_idx
+    vals[6] = 0.5*(e_dp*(-x_ddp + xl)/(x_qp - xl) + phi_2q*(-x_ddp + x_qp)/(x_qp - xl))/H
+    cols[7] = pm_idx
+    vals[7] = 0.5/H
+    csr_set_row(J_data, J_ptr, J_idx, 8, dp + 4, cols, vals)
 
     cols = np.empty(1, dtype=np.int32)
     vals = np.empty(1, dtype=np.float64)
@@ -777,8 +907,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     vals[2] = 1.0/x_ddp
     cols[3] = i_d_idx
     vals[3] = 1.0
-    order = np.argsort(cols)
-    csr_set_row(J_data, J_ptr, J_idx, 4, ap, cols[order], vals[order])
+    csr_set_row(J_data, J_ptr, J_idx, 4, ap, cols, vals)
 
     cols = np.empty(4, dtype=np.int32)
     vals = np.empty(4, dtype=np.float64)
@@ -790,8 +919,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     vals[2] = -1.0/x_qdp
     cols[3] = i_q_idx
     vals[3] = 1.0
-    order = np.argsort(cols)
-    csr_set_row(J_data, J_ptr, J_idx, 4, ap + 1, cols[order], vals[order])
+    csr_set_row(J_data, J_ptr, J_idx, 4, ap + 1, cols, vals)
 
     if power_injection:
         cols = np.empty(4, dtype=np.int32)
@@ -804,8 +932,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
         vals[2] = -np.sin(delta - va)
         cols[3] = va_idx
         vals[3] = vm*np.cos(delta - va)
-        order = np.argsort(cols)
-        csr_set_row(J_data, J_ptr, J_idx, 4, ap + 2, cols[order], vals[order])
+        csr_set_row(J_data, J_ptr, J_idx, 4, ap + 2, cols, vals)
 
         cols = np.empty(4, dtype=np.int32)
         vals = np.empty(4, dtype=np.float64)
@@ -817,8 +944,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
         vals[2] = -np.cos(delta - va)
         cols[3] = va_idx
         vals[3] = -vm*np.sin(delta - va)
-        order = np.argsort(cols)
-        csr_set_row(J_data, J_ptr, J_idx, 4, ap + 3, cols[order], vals[order])
+        csr_set_row(J_data, J_ptr, J_idx, 4, ap + 3, cols, vals)
 
         cols = np.empty(4, dtype=np.int32)
         vals = np.empty(4, dtype=np.float64)
@@ -830,8 +956,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
         vals[2] =  v_q
         cols[3] = i_d_idx
         vals[3] =  v_d
-        order = np.argsort(cols)
-        csr_set_row(J_data, J_ptr, J_idx, 4, dev + 2*bus, cols[order], vals[order])
+        csr_set_row(J_data, J_ptr, J_idx, 4, dev + 2*bus, cols, vals)
 
         cols = np.empty(4, dtype=np.int32)
         vals = np.empty(4, dtype=np.float64)
@@ -843,8 +968,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
         vals[2] = -v_d
         cols[3] = i_d_idx
         vals[3] =  v_q
-        order = np.argsort(cols)
-        csr_set_row(J_data, J_ptr, J_idx, 4, dev + 2*bus + 1, cols[order], vals[order])
+        csr_set_row(J_data, J_ptr, J_idx, 4, dev + 2*bus + 1, cols, vals)
     else:
         cols = np.empty(4, dtype=np.int32)
         vals = np.empty(4, dtype=np.float64)
@@ -856,8 +980,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
         vals[2] = -np.sin(delta)
         cols[3] = vi_idx
         vals[3] = np.cos(delta)
-        order = np.argsort(cols)
-        csr_set_row(J_data, J_ptr, J_idx, 4, ap + 2, cols[order], vals[order])
+        csr_set_row(J_data, J_ptr, J_idx, 4, ap + 2, cols, vals)
 
         cols = np.empty(4, dtype=np.int32)
         vals = np.empty(4, dtype=np.float64)
@@ -869,8 +992,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
         vals[2] = -np.cos(delta)
         cols[3] = vi_idx
         vals[3] = -np.sin(delta)
-        order = np.argsort(cols)
-        csr_set_row(J_data, J_ptr, J_idx, 4, ap + 3, cols[order], vals[order])
+        csr_set_row(J_data, J_ptr, J_idx, 4, ap + 3, cols, vals)
 
         cols = np.empty(3, dtype=np.int32)
         vals = np.empty(3, dtype=np.float64)
@@ -880,8 +1002,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
         vals[1] = np.cos(delta)
         cols[2] = i_d_idx
         vals[2] = np.sin(delta)
-        order = np.argsort(cols)
-        csr_set_row(J_data, J_ptr, J_idx, 3, dev + 2*bus, cols[order], vals[order])
+        csr_set_row(J_data, J_ptr, J_idx, 3, dev + 2*bus, cols, vals)
 
         cols = np.empty(3, dtype=np.int32)
         vals = np.empty(3, dtype=np.float64)
@@ -891,8 +1012,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
         vals[1] = np.sin(delta)
         cols[2] = i_d_idx
         vals[2] = -np.cos(delta)
-        order = np.argsort(cols)
-        csr_set_row(J_data, J_ptr, J_idx, 3, dev + 2*bus + 1, cols[order], vals[order])
+        csr_set_row(J_data, J_ptr, J_idx, 3, dev + 2*bus + 1, cols, vals)
 
 @jit(nopython=True, cache=True)
 def hes_genrou(z, v, theta, idxs,

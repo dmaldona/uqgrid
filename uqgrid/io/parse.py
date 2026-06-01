@@ -1,5 +1,5 @@
 from uqgrid.core.psydef import Psystem, Bus
-from uqgrid.models import GenGENROU, ExcESDC1A, GovIEESGO
+from uqgrid.models import GenGENROU, GenGENSAL, ExcESDC1A, ExcSEXS, GovIEESGO, GovTGOV1, StaticGenerator
 from uqgrid.models.cim5_imp import MotCIM5
 from uqgrid.io.parse_psse import read_raw
 import numpy as np
@@ -52,9 +52,13 @@ def load_psse(raw_filename):
             volt2 = tran.WINDV2
             volt1 = tran.WINDV1
 
+        zbase_ratio = 1.0
+        if tran.CW == 1 and tran.NOMV1 > 0.0:
+            zbase_ratio = (tran.NOMV1 / psys.buses[fr_internal].baseKV) ** 2.0
+
         if tran.CZ == 1:
-            r12 = tran.r*(volt2)**2.0
-            x12 = tran.x*(volt2)**2.0
+            r12 = tran.r*(volt2)**2.0*zbase_ratio
+            x12 = tran.x*(volt2)**2.0*zbase_ratio
         elif tran.CZ == 2:
             r12 = tran.r*(baseMVA/case.sbase12)*(volt2)**2.0
             x12 = tran.x*(baseMVA/case.sbase12)*(volt2)**2.0
@@ -76,15 +80,15 @@ def load_psse(raw_filename):
 
 
     # we will need to create dummy buses if we find three-winding transformers
-    MAX_BUSN = max(psse_to_int, key=psse_to_int.get) + 1
+    MAX_BUSN = max(psse_to_int) + 1
     kdummy = 0
 
     for tran in case.transthree:
 
         # first, we need to add a dummy bus
         bus_internal = len(psys.buses)
-        psys.add_bus(bus_internal, bus_type=2)
-        psys.buses[bus_internal].set_vinit(tran.vmstar, tran.anstar)
+        psys.add_bus(bus_internal, bus_type=Bus.PQ)
+        psys.buses[bus_internal].set_vinit(tran.vmstar, (np.pi/180.0)*tran.anstar)
         psse_to_int[MAX_BUSN + kdummy] = bus_internal
         psys.buses[bus_internal].dummy = True
         kdummy += 1
@@ -185,7 +189,7 @@ def load_psse(raw_filename):
             psys.buses[bus].set_vinit(gen.vs, psys.buses[bus].v0a)
         psys.add_gen(bus, gen.name, gen.pg, gen.qg, 
                      pgub=gen.pt, pglb=gen.pb, qgub=gen.qt, qglb=gen.qb,
-                     mbase=gen.mbase)
+                     mbase=gen.mbase, vset=gen.vs)
 
     # Downgrade PV buses to PQ only if they have no active generators
     for (bus, idx) in psys.inactive_gens:
@@ -334,7 +338,7 @@ def load_matpower(mat_file):
         buses_with_active_gens.add(bus)
         if psys.buses[bus].type in (Bus.PV, Bus.SLACK):
             psys.buses[bus].set_vinit(vg, psys.buses[bus].v0a)
-        psys.add_gen(bus, "id", pg, qg, pgub=pmax, pglb=pmin, qgub=qmax, qglb=qmin)
+        psys.add_gen(bus, "id", pg, qg, pgub=pmax, pglb=pmin, qgub=qmax, qglb=qmin, vset=vg)
 
     for bus_idx, bus in enumerate(psys.buses):
         if bus.type == Bus.PV and bus_idx not in buses_with_active_gens:
@@ -432,9 +436,9 @@ def add_dyr(psys, dyr_filename, verbose=False):
                 static_idx = (psys.gens[i].idx).strip().replace("'", "")
 
                 if static_bus == bus and static_idx.strip() == idx.strip():
-                    psys.add_gen_dynamics(psys.gens[i],
-                        GenGENROU(idx, x_d, x_q, x_dp, x_qp, x_ddp,
-                        xl, H, D, T_d0p, T_q0p, T_d0dp, T_q0dp))
+                    gen_dyn = GenGENROU(idx, x_d, x_q, x_dp, x_qp, x_ddp,
+                        xl, H, D, T_d0p, T_q0p, T_d0dp, T_q0dp, S1, S2)
+                    psys.add_gen_dynamics(psys.gens[i], gen_dyn)
                     found_match = True
                     psys.gens[i].set_dynamic_true()
                     if verbose:
@@ -448,13 +452,72 @@ def add_dyr(psys, dyr_filename, verbose=False):
             if not found_match:
                 logger.warning(
                     "Cannot pair GENROU with bus %d and idx %s. Skipping.",
-                    bus,
+                    int(device[0]),
+                    idx,
+                )
+
+        if 'GENSAL' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            idx = str(device[2]).strip().replace("'", "")
+
+            if hasattr(psys, 'inactive_gens') and (bus, idx) in psys.inactive_gens:
+                if verbose:
+                    logger.info(
+                        "Skipping GENSAL for inactive generator at bus %d, idx %s.",
+                        int(device[0]),
+                        idx,
+                    )
+                continue
+
+            T_d0p = float(device[3])
+            T_d0dp = float(device[4])
+            T_q0dp = float(device[5])
+            H = float(device[6])
+            D = float(device[7])
+            x_d = float(device[8])
+            x_q = float(device[9])
+            x_dp = float(device[10])
+            x_qp = x_dp
+            x_ddp = float(device[11])
+            xl = float(device[12])
+            S1 = float(device[13])
+            S2 = float(device[14])
+            T_q0p = T_d0p
+
+            found_match = False
+
+            for i in range(len(psys.gens)):
+                static_bus = psys.gens[i].bus
+                static_idx = (psys.gens[i].idx).strip().replace("'", "")
+
+                if static_bus == bus and static_idx.strip() == idx.strip():
+                    gen_dyn = GenGENSAL(
+                        idx, x_d, x_q, x_dp, x_ddp, xl, H, D,
+                        T_d0p, T_d0dp, T_q0dp, S1, S2,
+                    )
+                    psys.add_gen_dynamics(psys.gens[i], gen_dyn)
+                    found_match = True
+                    psys.gens[i].set_dynamic_true()
+                    if verbose:
+                        logger.info(
+                            "Adding GENSAL at bus %d. GENID %s.",
+                            int(device[0]),
+                            idx,
+                        )
+                    break
+
+            if not found_match:
+                logger.warning(
+                    "Cannot pair GENSAL with bus %d and idx %s. Skipping.",
+                    int(device[0]),
                     idx,
                 )
 
         if 'IEESGO' in device[1]:
             bus = psys.ext2int[int(device[0])]
-            gen_id = str(device[2])
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
             if verbose:
                 logger.info(
                     "Adding IEESGO at bus %d. GENID %s.",
@@ -478,10 +541,60 @@ def add_dyr(psys, dyr_filename, verbose=False):
                         K1, K2, K3))
                     break
 
+        if 'TGOV1' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            if verbose:
+                logger.info(
+                    "Adding TGOV1 at bus %d. GENID %s.",
+                    int(device[0]),
+                    gen_id,
+                )
+
+            R = float(device[3])
+            T1 = float(device[4])
+            VMAX = float(device[5])
+            VMIN = float(device[6])
+            T2 = float(device[7])
+            T3 = float(device[8])
+            DT = float(device[9])
+
+            power_ratio = 1.0
+            inverse_power_ratio = 1.0
+            for gen in psys.gens:
+                static_id = gen.idx.replace("'", "").strip()
+                if gen.bus == bus and static_id == gen_id.strip():
+                    if gen.mbase > 0:
+                        power_ratio = psys.basemva / gen.mbase
+                        inverse_power_ratio = gen.mbase / psys.basemva
+                    break
+            R *= power_ratio
+            VMAX *= power_ratio
+            VMIN *= power_ratio
+            DT *= inverse_power_ratio
+
+            found_match = False
+            for gen in psys.gendyn:
+                if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
+                    psys.add_gov(gen, GovTGOV1(gen_id, R, T1, VMAX, VMIN, T2, T3, DT))
+                    found_match = True
+                    break
+
+            if not found_match:
+                logger.warning(
+                    "Cannot pair TGOV1 with bus %d and idx %s. Skipping.",
+                    int(device[0]),
+                    gen_id,
+                )
+
         if 'ESDC1A' in device[1]:
 
             bus = psys.ext2int[int(device[0])]
-            gen_id = str(device[2])
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
 
             if verbose:
                 logger.info(
@@ -509,9 +622,47 @@ def add_dyr(psys, dyr_filename, verbose=False):
 
             for gen in psys.gendyn:
                 if gen.bus == bus and gen.id_tag == gen_id:
-                    #psys.add_exc(gen, ExcESDC1A(gen_id, KA, TA, KF, TF1, KE, TE, TR, E1, E2))
-                    psys.add_exc(gen, ExcESDC1A(gen_id, 20.0, 1.0, 0.7, 0.7, 7.0, 0.5, 20.4, 0.006, 0.9))
+                    psys.add_exc(
+                        gen,
+                        ExcESDC1A(
+                            gen_id, KA, TA, KF, TF1, KE, TE, TR,
+                            E1, SE1, E2, SE2, TB, TC, VRMAX, VRMIN, SW,
+                        ),
+                    )
                     break
+
+        if 'SEXS' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            if verbose:
+                logger.info(
+                    "Adding SEXS at bus %d. GENID %s.",
+                    int(device[0]),
+                    gen_id,
+                )
+
+            TA_TB = float(device[3])
+            TB = float(device[4])
+            K = float(device[5])
+            TE = float(device[6])
+            EMIN = float(device[7])
+            EMAX = float(device[8])
+
+            found_match = False
+            for gen in psys.gendyn:
+                if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
+                    psys.add_exc(gen, ExcSEXS(gen_id, TA_TB, TB, K, TE, EMIN, EMAX))
+                    found_match = True
+                    break
+
+            if not found_match:
+                logger.warning(
+                    "Cannot pair SEXS with bus %d and idx %s. Skipping.",
+                    int(device[0]),
+                    gen_id,
+                )
 
 
         if 'CIM5BL' in device[1]:
@@ -549,27 +700,36 @@ def add_dyr(psys, dyr_filename, verbose=False):
                         x1, Hin, Damp))
                     break
 
-    # check if at the end of loading the dyr any static generator does not have a dynamic model
-    # for now we will create dummy GENROUs with large inertias.
+    static_gens_by_bus = {}
+    for gen in psys.gens:
+        if not gen.has_dynamic_model:
+            static_gens_by_bus.setdefault(gen.bus, []).append(gen)
 
-    k = 0
-    TAG_DUMMY = "DUMMY"
-    for i, gen in enumerate(psys.gens):
-        if gen.has_dynamic_model is False:
-            id_tag = TAG_DUMMY + str(k)
-            # we use the parameters of the last generator except for the inertia and damping
-            # VERY HACKY
-            H = 100.0
-            D = 1.0
-            # add dummy generator
-            psys.add_gen_dynamics(psys.gens[i],
-                    GenGENROU(id_tag, x_d, x_q, x_dp, x_qp, x_ddp,
-                    xl, H, D, T_d0p, T_q0p, T_d0dp, T_q0dp))
-            psys.gens[i].set_dynamic_true()
-            k += 1
+    for bus, gens in static_gens_by_bus.items():
+        vsets = [gen.vset for gen in gens if gen.vset is not None]
+        if vsets and not np.allclose(vsets, vsets[0]):
+            raise ValueError(f"Static generators at bus {psys.buses[bus].id} have inconsistent voltage setpoints")
+        limits = (
+            sum(gen.pglb for gen in gens),
+            sum(gen.pgub for gen in gens),
+            sum(gen.qglb for gen in gens),
+            sum(gen.qgub for gen in gens),
+        )
+        psys.add_static_gen(StaticGenerator(
+            bus,
+            [gen.internal_id for gen in gens],
+            psys.buses[bus].type,
+            vsets[0] if vsets else psys.buses[bus].v0m,
+            psys.buses[bus].v0a,
+            limits,
+        ))
 
-    if k > 0:
-        logger.info("We added %d dummy GENROU models to the system.", k)
+    if static_gens_by_bus:
+        logger.info(
+            "Retained %d static generators at %d buses.",
+            sum(len(gens) for gens in static_gens_by_bus.values()),
+            len(static_gens_by_bus),
+        )
 
 def load_gic(psys, gis_filename):
 

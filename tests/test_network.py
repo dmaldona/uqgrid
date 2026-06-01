@@ -6,9 +6,80 @@ import numpy as np
 import scipy.io as sio
 from uqgrid.core.psydef import Psystem, Bus
 from uqgrid.models.network import createYbusComplex
-from uqgrid.io.parse import load_matpower
+from uqgrid.io.parse import load_matpower, load_psse
 
 EPS = 1e-10  # Tolerance for floating-point comparisons
+
+
+def test_multiple_zero_loads_get_equal_weights():
+    psys = Psystem()
+    psys.add_bus(0, bus_type=Bus.PQ)
+    psys.add_load(0, "1", 0.0, 0.0)
+    psys.add_load(0, "2", 0.0, 0.0)
+
+    psys.assemble()
+
+    assert psys.loads[0].weight == pytest.approx(0.5)
+    assert psys.loads[1].weight == pytest.approx(0.5)
+
+
+def test_two_winding_transformer_nominal_voltage_impedance_scaling(tmp_path):
+    raw = tmp_path / "nominal_voltage_transformer.raw"
+    raw.write_text(
+        """0,   100.00, 33, 0, 1, 60.00     / PSS(R)E-33
+TAP TEST CASE
+
+     1,'BUS1        ', 345.0000,3,   1,   1,   1,1.04000,  -0.0000,1.10000,0.90000,1.10000,0.90000
+     2,'BUS2        ', 345.0000,1,   1,   1,   1,1.01613,  -3.3252,1.10000,0.90000,1.10000,0.90000
+0 / END OF BUS DATA, BEGIN LOAD DATA
+     2,'1 ',1,   1,   1,     50.000,     20.000,     0.000,     0.000,   0.0,   0.0,   1,1,0
+0 / END OF LOAD DATA, BEGIN FIXED SHUNT DATA
+0 / END OF FIXED SHUNT DATA, BEGIN GENERATOR DATA
+     1,'1 ',    55.000,    10.000,   300.000,  -300.000,1.04000,     0,   100.000, 0.00000E+0, 1.000, 0.00000E+0, 0.00000E+0,1.00000,1,  100.0,   999.000,    10.000,   1,1.0000
+0 / END OF GENERATOR DATA, BEGIN BRANCH DATA
+0 / END OF BRANCH DATA, BEGIN TRANSFORMER DATA
+     1,     2,     0,'T1',1,1,1, 0.00000E+0, 0.00000E+0,2,'            ',1,   1,1.0000,   0,1.0000,   0,1.0000,   0,1.0000,'            '
+ 0.00000E+0, 5.76000E-2,   100.00
+1.00000, 500.000,   0.000,     0.00,     0.00,     0.00, 0,      0, 1.10000, 0.90000, 1.10000, 0.90000,  33, 0, 0.00000, 0.00000,  0.000
+1.00000, 345.000
+0 / END OF TRANSFORMER DATA, BEGIN AREA DATA
+   1,     1,     0.000,    10.000,'            '
+0 / END OF AREA DATA, BEGIN TWO-TERMINAL DC DATA
+0 / END OF TWO-TERMINAL DC DATA, BEGIN VSC DC LINE DATA
+0 / END OF VSC DC LINE DATA, BEGIN IMPEDANCE CORRECTION DATA
+0 / END OF IMPEDANCE CORRECTION DATA, BEGIN MULTI-TERMINAL DC DATA
+0 / END OF MULTI-TERMINAL DC DATA, BEGIN MULTI-SECTION LINE DATA
+0 / END OF MULTI-SECTION LINE DATA, BEGIN ZONE DATA
+0 / END OF ZONE DATA, BEGIN INTER-AREA TRANSFER DATA
+0 / END OF INTER-AREA TRANSFER DATA, BEGIN OWNER DATA
+0 / END OF OWNER DATA, BEGIN FACTS DEVICE DATA
+0 / END OF FACTS DEVICE DATA, BEGIN SWITCHED SHUNT DATA
+0 / END OF SWITCHED SHUNT DATA, BEGIN GNE DATA
+0 / END OF GNE DATA, BEGIN INDUCTION MACHINE DATA
+0 / END OF INDUCTION MACHINE DATA
+Q
+"""
+    )
+
+    psys = load_psse(str(raw))
+
+    assert psys.branches[0].x == pytest.approx(0.0576 * (500.0 / 345.0) ** 2)
+
+
+def test_three_winding_dummy_bus_angle_is_radians(data_dir):
+    psys = load_psse(os.path.join(data_dir, "pf_tests", "three_winding.raw"))
+    dummy_buses = [bus for bus in psys.buses if getattr(bus, "dummy", False)]
+
+    assert len(dummy_buses) == 1
+    assert dummy_buses[0].v0a == pytest.approx(np.deg2rad(-129.657446))
+
+
+def test_three_winding_dummy_bus_is_pq(data_dir):
+    psys = load_psse(os.path.join(data_dir, "pf_tests", "three_winding.raw"))
+    dummy_buses = [bus for bus in psys.buses if getattr(bus, "dummy", False)]
+
+    assert len(dummy_buses) == 1
+    assert dummy_buses[0].type == Bus.PQ
 
 
 @pytest.fixture

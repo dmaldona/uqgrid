@@ -232,7 +232,7 @@ class Load(DeviceModel):
         GX[vm_idx + 1, vm_idx] = 2.0*Ql*(vm/v0)**2.0/vm
 
 class Generator(object):
-    def __init__(self, bus, idx_name, psch, qsch, pgub, pglb, qgub, qglb, basemva, internal_id, mbase):
+    def __init__(self, bus, idx_name, psch, qsch, pgub, pglb, qgub, qglb, basemva, internal_id, mbase, vset=None):
         self.bus = bus
         self.idx = idx_name
         self.psch = psch/basemva
@@ -243,6 +243,7 @@ class Generator(object):
         self.qglb = qglb/basemva
         self.has_dynamic_model = False
         self.internal_id = internal_id
+        self.vset = vset
 
         if mbase > 0:
             self.mbase = mbase
@@ -400,6 +401,7 @@ class Psystem:
 
         # Dynamic devices
         self.gendyn = []
+        self.static_gens = []
         self.exc = []
         self.gov = []
         self.mot = []
@@ -421,7 +423,7 @@ class Psystem:
         self.assembled = -1
         self.init_flag = False
         self.geo_flag = False
-        self.power_injection = True
+        self.power_injection = False
 
         # numerical integration flags.
         # perhaps this should not be here?
@@ -484,8 +486,8 @@ class Psystem:
         self.branches.append(Branch(i, j, r, x, sh=sh, tap=tap, shift=shift, rateA=rateA, rateB=rateB, rateC=rateC))
         self.nbranches += 1
 
-    def add_gen(self, bus, idx_name, psch, qsch, pgub=0.0, pglb=0.0, qgub=0.0, qglb=0.0, mbase=-1):
-        self.gens.append(Generator(bus, idx_name, psch, qsch, pgub, pglb, qgub, qglb, self.basemva, self.ngens, mbase=mbase))
+    def add_gen(self, bus, idx_name, psch, qsch, pgub=0.0, pglb=0.0, qgub=0.0, qglb=0.0, mbase=-1, vset=None):
+        self.gens.append(Generator(bus, idx_name, psch, qsch, pgub, pglb, qgub, qglb, self.basemva, self.ngens, mbase=mbase, vset=vset))
         self.ngens += 1
 
     def add_busfault(self, bus, rfault):
@@ -502,6 +504,10 @@ class Psystem:
             gendynamics.set_ratio(ratio)
         # pair gen dynamics with static generator
         gendynamics.set_static_gen_idx(gen.internal_id)
+
+    def add_static_gen(self, static_gen):
+        self.static_gens.append(static_gen)
+        self.add_device(static_gen)
 
     def add_load_dynamics(self, load, loaddynamics):
         assert isinstance(load, Load)
@@ -581,7 +587,10 @@ class Psystem:
             for load in bus.loads:
                 tot_load += load.pload
             for load in bus.loads:
-                load.weight = load.pload/tot_load
+                if tot_load == 0.0:
+                    load.weight = 1.0 / len(bus.loads)
+                else:
+                    load.weight = load.pload/tot_load
 
         self.assembled = 1
 
@@ -682,7 +691,8 @@ class Psystem:
                 if gen.exciter is exc:
                     gen.has_exciter = True
                     exc.gen_index = gi
-                    self.gen_efd_ctrl_col[gi] = exc.dif_ptr + 2
+                    efd_idx = exc.efd_idx if hasattr(exc, "efd_idx") else 2
+                    self.gen_efd_ctrl_col[gi] = exc.dif_ptr + efd_idx
                     self.exc_devices.append(exc)
                     mapped = True
                     break

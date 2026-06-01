@@ -717,7 +717,9 @@ def integrate(zold,
               uold=None,
               vold=None,
               mold=None,
-              fsolve=False):
+              fsolve=False,
+              newton_tol=1e-10,
+              newton_max_iter=500):
     """
     Name: integrate
     Description: implements backward euler for the OMIB,
@@ -736,8 +738,8 @@ def integrate(zold,
         x (numpy array): state vector at (t+1)
     """
 
-    eps = 1e-10  # N-R tolerance
-    max_iter = 500
+    eps = newton_tol
+    max_iter = newton_max_iter
     iteration = 0
     z = zold
 
@@ -871,6 +873,9 @@ def initialize_system(psys: Psystem, pf_solution: PowerFlowSolution):
             pi = pf_solution.gen_psch[gen_static_id]
             qi = pf_solution.gen_qsch[gen_static_id]
 
+        elif device.model_type == "static_generator":
+            pi = sum(pf_solution.gen_psch[idx] for idx in device.gen_idxs)
+            qi = sum(pf_solution.gen_qsch[idx] for idx in device.gen_idxs)
         elif device.model_type == "ZIPLoad":
             pi = -device.pload
             qi = device.qload
@@ -988,7 +993,7 @@ def preallocate_jacobian(psys):
                 list_coordinates[coord[j][0]] = coord[j][1]
             else:
                 list_coordinates[coord[j][0]].extend(coord[j][1])
-                list_coordinates[coord[j][0]] = list(
+                list_coordinates[coord[j][0]] = sorted(
                     set(list_coordinates[coord[j][0]]))
 
     # because the ZIP load depends only on the bus voltage, no need to
@@ -1562,9 +1567,15 @@ def integrate_system(
     verbose = config.verbose
     comp_sens = config.comp_sens
     fsolve = config.fsolve
+    newton_tol = config.newton_tol
+    newton_max_iter = config.newton_max_iter
     ton = config.ton
     toff = config.toff
     petsc = config.petsc
+    check_jacobian = config.check_jacobian
+    jacobian_check_tol = config.jacobian_check_tol
+    jacobian_check_top_k = config.jacobian_check_top_k
+    jacobian_check_csv = config.jacobian_check_csv
     power_injection = config.power_injection
     solve_power_flow = config.solve_powerflow_dynamics
     arkimex = config.arkimex
@@ -1597,6 +1608,47 @@ def integrate_system(
     system_size = z0.shape[0]
     jacobian = preallocate_jacobian(psys)
     residual = np.zeros(system_size)
+
+    if check_jacobian:
+        if petsc:
+            raise ValueError("Jacobian check is only supported without PETSc.")
+        from uqgrid.simulation.jacobian import residual_jacobian
+        from uqgrid.simulation.jacobian_check import compare_jacobians
+        residual_jacobian(jacobian, z0, theta, psys)
+        mismatches = compare_jacobians(
+            psys,
+            z0,
+            theta,
+            jacobian,
+            eps=1e-6,
+            top_k=jacobian_check_top_k,
+            tol=jacobian_check_tol,
+        )
+        print("== Jacobian FD check (top mismatches) ==")
+        for m in mismatches:
+            print(
+                f"{m['row_desc']} <- {m['col_desc']}: "
+                f"analytical={m['analytical']:.3e}, fd={m['finite_diff']:.3e}, "
+                f"|diff|={m['abs_diff']:.3e}"
+            )
+        if jacobian_check_csv:
+            import csv
+            with open(jacobian_check_csv, "w", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "row",
+                        "col",
+                        "row_desc",
+                        "col_desc",
+                        "analytical",
+                        "finite_diff",
+                        "abs_diff",
+                    ],
+                )
+                writer.writeheader()
+                for m in mismatches:
+                    writer.writerow(m)
 
     # calculate nsteps
     h = dt
@@ -1819,6 +1871,8 @@ def integrate_system(
                                 None,
                                 verbose=verbose,
                                 fsolve=fsolve,
+                                newton_tol=newton_tol,
+                                newton_max_iter=newton_max_iter,
                                 uold=None,
                                 vold=None,
                                 mold=None)
@@ -1829,35 +1883,71 @@ def integrate_system(
                     logger.info("Apply fault")
                 if len(psys.fault_events) > 0:
                     psys.fault_events[0].apply()
-                z, _, _, _ = integrate(z,
-                                    theta,
-                                    0.0,
-                                    psys,
-                                    residual,
-                                    jacobian,
-                                    None,
-                                    verbose=verbose,
-                                    fsolve=True,
-                                    uold=None,
-                                    vold=None,
-                                    mold=None)
+                try:
+                    z, _, _, _ = integrate(z,
+                                        theta,
+                                        0.0,
+                                        psys,
+                                        residual,
+                                        jacobian,
+                                        None,
+                                        verbose=verbose,
+                                        fsolve=False,
+                                        newton_tol=newton_tol,
+                                        newton_max_iter=newton_max_iter,
+                                        uold=None,
+                                        vold=None,
+                                        mold=None)
+                except NameError:
+                    z, _, _, _ = integrate(z,
+                                        theta,
+                                        0.0,
+                                        psys,
+                                        residual,
+                                        jacobian,
+                                        None,
+                                        verbose=verbose,
+                                        fsolve=False,
+                                        newton_tol=newton_tol,
+                                        newton_max_iter=newton_max_iter,
+                                        uold=None,
+                                        vold=None,
+                                        mold=None)
             if i == step_off:
                 if verbose:
                     logger.info("Remove fault")
                 if len(psys.fault_events) > 0:
                     psys.fault_events[0].remove()
-                z, _, _, _ = integrate(z,
-                                    theta,
-                                    0.0,
-                                    psys,
-                                    residual,
-                                    jacobian,
-                                    None,
-                                    verbose=verbose,
-                                    fsolve=True,
-                                    uold=None,
-                                    vold=None,
-                                    mold=None)
+                try:
+                    z, _, _, _ = integrate(z,
+                                        theta,
+                                        0.0,
+                                        psys,
+                                        residual,
+                                        jacobian,
+                                        None,
+                                        verbose=verbose,
+                                        fsolve=False,
+                                        newton_tol=newton_tol,
+                                        newton_max_iter=newton_max_iter,
+                                        uold=None,
+                                        vold=None,
+                                        mold=None)
+                except NameError:
+                    z, _, _, _ = integrate(z,
+                                        theta,
+                                        0.0,
+                                        psys,
+                                        residual,
+                                        jacobian,
+                                        None,
+                                        verbose=verbose,
+                                        fsolve=False,
+                                        newton_tol=newton_tol,
+                                        newton_max_iter=newton_max_iter,
+                                        uold=None,
+                                        vold=None,
+                                        mold=None)
 
         # if tend < toff we remove fault before exiting
         if i < step_off:

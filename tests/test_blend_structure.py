@@ -11,8 +11,10 @@ import os
 import pytest
 import numpy as np
 from uqgrid.io.parse import load_psse, add_dyr
+from uqgrid.models import GenGENROU
 from uqgrid.simulation.pflow import runpf
 from uqgrid.simulation.jacobian import residual_jacobian
+from uqgrid.simulation.residual import residual_function
 from uqgrid.simulation.dynamics import preallocate_jacobian, initialize_system
 from scipy.sparse import csr_matrix
 
@@ -25,15 +27,116 @@ def data_dir():
     )
 
 
+def _initialized_jacobian_case(raw_path, dyr_path=None):
+    psys = load_psse(raw_filename=raw_path)
+    if dyr_path is not None:
+        add_dyr(psys, dyr_path)
+    psys.createYbusComplex()
+    pf_solution = runpf(psys, verbose=False)
+    sysvec, theta = initialize_system(psys, pf_solution)
+    J = preallocate_jacobian(psys)
+    residual_jacobian(J, sysvec, theta, psys)
+    return psys, J
+
+
+def _assert_genrou_preallocation_rows_sorted(psys):
+    dif_size = psys.num_dof_dif
+    alg_size = psys.num_dof_alg
+    for gen in psys.gendyn:
+        idxs = np.array([
+            gen.dif_ptr,
+            dif_size + gen.alg_ptr,
+            dif_size + alg_size,
+        ], dtype=np.int32)
+        for row, cols in gen.preallocate_jacobian(idxs, psys, psys.power_injection):
+            assert cols == sorted(cols), f"GENROU row {row} columns are not sorted: {cols}"
+
+
+def _assert_csr_rows_sorted(J):
+    for row in range(J.shape[0]):
+        cols = J.indices[J.indptr[row]:J.indptr[row + 1]]
+        assert np.all(cols[:-1] < cols[1:]), f"CSR row {row} columns are not sorted: {cols.tolist()}"
+
+
+def test_genrou_jacobian_rows_are_sorted_for_controller_cases(data_dir):
+    cases = [
+        ("2bus_33.raw", "GENROU.dyr"),
+        ("2bus_33.raw", "2bus_SEXS.dyr"),
+        ("2bus_33.raw", "2bus_TGOV1.dyr"),
+    ]
+
+    for raw_name, dyr_name in cases:
+        psys, J = _initialized_jacobian_case(
+            os.path.join(data_dir, raw_name),
+            os.path.join(data_dir, dyr_name),
+        )
+        _assert_genrou_preallocation_rows_sorted(psys)
+        _assert_csr_rows_sorted(J)
+
+
+def test_genrou_constructor_defaults_to_no_saturation():
+    gen = GenGENROU(
+        0, 1.575, 1.512, 0.291, 0.39, 0.1733,
+        0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15
+    )
+
+    assert gen.S1 == 0.0
+    assert gen.S2 == 0.0
+
+
+def test_controller_setpoints_are_read_from_theta(data_dir, tmp_path):
+    esdc1a_dyr = tmp_path / "2bus_ESDC1A.dyr"
+    esdc1a_dyr.write_text(
+        """
+1 'GENROU'  1            6.1          0.05         1.0          0.15
+                3.38         0.0          1.575        1.512        0.291
+                0.39         0.1733       0.0787       0.0       0.0      /
+1 'ESDC1A'  1            0.02         20.0         1.0          0.7
+                0.7          10.0        -10.0         7.0          0.5
+                0.7          0.7          0.0          1.0          0.006
+                1.2          0.9                                             /
+""".strip()
+    )
+
+    cases = [
+        ("2bus_33.raw", os.path.join(data_dir, "2bus_SEXS.dyr"), "exc", "vref"),
+        ("2bus_33.raw", os.path.join(data_dir, "2bus_TGOV1.dyr"), "gov", "pref"),
+        ("2bus_CIM5.raw", os.path.join(data_dir, "2bus_IEESGO.dyr"), "gov", "pref"),
+        ("2bus_33.raw", str(esdc1a_dyr), "exc", "vref"),
+    ]
+
+    for raw_name, dyr_path, collection, attr in cases:
+        psys = load_psse(raw_filename=os.path.join(data_dir, raw_name))
+        add_dyr(psys, dyr_path)
+        psys.createYbusComplex()
+        pf_solution = runpf(psys, verbose=False)
+        sysvec, theta = initialize_system(psys, pf_solution)
+
+        devices = getattr(psys, collection)
+        ctrl = devices[0]
+        par_ptr = ctrl.par_ptr
+        setpoint_offset = ctrl.par_dim - 1
+        assert theta[par_ptr + setpoint_offset] == pytest.approx(getattr(ctrl, attr))
+
+        F_before = np.zeros_like(sysvec)
+        residual_function(F_before, sysvec, theta, psys)
+
+        setattr(ctrl, attr, getattr(ctrl, attr) + 10.0)
+        F_after = np.zeros_like(sysvec)
+        residual_function(F_after, sysvec, theta, psys)
+
+        assert np.allclose(F_after, F_before)
+
+
 def test_init_mappings_no_controllers(data_dir):
     """Test initialization mapping for system without controllers."""
     # Load system without controllers
     psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
     psys.add_gen_dynamics(
         psys.gens[0],
-        __import__('uqgrid.models', fromlist=['GenGENROU']).GenGENROU(
+        GenGENROU(
             0, 1.575, 1.512, 0.291, 0.39, 0.1733,
-            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15
+            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15, 0.0, 0.0
         )
     )
     psys.initialize()
@@ -85,9 +188,9 @@ def test_blend_structure_no_controllers(data_dir):
     psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
     psys.add_gen_dynamics(
         psys.gens[0],
-        __import__('uqgrid.models', fromlist=['GenGENROU']).GenGENROU(
+        GenGENROU(
             0, 1.575, 1.512, 0.291, 0.39, 0.1733,
-            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15
+            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15, 0.0, 0.0
         )
     )
     psys.createYbusComplex()
@@ -122,9 +225,9 @@ def test_blend_values_at_t0(data_dir):
     psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
     psys.add_gen_dynamics(
         psys.gens[0],
-        __import__('uqgrid.models', fromlist=['GenGENROU']).GenGENROU(
+        GenGENROU(
             0, 1.575, 1.512, 0.291, 0.39, 0.1733,
-            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15
+            0.0787, 3.38, 0.0, 6.1, 1.0, 0.05, 0.15, 0.0, 0.0
         )
     )
     psys.createYbusComplex()

@@ -59,6 +59,10 @@ config = IntegrationConfig(
     comp_sens=False,
     fsolve=False,
     petsc=True,
+    check_jacobian=False,
+    jacobian_check_tol=1e-6,
+    jacobian_check_top_k=10,
+    jacobian_check_csv=None,
 )
 ```
 
@@ -71,6 +75,26 @@ Key fields:
 - **comp_sens**: Enable adjoint-based sensitivities (requires PETSc).
 - **petsc**: Switch to PETSc-backed integrators for improved robustness and
   adjoint capabilities.
+- **check_jacobian**: Run a finite-difference Jacobian check (non-PETSc only).
+- **jacobian_check_tol**: Absolute tolerance for reporting FD mismatches.
+- **jacobian_check_top_k**: Number of mismatches to report.
+- **jacobian_check_csv**: Optional CSV file path for mismatch report.
+
+### Jacobian diagnostics (optional)
+
+When running without PETSc, you can enable a finite-difference Jacobian check:
+
+```python
+config = IntegrationConfig(
+    check_jacobian=True,
+    jacobian_check_tol=1e-6,
+    jacobian_check_top_k=10,
+    jacobian_check_csv="jacobian_mismatches.csv",
+)
+```
+
+The solver prints the top mismatches (row/column labels included) and can
+optionally write a CSV report.
 
 ## Run the integrator
 
