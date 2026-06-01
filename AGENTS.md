@@ -1,46 +1,77 @@
-# Repository Guidelines
+# CLAUDE.md
 
-## Project Structure & Module Organization
-- `uqgrid/`: core Python package (simulation, IO parsing, models, sensitivities).
-- `tests/`: pytest suite, including adjoint tests marked with `@pytest.mark.adjoint`.
-- `bin/`: runnable scripts (e.g., `dynamics_driver.py`, `generate_scenarios.py`).
-- `data/`, `simulation_data/`: sample input datasets and artifacts.
-- `docs/`: MkDocs documentation sources.
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
-## Architecture Overview
-- `uqgrid/core/`: base model types and shared system data structures.
-- `uqgrid/io/`: loaders and parsers for PSS/E-style input files.
-- `uqgrid/models/`: generator, exciter, governor, and load model definitions.
-- `uqgrid/simulation/`: DAE integration, dynamics orchestration, and sensitivity/gradient workflows.
-- `uqgrid/utils/`: small helpers (partitioning, tooling utilities).
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
-## Build, Test, and Development Commands
-- `make install`: install the package in editable mode.
-- `make install-dev`: install dev dependencies (pytest, ruff, mypy, etc.).
-- `make install-petsc`: enable PETSc support for adjoint sensitivities.
-- `make test`: run the full pytest suite.
-- `make test-fast`: skip adjoint tests (`-m "not adjoint"`).
-- `make lint`: run `ruff` and `mypy` checks.
-- `make docs-serve`: serve documentation locally with live reload.
+## 1. Think Before Coding
 
-## Coding Style & Naming Conventions
-- Python 3.8+; prefer 4-space indentation and standard PEP 8 naming.
-- Use `snake_case` for functions/variables, `CapWords` for classes, and `UPPER_SNAKE_CASE` for constants.
-- `ruff` is the primary linter (line length 100 in `pyproject.toml`); `mypy` is used on selected modules.
-- `black`, `isort`, and `pre-commit` are available via dev dependencies; run `pre-commit install` after setup.
-- Performance-sensitive routines (residuals/Jacobians) should avoid in-function imports and runtime column sorting (no `argsort` in these paths). Ensure CSR column indices are ordered up front in preallocation and keep the same order in `residual_jac`.
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
 
-## Testing Guidelines
-- Framework: `pytest` with markers for slow adjoint validation tests.
-- Name tests as `test_*.py` and functions as `test_*`.
-- Use `make test-fast` during local iteration; use `make test` before opening a PR.
-- For Jacobian verification, use the built-in finite-difference checks in `IntegrationConfig` (`check_jacobian`, `jacobian_check_tol`, `jacobian_check_top_k`, `jacobian_check_csv`) as documented in `docs/user-guide/dynamics-simulation.md`.
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
 
-## Commit & Pull Request Guidelines
-- No strict commit convention is enforced in history; use concise, imperative summaries (e.g., “Fix bus type handling”).
-- PRs should describe motivation, key changes, and testing performed (e.g., `make test-fast`).
-- Link related issues when applicable; include screenshots or plots if changes affect outputs or docs.
+## 2. Simplicity First
 
-## Optional: Documentation
-- Docs are built with MkDocs (`make docs` / `make docs-serve`).
-- Keep API docs and tutorials aligned with any public behavior changes.
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+
+# POWER SYSTEM SPECIFIC ROUTINE
+
+When implementing new devices or features that impact simulation, a good way to see that everything works is.
+
+1) Run power flow. Converges? Compare with other tool.
+2) RUn initialization. Converges? Compare initial vector with other tool.
+3) Check the residual of the first time step. Is it close to 0 as it should be or not. If its not close to 0 (e.g., some large mismatch) something wrong between initialization and time stepping.
+4) Run timestepping without faults and perturbations to see you get a flat line. Dont use Jacobian
+5) Run timestepping with fault. Compare with other tool. Use finite differences.
+6) Introduce Jacobian and verify with finite differences.
