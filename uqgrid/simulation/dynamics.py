@@ -873,6 +873,9 @@ def initialize_system(psys: Psystem, pf_solution: PowerFlowSolution):
             pi = pf_solution.gen_psch[gen_static_id]
             qi = pf_solution.gen_qsch[gen_static_id]
 
+        elif device.model_type == "static_generator":
+            pi = sum(pf_solution.gen_psch[idx] for idx in device.gen_idxs)
+            qi = sum(pf_solution.gen_qsch[idx] for idx in device.gen_idxs)
         elif device.model_type == "ZIPLoad":
             pi = -device.pload
             qi = device.qload

@@ -187,12 +187,75 @@ def test_gensal_initialization_and_jacobian(data_dir, tmp_path):
     residual_function(residual, sysvec, theta, psys)
     jacobian = preallocate_jacobian(psys)
     residual_jacobian(jacobian, sysvec, theta, psys)
+    residual_jacobian(jacobian, sysvec, theta, psys)
     mismatches = compare_jacobians(
         psys, sysvec, theta, jacobian, eps=1e-6, top_k=10, tol=1e-5,
     )
 
     assert np.linalg.norm(residual, np.inf) < 1e-8
     assert mismatches == []
+
+
+def test_unmatched_generators_use_aggregated_static_devices(data_dir, tmp_path):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    psys.add_gen(
+        bus=1,
+        idx_name="extra",
+        psch=0.0,
+        qsch=0.0,
+        pgub=10.0,
+        pglb=-10.0,
+        qgub=5.0,
+        qglb=-5.0,
+    )
+    dyr_path = tmp_path / "empty.dyr"
+    dyr_path.write_text("")
+
+    add_dyr(psys, str(dyr_path))
+
+    assert len(psys.gendyn) == 0
+    assert len(psys.static_gens) == 3
+    static_by_bus = {gen.bus: gen for gen in psys.static_gens}
+    assert len(static_by_bus[1].gen_idxs) == 2
+    assert static_by_bus[1].enable_limits is False
+    assert static_by_bus[1].pmax == pytest.approx(
+        psys.gens[1].pgub + psys.gens[3].pgub
+    )
+    assert static_by_bus[1].qmin == pytest.approx(
+        psys.gens[1].qglb + psys.gens[3].qglb
+    )
+
+
+def test_static_generator_initialization_and_jacobian(data_dir, tmp_path):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    dyr_path = tmp_path / "empty.dyr"
+    dyr_path.write_text("")
+
+    add_dyr(psys, str(dyr_path))
+    psys.createYbusComplex()
+    pf_solution = runpf(psys, verbose=False)
+    sysvec, theta = initialize_system(psys, pf_solution)
+    residual = np.zeros_like(sysvec)
+    residual_function(residual, sysvec, theta, psys)
+    jacobian = preallocate_jacobian(psys)
+    residual_jacobian(jacobian, sysvec, theta, psys)
+    residual_jacobian(jacobian, sysvec, theta, psys)
+    mismatches = compare_jacobians(
+        psys, sysvec, theta, jacobian, eps=1e-6, top_k=10, tol=1e-5,
+    )
+
+    assert np.linalg.norm(residual, np.inf) < 1e-8
+    assert mismatches == []
+
+
+def test_static_generators_reject_inconsistent_voltage_setpoints(data_dir, tmp_path):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    psys.add_gen(bus=1, idx_name="extra", psch=0.0, qsch=0.0, vset=0.95)
+    dyr_path = tmp_path / "empty.dyr"
+    dyr_path.write_text("")
+
+    with pytest.raises(ValueError, match="inconsistent voltage setpoints"):
+        add_dyr(psys, str(dyr_path))
 
 
 def test_unmatched_tgov1_logs_warning_and_is_skipped(data_dir, tmp_path, caplog):

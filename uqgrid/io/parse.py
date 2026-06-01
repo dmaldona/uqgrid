@@ -1,5 +1,5 @@
 from uqgrid.core.psydef import Psystem, Bus
-from uqgrid.models import GenGENROU, GenGENSAL, ExcESDC1A, ExcSEXS, GovIEESGO, GovTGOV1
+from uqgrid.models import GenGENROU, GenGENSAL, ExcESDC1A, ExcSEXS, GovIEESGO, GovTGOV1, StaticGenerator
 from uqgrid.models.cim5_imp import MotCIM5
 from uqgrid.io.parse_psse import read_raw
 import numpy as np
@@ -189,7 +189,7 @@ def load_psse(raw_filename):
             psys.buses[bus].set_vinit(gen.vs, psys.buses[bus].v0a)
         psys.add_gen(bus, gen.name, gen.pg, gen.qg, 
                      pgub=gen.pt, pglb=gen.pb, qgub=gen.qt, qglb=gen.qb,
-                     mbase=gen.mbase)
+                     mbase=gen.mbase, vset=gen.vs)
 
     # Downgrade PV buses to PQ only if they have no active generators
     for (bus, idx) in psys.inactive_gens:
@@ -338,7 +338,7 @@ def load_matpower(mat_file):
         buses_with_active_gens.add(bus)
         if psys.buses[bus].type in (Bus.PV, Bus.SLACK):
             psys.buses[bus].set_vinit(vg, psys.buses[bus].v0a)
-        psys.add_gen(bus, "id", pg, qg, pgub=pmax, pglb=pmin, qgub=qmax, qglb=qmin)
+        psys.add_gen(bus, "id", pg, qg, pgub=pmax, pglb=pmin, qgub=qmax, qglb=qmin, vset=vg)
 
     for bus_idx, bus in enumerate(psys.buses):
         if bus.type == Bus.PV and bus_idx not in buses_with_active_gens:
@@ -700,27 +700,36 @@ def add_dyr(psys, dyr_filename, verbose=False):
                         x1, Hin, Damp))
                     break
 
-    # check if at the end of loading the dyr any static generator does not have a dynamic model
-    # for now we will create dummy GENROUs with large inertias.
+    static_gens_by_bus = {}
+    for gen in psys.gens:
+        if not gen.has_dynamic_model:
+            static_gens_by_bus.setdefault(gen.bus, []).append(gen)
 
-    k = 0
-    TAG_DUMMY = "DUMMY"
-    for i, gen in enumerate(psys.gens):
-        if gen.has_dynamic_model is False:
-            id_tag = TAG_DUMMY + str(k)
-            # we use the parameters of the last generator except for the inertia and damping
-            # VERY HACKY
-            H = 100.0
-            D = 1.0
-            # add dummy generator
-            gen_dyn = GenGENROU(id_tag, x_d, x_q, x_dp, x_qp, x_ddp,
-                    xl, H, D, T_d0p, T_q0p, T_d0dp, T_q0dp, S1, S2)
-            psys.add_gen_dynamics(psys.gens[i], gen_dyn)
-            psys.gens[i].set_dynamic_true()
-            k += 1
+    for bus, gens in static_gens_by_bus.items():
+        vsets = [gen.vset for gen in gens if gen.vset is not None]
+        if vsets and not np.allclose(vsets, vsets[0]):
+            raise ValueError(f"Static generators at bus {psys.buses[bus].id} have inconsistent voltage setpoints")
+        limits = (
+            sum(gen.pglb for gen in gens),
+            sum(gen.pgub for gen in gens),
+            sum(gen.qglb for gen in gens),
+            sum(gen.qgub for gen in gens),
+        )
+        psys.add_static_gen(StaticGenerator(
+            bus,
+            [gen.internal_id for gen in gens],
+            psys.buses[bus].type,
+            vsets[0] if vsets else psys.buses[bus].v0m,
+            psys.buses[bus].v0a,
+            limits,
+        ))
 
-    if k > 0:
-        logger.info("We added %d dummy GENROU models to the system.", k)
+    if static_gens_by_bus:
+        logger.info(
+            "Retained %d static generators at %d buses.",
+            sum(len(gens) for gens in static_gens_by_bus.values()),
+            len(static_gens_by_bus),
+        )
 
 def load_gic(psys, gis_filename):
 
