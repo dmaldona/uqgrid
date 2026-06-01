@@ -73,6 +73,20 @@ Key steps embedded in the script:
 3. Configure integration parameters with `IntegrationConfig`.
 4. Run `integrate_system` to obtain the state history and sensitivities.
 
+## Logging configuration
+
+UQGrid uses Python's `logging` module for user-facing progress and warnings.
+To see logs in your scripts, configure logging once near your entrypoint:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO)
+```
+
+Use `level=logging.DEBUG` for more verbose progress output, or `WARNING`/`ERROR`
+to keep runs quiet.
+
 ## Next steps
 
 - Learn more about configuration options in the

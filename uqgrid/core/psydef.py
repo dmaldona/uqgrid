@@ -1,8 +1,11 @@
 import numpy as np
+import logging
 from itertools import count
 from uqgrid.utils.tools import csr_add_row, csr_set_row
 import networkx as nx
 import json
+
+logger = logging.getLogger(__name__)
 
 # Import base classes from the new file
 from uqgrid.core.base_models import DeviceModel, DynamicGenerator, Exciter, Governor, Motor
@@ -725,9 +728,14 @@ class Psystem:
 
     def survey_dynamic_models(self):
         for model in self.devices:
-            print("Model %d. Bus: %d. Type: %s. diff_ptr: %d. alg_ptr: %d" %
-                  (model.ndev, model.bus, model.model_type, model.dif_ptr,
-                   model.alg_ptr))
+            logger.info(
+                "Model %d. Bus: %d. Type: %s. diff_ptr: %d. alg_ptr: %d",
+                model.ndev,
+                model.bus,
+                model.model_type,
+                model.dif_ptr,
+                model.alg_ptr,
+            )
             
     def create_bus_to_gen_map(self):
         """
@@ -1028,21 +1036,27 @@ class Psystem:
                 dev_ptr = model.dif_ptr
                 dev_ptr_end = model.dif_ptr + model.dif_dim
                 if dev_ptr <= idx_num <= dev_ptr_end:
-                    print(
-                        "Index %g pertains to a %s in bus %d. Dynamic state number: %d."
-                        % (idx_num, model.model_type, model.bus,
-                           idx_num - dev_ptr))
+                    logger.info(
+                        "Index %g pertains to a %s in bus %d. Dynamic state number: %d.",
+                        idx_num,
+                        model.model_type,
+                        model.bus,
+                        idx_num - dev_ptr,
+                    )
         elif idx_num > alg_size + dif_size:
-            print("Voltage variable.")
+            logger.info("Voltage variable.")
         else:
             for model in self.devices:
                 dev_ptr = model.alg_ptr
                 dev_ptr_end = model.alg_ptr + model.alg_dim
                 if dev_ptr <= idx_num <= dev_ptr_end:
-                    print(
-                        "Index %g pertains to a %s in bus %d. Algebraic state number: %d."
-                        % (idx_num, model.model_type, model.bus,
-                           idx_num - dev_ptr))
+                    logger.info(
+                        "Index %g pertains to a %s in bus %d. Algebraic state number: %d.",
+                        idx_num,
+                        model.model_type,
+                        model.bus,
+                        idx_num - dev_ptr,
+                    )
 
     def export_state_metadata(self, filename='state_metadata.json'):
         import json
@@ -1127,12 +1141,23 @@ class Psystem:
 
     # network plot
 
-    def plot_network(self):
+    def plot_network(self, ax=None, with_labels=False, **kwargs):
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError as exc:
+            raise ImportError("plot_network requires matplotlib to be installed.") from exc
+
+        fig = None
+        if ax is None:
+            fig, ax = plt.subplots()
+
         if self.geo_flag == True:
-            pos = {i:self.substations[self.bus2sub[i]] for i in range(self.nbuses)}
-            nx.draw(self.graph, pos=pos)
+            pos = {i: self.substations[self.bus2sub[i]] for i in range(self.nbuses)}
+            nx.draw(self.graph, pos=pos, ax=ax, with_labels=with_labels, **kwargs)
         else:
-            nx.draw(self.graph)
+            nx.draw(self.graph, ax=ax, with_labels=with_labels, **kwargs)
+
+        return fig, ax
 
     def add_geo(self, substations, bus2sub):
         self.substations = substations
