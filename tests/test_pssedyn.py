@@ -2,9 +2,11 @@ import os
 import pytest
 import numpy as np
 from uqgrid.core.psydef import Psystem
-from uqgrid.models import GenGENROU, GovTGOV1
+from uqgrid.models import GenGENROU, GenGENSAL, GovTGOV1
 from uqgrid.models.esdc1a_imp import esdc1a_sat_coefficients
-from uqgrid.simulation.dynamics import initialize_system, integrate_system
+from uqgrid.simulation.dynamics import initialize_system, integrate_system, preallocate_jacobian
+from uqgrid.simulation.jacobian import residual_jacobian
+from uqgrid.simulation.jacobian_check import compare_jacobians
 from uqgrid.io.parse import load_psse, add_dyr
 from uqgrid.simulation.pflow import runpf
 from uqgrid.simulation.residual import residual_function
@@ -141,6 +143,56 @@ def test_tgov1_limits_are_stored_but_disabled_by_default():
     assert gov.VMIN == -0.1
     assert gov.enable_limits is False
     assert theta[7] == 0.0
+
+
+def test_gensal_maps_to_salient_generator_parameters(data_dir, tmp_path):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    dyr_path = tmp_path / "ieee9_gensal.dyr"
+    dyr_path.write_text(
+        """
+1 'GENSAL' 1 6.0 0.05 0.04 4.31 0.1 1.8 1.1 0.3 0.25 0.12 0.2 0.6 /
+""".lstrip()
+    )
+
+    add_dyr(psys, str(dyr_path))
+
+    gen = psys.gendyn[0]
+    assert isinstance(gen, GenGENSAL)
+    assert gen.T_d0p == pytest.approx(6.0)
+    assert gen.T_q0p == pytest.approx(6.0)
+    assert gen.T_d0dp == pytest.approx(0.05)
+    assert gen.T_q0dp == pytest.approx(0.04)
+    assert gen.x_d == pytest.approx(1.8 * psys.basemva / psys.gens[0].mbase)
+    assert gen.x_q == pytest.approx(1.1 * psys.basemva / psys.gens[0].mbase)
+    assert gen.x_dp == pytest.approx(0.3 * psys.basemva / psys.gens[0].mbase)
+    assert gen.x_qp == pytest.approx(gen.x_dp)
+    assert gen.x_ddp == pytest.approx(0.25 * psys.basemva / psys.gens[0].mbase)
+    assert gen.x_qdp == pytest.approx(gen.x_ddp)
+
+
+def test_gensal_initialization_and_jacobian(data_dir, tmp_path):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    dyr_path = tmp_path / "ieee9_gensal_init.dyr"
+    dyr_path.write_text(
+        """
+1 'GENSAL' 1 6.0 0.05 0.04 4.31 0.1 1.8 1.1 0.3 0.25 0.12 0.2 0.6 /
+""".lstrip()
+    )
+
+    add_dyr(psys, str(dyr_path))
+    psys.createYbusComplex()
+    pf_solution = runpf(psys, verbose=False)
+    sysvec, theta = initialize_system(psys, pf_solution)
+    residual = np.zeros_like(sysvec)
+    residual_function(residual, sysvec, theta, psys)
+    jacobian = preallocate_jacobian(psys)
+    residual_jacobian(jacobian, sysvec, theta, psys)
+    mismatches = compare_jacobians(
+        psys, sysvec, theta, jacobian, eps=1e-6, top_k=10, tol=1e-5,
+    )
+
+    assert np.linalg.norm(residual, np.inf) < 1e-8
+    assert mismatches == []
 
 
 def test_unmatched_tgov1_logs_warning_and_is_skipped(data_dir, tmp_path, caplog):

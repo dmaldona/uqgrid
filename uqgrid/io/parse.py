@@ -1,5 +1,5 @@
 from uqgrid.core.psydef import Psystem, Bus
-from uqgrid.models import GenGENROU, ExcESDC1A, ExcSEXS, GovIEESGO, GovTGOV1
+from uqgrid.models import GenGENROU, GenGENSAL, ExcESDC1A, ExcSEXS, GovIEESGO, GovTGOV1
 from uqgrid.models.cim5_imp import MotCIM5
 from uqgrid.io.parse_psse import read_raw
 import numpy as np
@@ -452,6 +452,63 @@ def add_dyr(psys, dyr_filename, verbose=False):
             if not found_match:
                 logger.warning(
                     "Cannot pair GENROU with bus %d and idx %s. Skipping.",
+                    int(device[0]),
+                    idx,
+                )
+
+        if 'GENSAL' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            idx = str(device[2]).strip().replace("'", "")
+
+            if hasattr(psys, 'inactive_gens') and (bus, idx) in psys.inactive_gens:
+                if verbose:
+                    logger.info(
+                        "Skipping GENSAL for inactive generator at bus %d, idx %s.",
+                        int(device[0]),
+                        idx,
+                    )
+                continue
+
+            T_d0p = float(device[3])
+            T_d0dp = float(device[4])
+            T_q0dp = float(device[5])
+            H = float(device[6])
+            D = float(device[7])
+            x_d = float(device[8])
+            x_q = float(device[9])
+            x_dp = float(device[10])
+            x_qp = x_dp
+            x_ddp = float(device[11])
+            xl = float(device[12])
+            S1 = float(device[13])
+            S2 = float(device[14])
+            T_q0p = T_d0p
+
+            found_match = False
+
+            for i in range(len(psys.gens)):
+                static_bus = psys.gens[i].bus
+                static_idx = (psys.gens[i].idx).strip().replace("'", "")
+
+                if static_bus == bus and static_idx.strip() == idx.strip():
+                    gen_dyn = GenGENSAL(
+                        idx, x_d, x_q, x_dp, x_ddp, xl, H, D,
+                        T_d0p, T_d0dp, T_q0dp, S1, S2,
+                    )
+                    psys.add_gen_dynamics(psys.gens[i], gen_dyn)
+                    found_match = True
+                    psys.gens[i].set_dynamic_true()
+                    if verbose:
+                        logger.info(
+                            "Adding GENSAL at bus %d. GENID %s.",
+                            int(device[0]),
+                            idx,
+                        )
+                    break
+
+            if not found_match:
+                logger.warning(
+                    "Cannot pair GENSAL with bus %d and idx %s. Skipping.",
                     int(device[0]),
                     idx,
                 )
