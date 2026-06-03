@@ -32,6 +32,7 @@ from uqgrid.core import Psystem
 from uqgrid.simulation.pflow import runpf, compute_pinj_alt, PowerFlowSolution
 from uqgrid.simulation.gradients import gradient_p, gradient_xp, gradient_pp
 from uqgrid.simulation.residual import residual_function
+from uqgrid.simulation.herk import integrate_system_herk
 from uqgrid.simulation.jacobian import residual_jacobian
 from uqgrid.utils.tools import (
     matprint,
@@ -1579,6 +1580,14 @@ def integrate_system(
     power_injection = config.power_injection
     solve_power_flow = config.solve_powerflow_dynamics
     arkimex = config.arkimex
+    method = config.method
+
+    if method == "beuler":
+        pass
+    elif method in {"herk2", "herk4"}:
+        return integrate_system_herk(psys, config, ctx)
+    else:
+        raise ValueError(f"Unknown integration method: {method}")
 
     # check for arkimex enabled
     if arkimex and petsc:

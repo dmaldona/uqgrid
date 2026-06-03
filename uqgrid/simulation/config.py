@@ -36,6 +36,9 @@ class IntegrationConfig(BaseModel):
             " must be treated as fast in the ARKIMEX fast/slow split."
         ),
     )
+    method: str = Field("beuler", description="Integrator method: beuler | herk2 | herk4.")
+    herk_alg_tol: float = Field(1e-10, gt=0.0, description="HERK stage algebraic tolerance.")
+    herk_alg_max_iter: int = Field(50, gt=0, description="HERK stage Newton max iterations.")
 
     @field_validator('tend', 'dt', 'ton', 'toff', mode='after')
     def positive_values(cls, v, info: Any):
