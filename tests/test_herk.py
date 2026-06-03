@@ -1,13 +1,7 @@
 import os
 
-os.environ.setdefault("MPLCONFIGDIR", "/tmp")
-
-import matplotlib
 import numpy as np
 import pytest
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 from uqgrid.io.parse import add_dyr, load_psse
 from uqgrid.simulation.config import IntegrationConfig
@@ -355,28 +349,6 @@ def _gen_angle_speed_indices(psys):
     return angle_idx + speed_idx
 
 
-def _save_ieee9_fault_plot(out_path, tvec, beuler, herk4, indices):
-    fig, axes = plt.subplots(2, 1, figsize=(8, 5), sharex=True)
-    ngen = len(indices) // 2
-    angle_idx = indices[:ngen]
-    speed_idx = indices[ngen:]
-
-    for k, idx in enumerate(angle_idx):
-        axes[0].plot(tvec, beuler[idx, :], color=f"C{k}", linewidth=1.0)
-        axes[0].plot(tvec, herk4[idx, :], color=f"C{k}", linewidth=0.8, linestyle="--")
-    axes[0].set_ylabel("delta")
-
-    for k, idx in enumerate(speed_idx):
-        axes[1].plot(tvec, beuler[idx, :], color=f"C{k}", linewidth=1.0)
-        axes[1].plot(tvec, herk4[idx, :], color=f"C{k}", linewidth=0.8, linestyle="--")
-    axes[1].set_ylabel("w")
-    axes[1].set_xlabel("time [s]")
-
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
-
-
 def test_fault_response_herk4_vs_beuler_ieee9(data_dir):
     psys_be, res_be = _run_ieee9_fault(data_dir, "beuler")
     psys_rk, res_rk = _run_ieee9_fault(data_dir, "herk4")
@@ -385,16 +357,6 @@ def test_fault_response_herk4_vs_beuler_ieee9(data_dir):
     indices = _gen_angle_speed_indices(psys_be)
     rk_indices = _gen_angle_speed_indices(psys_rk)
     assert indices == rk_indices
-
-    out_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "benchmarks",
-        "herk_vs_beuler_ieee9.png",
-    )
-    _save_ieee9_fault_plot(
-        out_path, res_be["tvec"], res_be["history"], res_rk["history"], indices
-    )
-    assert os.path.exists(out_path)
 
     ngen = len(indices) // 2
     diff = np.abs(res_be["history"][indices, :] - res_rk["history"][indices, :])
