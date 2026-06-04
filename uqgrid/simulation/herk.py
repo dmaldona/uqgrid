@@ -126,8 +126,9 @@ def herk_step(z_old, theta, h, psys, A, b, c, F, J, tol, max_iter):
 def integrate_system_herk(psys, config, ctx=None):
     """HERK driver mirroring the non-PETSc branch of ``integrate_system``.
 
-    Only the no-PETSc, no-sensitivity, no-Jacobian-check path is supported.
-    Fault on/off events are handled between steps via an algebraic resolve.
+    Only the no-PETSc, no-sensitivity, no-fsolve, no-ARKIMEX,
+    no-Jacobian-check path is supported. Fault on/off events are handled
+    between steps via an algebraic resolve.
     """
     import math
 
@@ -141,6 +142,15 @@ def integrate_system_herk(psys, config, ctx=None):
         raise ValueError("HERK driver does not support PETSc.")
     if config.comp_sens:
         raise ValueError("HERK driver does not support sensitivities.")
+    if config.fsolve:
+        raise ValueError(
+            "HERK driver does not support config.fsolve; it uses sparse "
+            "Newton solves for algebraic stages."
+        )
+    if config.arkimex:
+        raise ValueError("HERK driver does not support ARKIMEX.")
+    if config.check_jacobian:
+        raise ValueError("HERK driver does not support Jacobian checking.")
 
     method = config.method
     if method not in TABLEAUS:
