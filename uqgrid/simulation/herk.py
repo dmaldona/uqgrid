@@ -197,6 +197,10 @@ def integrate_system_herk(psys, config, ctx=None):
     alg_size = psys.num_dof_alg
 
     for i in range(nsteps):
+        if psys.signal_injectors:
+            t_now = i * h
+            for inj in psys.signal_injectors:
+                inj.update(t_now, theta, psys)
         z = herk_step(z, theta, h, psys, A, b, c, F, J, tol, max_iter)
         history[:, i] = z
 

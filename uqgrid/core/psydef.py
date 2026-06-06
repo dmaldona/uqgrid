@@ -399,6 +399,10 @@ class Psystem:
 
         self.fault_events = []
 
+        # OSL signal injectors (forced oscillations, colored noise).
+        # See uqgrid/osl/. Empty by default → zero-overhead in integrators.
+        self.signal_injectors = []
+
         # Dynamic devices
         self.gendyn = []
         self.static_gens = []
@@ -492,6 +496,9 @@ class Psystem:
 
     def add_busfault(self, bus, rfault):
         self.fault_events.append(BusFault(bus, rfault))
+
+    def add_signal_injector(self, injector):
+        self.signal_injectors.append(injector)
 
     def add_gen_dynamics(self, gen, gendynamics):
         assert isinstance(gen, Generator)
