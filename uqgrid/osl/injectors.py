@@ -207,6 +207,9 @@ class ColoredNoise(SignalInjector):
     _rng: np.random.Generator = field(default=None, init=False, repr=False)
     _load_p_idx: np.ndarray = field(default=None, init=False, repr=False)
     _load_q_idx: np.ndarray = field(default=None, init=False, repr=False)
+    _load_v0_idx: np.ndarray = field(default=None, init=False, repr=False)
+    _load_yr_idx: np.ndarray = field(default=None, init=False, repr=False)
+    _load_yi_idx: np.ndarray = field(default=None, init=False, repr=False)
     _theta0_p: np.ndarray = field(default=None, init=False, repr=False)
     _theta0_q: np.ndarray = field(default=None, init=False, repr=False)
     _lf_value_p: np.ndarray = field(default=None, init=False, repr=False)
@@ -219,6 +222,9 @@ class ColoredNoise(SignalInjector):
         nloads = len(psys.loads)
         self._load_p_idx = np.array([l.par_ptr + LOAD_PL_OFFSET for l in psys.loads], dtype=np.int64)
         self._load_q_idx = np.array([l.par_ptr + LOAD_QL_OFFSET for l in psys.loads], dtype=np.int64)
+        self._load_v0_idx = np.array([l.par_ptr + 4 for l in psys.loads], dtype=np.int64)
+        self._load_yr_idx = np.array([l.par_ptr + 5 for l in psys.loads], dtype=np.int64)
+        self._load_yi_idx = np.array([l.par_ptr + 6 for l in psys.loads], dtype=np.int64)
         self._lf_value_p = np.zeros(nloads)
         self._lf_value_q = np.zeros(nloads)
         self._lf_next_change = np.full(nloads, t)
@@ -251,3 +257,10 @@ class ColoredNoise(SignalInjector):
         if self.apply_to_q:
             hf_q = self._rng.uniform(-self.sigma_hf, self.sigma_hf, size=self._theta0_q.size) * scale_q
             theta[self._load_q_idx] = self._theta0_q + self._lf_value_q + hf_q
+
+        v0 = theta[self._load_v0_idx]
+        valid = v0 > 0.0
+        if np.any(valid):
+            inv_v02 = 1.0 / (v0[valid] * v0[valid])
+            theta[self._load_yr_idx[valid]] = theta[self._load_p_idx[valid]] * inv_v02
+            theta[self._load_yi_idx[valid]] = theta[self._load_q_idx[valid]] * inv_v02
