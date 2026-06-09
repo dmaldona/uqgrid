@@ -1,0 +1,22 @@
+{
+  "raw": "data/ACTIVSg200.raw",
+  "dyr": "data/ACTIVSg200.dyr",
+  "outdir": "outputs/osl_dataset/activsg200_small",
+  "tend": 8.0,
+  "dt": 0.004166666666666667,
+  "fo_start": 2.0,
+  "fo_buses": [49],
+  "freqs": [0.6, 0.8, 1.0],
+  "amplitudes": [0.1, 0.2],
+  "seed_start": 1000,
+  "limit": null,
+  "observed_buses": "all",
+  "pmu_rate_hz": 30.0,
+  "p_class_fraction": 0.7,
+  "missing_rate": 0.0,
+  "colored_noise": true,
+  "noise_sigma_lf": 0.002,
+  "noise_sigma_hf": 0.001,
+  "noise_tau_lf_range": [0.5, 5.0],
+  "overwrite": false
+}
