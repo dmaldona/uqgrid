@@ -61,9 +61,6 @@ def parse_args(argv: List[str]):
         print("Error: specify only one of --slow-diff or --fast-diff.")
         sys.exit(1)
 
-    if args.petsc and petsc_args:
-        sys.argv = [sys.argv[0]] + petsc_args
-
     try:
         config = IntegrationConfig(
             tend=args.tend,
@@ -74,6 +71,7 @@ def parse_args(argv: List[str]):
             power_injection=False,
             verbose=args.verbose,
             petsc=args.petsc,
+            petsc_args=petsc_args,
             arkimex=args.arkimex,
             arkimex_slow_differential=slow_list,
             arkimex_fast_differential=fast_list,
