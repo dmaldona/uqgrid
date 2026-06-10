@@ -39,10 +39,6 @@ def parse_args():
     # Parse only the script arguments
     args = parser.parse_args(script_args)
 
-    # If PETSc is enabled, add its arguments to sys.argv
-    if args.petsc and petsc_args:
-        sys.argv = [sys.argv[0]] + petsc_args
-    
     try:
         config = IntegrationConfig(
             tend=args.tend,
@@ -55,6 +51,7 @@ def parse_args():
             comp_sens=args.comp_sens,
             fsolve=args.fsolve,
             petsc=args.petsc,
+            petsc_args=petsc_args,
             arkimex=args.arkimex
         )
     except ValueError as e:

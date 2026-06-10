@@ -2,7 +2,6 @@ from __future__ import print_function
 
 import copy
 import math
-import sys
 from typing import Optional
 
 import numdifftools as nd
@@ -18,14 +17,36 @@ import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# Optional: PETSC4py
-try:
-    import petsc4py
-    petsc4py.init(sys.argv)
-    from petsc4py import PETSc
-except ImportError:
-    petsc4py = None
-    logger.warning("PETSc4py not available. Some functionality will not be available.")
+# Optional PETSc bindings are initialized lazily from IntegrationConfig.petsc_args.
+petsc4py = None
+PETSc = None
+
+
+def _initialize_petsc(petsc_args=None):
+    global petsc4py, PETSc
+    if PETSc is not None:
+        return PETSc
+
+    try:
+        import petsc4py as _petsc4py
+    except ImportError as exc:
+        raise ImportError(
+            "PETSc integration requires petsc4py. Install UQGrid with the "
+            "'petsc' extra or set petsc=False."
+        ) from exc
+
+    _petsc4py.init(list(petsc_args or []))
+    from petsc4py import PETSc as _PETSc
+
+    petsc4py = _petsc4py
+    PETSc = _PETSc
+    return PETSc
+
+
+def _get_petsc_for_config(config):
+    if not config.petsc:
+        return None
+    return _initialize_petsc(config.petsc_args)
 
 from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 from uqgrid.core import Psystem
@@ -1109,10 +1130,8 @@ def preallocate_hessian(psys):
 
     return Hsparse
 
-if petsc4py:
-    class DAE_petsc(object):
+class DAE_petsc(object):
         n = 1
-        comm = PETSc.COMM_SELF
         def __init__(self, psys, theta, J, tfon, tfoff):
             self.psys = psys
             self.theta = theta
@@ -1365,9 +1384,8 @@ if petsc4py:
                 Jfast.assemble()
             return True
 
-    class ALG_petsc(object):
+class ALG_petsc(object):
         n = 1
-        comm = PETSc.COMM_SELF
         def __init__(self, psys, theta, J):
             self.psys = psys
             self.theta = theta
@@ -1398,9 +1416,8 @@ if petsc4py:
             if J != P: J.assemble()
             return True
 
-    class ADJ_petsc(object):
+class ADJ_petsc(object):
         n = 1
-        comm = PETSc.COMM_SELF
         def __init__(self, psys, theta):
             self.psys = psys
             self.theta = theta
@@ -1679,7 +1696,9 @@ def integrate_system(
     if comp_sens and not petsc:
         raise ValueError("Sensitivities can only be computed with PETSc.")
 
-    if petsc4py and petsc:
+    PETSc = _get_petsc_for_config(config)
+
+    if PETSc is not None:
         if verbose:
             logger.info("Convert objects to PETSc format")
         nsize = jacobian.shape[0]
