@@ -1890,6 +1890,10 @@ def integrate_system(
         for i in range(nsteps):
             if verbose:
                 logger.info("Step: %i. Time: %g (sec)", i, i * h)
+            if psys.signal_injectors:
+                t_now = i * h
+                for inj in psys.signal_injectors:
+                    inj.update(t_now, theta, psys)
             z, u, v, m = integrate(z,
                                 theta,
                                 h,
