@@ -21,6 +21,9 @@ script.
 Most MCP clients need a JSON entry that tells them how to start the server. Use
 absolute paths to the Python environment that has UQGrid installed.
 
+Stdio remains the recommended local setup for MCP clients that can launch local
+servers.
+
 ```json
 {
   "mcpServers": {
@@ -47,6 +50,35 @@ If the console script is available, this is equivalent:
 
 The current server runs over stdio, so it is meant to be launched by the MCP
 client as a local process.
+
+## Streamable HTTP
+
+The server can also run as a local Streamable HTTP MCP server:
+
+```bash
+uqgrid-mcp --transport streamable-http
+```
+
+This binds to localhost by default and serves MCP at:
+
+```text
+http://127.0.0.1:8000/mcp
+```
+
+The equivalent explicit command is:
+
+```bash
+uqgrid-mcp \
+  --transport streamable-http \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --mcp-path /mcp
+```
+
+HTTP-capable MCP clients should connect to the endpoint URL above instead of
+launching the server over stdio. Keep the server bound to `127.0.0.1` for local
+use. Do not bind to `0.0.0.0` unless you are deliberately deploying it with an
+authentication and origin policy.
 
 ## Tools
 
@@ -114,6 +146,8 @@ In the Inspector, connect to the server, open the tools tab, run
 If a client cannot connect:
 
 - Confirm `python -m uqgrid_mcp.server` starts without import errors.
+- For HTTP, confirm `uqgrid-mcp --transport streamable-http` starts and the
+  client points at `http://127.0.0.1:8000/mcp`.
 - Confirm the client config uses absolute paths.
 - Check the MCP client's server logs.
 - Reinstall with `python -m pip install -e '.[mcp]'` if the MCP SDK is missing.

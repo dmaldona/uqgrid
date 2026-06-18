@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import argparse
+from typing import Any, Dict, List, Optional, Sequence
 
 from .tools import (
     generate_osl_dataset_tool,
@@ -19,7 +20,42 @@ else:
     _MCP_IMPORT_ERROR = None
 
 
-def create_server():
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    """Parse command-line options for the UQGrid MCP server."""
+
+    parser = argparse.ArgumentParser(description="Run the UQGrid MCP server.")
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "streamable-http"),
+        default="stdio",
+        help="MCP transport to use. Defaults to stdio.",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host for streamable HTTP transport. Defaults to 127.0.0.1.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for streamable HTTP transport. Defaults to 8000.",
+    )
+    parser.add_argument(
+        "--mcp-path",
+        default="/mcp",
+        help="Path for streamable HTTP MCP endpoint. Defaults to /mcp.",
+    )
+    return parser.parse_args(argv)
+
+
+def create_server(
+    *,
+    transport: str = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    mcp_path: str = "/mcp",
+):
     """Create the UQGrid MCP server."""
 
     if FastMCP is None:
@@ -28,7 +64,15 @@ def create_server():
             "for example: pip install -e '.[mcp]'"
         ) from _MCP_IMPORT_ERROR
 
-    server = FastMCP("uqgrid")
+    use_http = transport == "streamable-http"
+    server = FastMCP(
+        "uqgrid",
+        host=host,
+        port=port,
+        streamable_http_path=mcp_path,
+        stateless_http=use_http,
+        json_response=use_http,
+    )
 
     @server.tool()
     def get_uqgrid_info() -> Dict[str, Any]:
@@ -98,10 +142,17 @@ def create_server():
     return server
 
 
-def main() -> None:
-    """Run the UQGrid MCP server over stdio."""
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    """Run the UQGrid MCP server."""
 
-    create_server().run(transport="stdio")
+    args = parse_args(argv)
+    server = create_server(
+        transport=args.transport,
+        host=args.host,
+        port=args.port,
+        mcp_path=args.mcp_path,
+    )
+    server.run(transport=args.transport)
 
 
 if __name__ == "__main__":
