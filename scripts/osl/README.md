@@ -21,10 +21,14 @@ governor forced oscillations at PSSE bus 49, and sweeps:
 - colored load noise: enabled
 - PMU buses: all buses, for stable channel order across cases
 
-The same defaults can still be run without a config:
+Without a config, pass the RAW/DYR paths explicitly:
 
 ```bash
-python scripts/osl/generate_dataset.py --outdir outputs/osl_dataset --tend 8.0
+python scripts/osl/generate_dataset.py \
+  --raw data/ACTIVSg200.raw \
+  --dyr data/ACTIVSg200.dyr \
+  --outdir outputs/osl_dataset \
+  --tend 8.0
 ```
 
 For a quick smoke run:

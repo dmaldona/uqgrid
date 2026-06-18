@@ -17,6 +17,7 @@ electrical power systems.
 
 Get started with the [installation and quick start guide](getting-started.md),
 learn how to configure simulations in the [user guide](user-guide/dynamics-simulation.md),
+connect tool clients with the [MCP server guide](mcp.md),
 or dive into implementation details in the
 [developer guide](developer-guide/contributing.md).
 

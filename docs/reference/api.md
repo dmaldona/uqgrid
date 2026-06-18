@@ -52,6 +52,22 @@ from uqgrid.simulation.pflow import runpf
   voltages and injections before dynamics.
 - `compute_pinj_alt`: Alternative formulation for power-injection Jacobians.
 
+## `uqgrid.api.osl`
+
+```python
+from uqgrid.api.osl import OSLDatasetConfig, generate_osl_dataset
+```
+
+- `OSLDatasetConfig`: Stable configuration object for OSL-style PMU dataset
+  generation.
+- `generate_osl_dataset(config) -> OSLDatasetResult`: Generate paired `.npz` /
+  `.json` cases and a `manifest.jsonl` without depending on CLI scripts.
+- `inspect_osl_dataset(outdir) -> OSLDatasetInspection`: Read manifest-level
+  metadata without loading dense case arrays.
+
+`scripts/osl/generate_dataset.py` is a CLI wrapper around this API.
+RAW and DYR paths must be supplied by the JSON config or explicit overrides.
+
 ## `uqgrid.core.psydef`
 
 The heart of system modeling, including:
