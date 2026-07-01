@@ -9,9 +9,11 @@ The simulation pipeline generates perturbed operating scenarios for power grid m
 
 ```
 scripts/run/
-├── generate_scenarios.py    # Main scenario generation and simulation
-├── monitor.py               # Real-time simulation progress monitoring
-├── recovery_tool.py         # Recovery utilities for failed scenarios
+├── generate_scenarios.py              # Main scenario generation and simulation
+├── generate_scenarios_acopf_init.py   # ACOPF-initialized ProbML generation
+├── README_acopf_init.md               # ACOPF generator setup and commands
+├── monitor.py                         # Real-time simulation progress monitoring
+├── recovery_tool.py                   # Recovery utilities for failed scenarios
 └── config/                  # Configuration files
     ├── config_IEEE-9.json
     ├── config_IEEE-9_stress.json
@@ -77,6 +79,15 @@ python generate_scenarios.py config/config_IEEE-9.json --continue --additional-s
 - `scenario_diagnostics.jsonl` - Per-scenario operating-point diagnostics when stress/PF screening is active; name is configurable
 - `scenario_diagnostics_summary.json` - Compact summary of diagnostics and rejection reasons; name is configurable
 - `simulation_checkpoint.json` - Temporary checkpoint for interrupted fixed-grid runs; removed after successful completion
+
+---
+
+### generate_scenarios_acopf_init.py
+
+ACOPF-initialized scenario generator for ProbML final/min TSI datasets. It is
+separate from `generate_scenarios.py` and runs ExaJuGO only through the new
+script. See [README_acopf_init.md](README_acopf_init.md) for setup, smoke,
+production, restart, status, and output-shape details.
 
 ---
 
