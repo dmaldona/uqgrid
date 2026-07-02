@@ -21,6 +21,7 @@ import time
 import traceback
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -3241,15 +3242,44 @@ def _delete_case_dir(case_dir: Any) -> None:
         shutil.rmtree(path)
 
 
-def _print_production_progress(progress: Mapping[str, Any]) -> None:
+def _print_production_progress(
+    progress: Mapping[str, Any],
+    *,
+    start_time: float | None = None,
+    start_accepted_count: int = 0,
+) -> None:
+    elapsed = 0.0 if start_time is None else max(0.0, time.time() - float(start_time))
+    accepted = int(progress["accepted_count"])
+    target = int(progress["target_accepted_scenarios"])
+    attempts = int(progress["total_candidate_attempts"])
+    accepted_this_run = max(0, accepted - int(start_accepted_count))
+    completion = accepted / target if target else 1.0
+    acceptance_rate = accepted / attempts if attempts else 0.0
+    accepted_per_hour = accepted_this_run / elapsed * 3600.0 if elapsed > 0.0 else 0.0
+    if accepted_this_run > 0 and accepted < target:
+        eta = elapsed * (target - accepted) / accepted_this_run
+    else:
+        eta = 0.0
+    source_counts = progress.get("initialization_source_counts") or {}
+    source_text = ", ".join(
+        f"{key}={int(value)}" for key, value in sorted(source_counts.items())
+    )
+    if not source_text:
+        source_text = "none"
     print(
         "ACOPF production | "
-        f"accepted OPs {progress['accepted_count']}/{progress['target_accepted_scenarios']} | "
+        f"accepted OPs {accepted}/{target} ({completion:.1%}) | "
         f"candidate attempts {progress['total_candidate_attempts']}/"
         f"{progress['max_total_attempts']} | "
+        f"OP acceptance/attempt {acceptance_rate:.1%} | "
+        f"accepted OP rate {accepted_per_hour:.2f}/hr | "
         f"fault rows {progress['fault_rows_completed']} | "
+        f"diagnostics {progress['diagnostic_records']} | "
+        f"sources {source_text} | "
         f"next sample {progress['next_sample_idx']} | "
-        f"last: {progress.get('reject_reason') or 'accepted'}"
+        f"last: {progress.get('reject_reason') or 'accepted'} | "
+        f"elapsed {timedelta(seconds=int(elapsed))} | "
+        f"ETA {timedelta(seconds=int(eta))}"
     )
 
 
@@ -3364,6 +3394,8 @@ def run_acopf_production(
     latest_probml_outputs = None
     last_sample_idx = sample_idx - 1 if accepted_count else None
     last_reject_reason = None
+    progress_start_time = time.time()
+    progress_start_accepted_count = accepted_count
 
     raw_path = _resolve_model_path(
         model_cfg["raw"],
@@ -3494,7 +3526,11 @@ def run_acopf_production(
                 scenario_metadata=scenario_metadata,
                 simulation_log=simulation_log,
             )
-            _print_production_progress(progress)
+            _print_production_progress(
+                progress,
+                start_time=progress_start_time,
+                start_accepted_count=progress_start_accepted_count,
+            )
             continue
 
         tasks = build_fault_replay_tasks(
@@ -3625,7 +3661,11 @@ def run_acopf_production(
                 scenario_metadata=scenario_metadata,
                 simulation_log=simulation_log,
             )
-            _print_production_progress(progress)
+            _print_production_progress(
+                progress,
+                start_time=progress_start_time,
+                start_accepted_count=progress_start_accepted_count,
+            )
             continue
 
         if context_source == "acopf":
@@ -3718,7 +3758,11 @@ def run_acopf_production(
         sample_idx = next_sample_idx
         if context_source == "acopf" and not keep_intermediate_acopf_cases:
             _delete_case_dir(context.get("case_dir"))
-        _print_production_progress(progress)
+        _print_production_progress(
+            progress,
+            start_time=progress_start_time,
+            start_accepted_count=progress_start_accepted_count,
+        )
         gc.collect()
 
     final_progress = _production_progress(
