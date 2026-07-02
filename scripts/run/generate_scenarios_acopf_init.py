@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""ACOPF-initialized UQGrid scenario generation.
+"""ACOPF/UQGrid-initialized scenario generation.
 
 This script keeps the original generator independent of ExaJuGO while adding
-ACOPF smoke, replay smoke, and production ProbML final/min dataset modes.
+ACOPF smoke, replay smoke, and mixed-source production ProbML dataset modes.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gc
+import importlib
 import importlib.util
 import json
 import os
@@ -366,6 +367,15 @@ def build_acopf_probml_x(parsed: ParsedExaJuGOBasecase, base_mva: float) -> np.n
     return np.stack([np.concatenate([pg, pl]), np.concatenate([qg, ql])], axis=0)
 
 
+def build_uqgrid_probml_x(operating_point: Mapping[str, Any]) -> np.ndarray:
+    """Build one ProbML input row from a PF-screened UQGrid operating point."""
+    pg = np.asarray(operating_point["p_gen_scaled"], dtype=float).reshape(-1)
+    qg = np.asarray(operating_point["q_gen_scaled"], dtype=float).reshape(-1)
+    pl = np.asarray(operating_point["p_load_scaled"], dtype=float).reshape(-1)
+    ql = np.asarray(operating_point["q_load_scaled"], dtype=float).reshape(-1)
+    return np.stack([np.concatenate([pg, pl]), np.concatenate([qg, ql])], axis=0)
+
+
 def _probml_meta(n_gen: int, n_load: int, tsi_mode: str) -> dict[str, Any]:
     if tsi_mode not in {"final", "min"}:
         raise ValueError("tsi_mode must be 'final' or 'min'")
@@ -412,6 +422,8 @@ def _validate_probml_shapes(
     fault_locations: np.ndarray,
     fault_impedances: np.ndarray,
     scenario_ids: np.ndarray,
+    initialization_source: np.ndarray | None = None,
+    acopf_feasible: np.ndarray | None = None,
 ) -> None:
     if X.ndim != 3 or X.shape[1] != 2:
         raise ValueError(f"X must have shape (N, 2, units), got {X.shape}")
@@ -424,6 +436,61 @@ def _validate_probml_shapes(
         raise ValueError(f"scenario_ids shape must match Y shape; got {scenario_ids.shape}")
     if sample_idx.shape != (X.shape[0],):
         raise ValueError(f"sample_idx must have shape (N,), got {sample_idx.shape}")
+    if initialization_source is not None and initialization_source.shape != (X.shape[0],):
+        raise ValueError(
+            "initialization_source must have shape "
+            f"({X.shape[0]},), got {initialization_source.shape}"
+        )
+    if acopf_feasible is not None and acopf_feasible.shape != (X.shape[0],):
+        raise ValueError(
+            f"acopf_feasible must have shape ({X.shape[0]},), got {acopf_feasible.shape}"
+        )
+
+
+def _existing_row_labels(existing: Mapping[str, Any], row_count: int) -> tuple[np.ndarray, np.ndarray]:
+    if "initialization_source" in existing:
+        source = np.asarray(existing["initialization_source"], dtype=object)
+        if source.shape != (row_count,):
+            raise ValueError(
+                "Existing initialization_source row count does not match X/Y rows"
+            )
+    else:
+        source = np.full(row_count, "acopf", dtype=object)
+
+    if "acopf_feasible" in existing:
+        feasible = np.asarray(existing["acopf_feasible"], dtype=bool)
+        if feasible.shape != (row_count,):
+            raise ValueError("Existing acopf_feasible row count does not match X/Y rows")
+    else:
+        feasible = np.ones(row_count, dtype=bool)
+
+    return source, feasible
+
+
+def parse_probability(value: Any, *, default: float = 1.0) -> float:
+    if value is None:
+        prob = float(default)
+    else:
+        prob = float(value)
+    if prob < 0.0 or prob > 1.0:
+        raise ValueError("acopf_probability must be between 0 and 1")
+    return prob
+
+
+def select_initialization_source(
+    sample_idx: int,
+    *,
+    acopf_probability: float,
+    source_seed: int = 1234,
+) -> str:
+    probability = parse_probability(acopf_probability)
+    if probability <= 0.0:
+        return "uqgrid_pf"
+    if probability >= 1.0:
+        return "acopf"
+    seed = np.random.SeedSequence([int(source_seed), int(sample_idx)])
+    rng = np.random.default_rng(seed)
+    return "acopf" if float(rng.random()) < probability else "uqgrid_pf"
 
 
 def append_probml_dataset_row(
@@ -438,6 +505,8 @@ def append_probml_dataset_row(
     n_gen: int,
     n_load: int,
     tsi_mode: str,
+    initialization_source: str = "acopf",
+    acopf_feasible: bool = True,
 ) -> dict[str, Any]:
     """Append one accepted operating-point row to a ProbML NPZ dataset."""
     out_path = Path(out_path)
@@ -474,6 +543,11 @@ def append_probml_dataset_row(
         missing = required.difference(existing)
         if missing:
             raise ValueError(f"Existing NPZ is missing keys: {sorted(missing)}")
+        if existing["X"].shape[2] != X_new.shape[1]:
+            raise ValueError(
+                "Existing NPZ feature width does not match requested append: "
+                f"{existing['X'].shape[2]} != {X_new.shape[1]}"
+            )
         if not np.array_equal(existing["fault_locations"], fault_locations_arr):
             raise ValueError("Existing fault_locations do not match requested append")
         if not np.allclose(existing["fault_impedances"], fault_impedances_arr):
@@ -486,11 +560,20 @@ def append_probml_dataset_row(
         scenario_ids = np.concatenate(
             [existing["scenario_ids"], scenario_ids_new[np.newaxis, :, :]], axis=0
         )
+        existing_source, existing_feasible = _existing_row_labels(existing, existing["X"].shape[0])
+        initialization_source_arr = np.concatenate(
+            [existing_source, np.asarray([str(initialization_source)], dtype=object)]
+        )
+        acopf_feasible_arr = np.concatenate(
+            [existing_feasible, np.asarray([bool(acopf_feasible)], dtype=bool)]
+        )
     else:
         X = X_new[np.newaxis, :, :]
         Y = Y_new[np.newaxis, :, :]
         sample_idx_arr = np.asarray([sample_idx], dtype=np.int64)
         scenario_ids = scenario_ids_new[np.newaxis, :, :]
+        initialization_source_arr = np.asarray([str(initialization_source)], dtype=object)
+        acopf_feasible_arr = np.asarray([bool(acopf_feasible)], dtype=bool)
 
     _validate_probml_shapes(
         X,
@@ -499,6 +582,8 @@ def append_probml_dataset_row(
         fault_locations_arr,
         fault_impedances_arr,
         scenario_ids,
+        initialization_source_arr,
+        acopf_feasible_arr,
     )
     payload = {
         "X": X,
@@ -508,6 +593,8 @@ def append_probml_dataset_row(
         "fault_locations": fault_locations_arr,
         "fault_impedances": fault_impedances_arr,
         "scenario_ids": scenario_ids,
+        "initialization_source": initialization_source_arr,
+        "acopf_feasible": acopf_feasible_arr,
         "meta": np.asarray([_probml_meta(n_gen, n_load, tsi_mode)], dtype=object),
     }
     _atomic_save_npz(out_path, payload)
@@ -540,6 +627,14 @@ def validate_probml_resume_pair(
     if not np.allclose(final["fault_impedances"], min_data["fault_impedances"]):
         raise ValueError("final/min NPZ fault_impedances disagree")
 
+    for optional_key in ["initialization_source", "acopf_feasible"]:
+        final_has = optional_key in final
+        min_has = optional_key in min_data
+        if final_has != min_has:
+            raise ValueError(f"final/min NPZ key {optional_key!r} disagrees")
+        if final_has and not np.array_equal(final[optional_key], min_data[optional_key]):
+            raise ValueError(f"final/min NPZ key {optional_key!r} disagrees")
+
     accepted_count = int(final["Y"].shape[0])
     sample_idx = np.asarray(final["sample_idx"], dtype=np.int64)
     next_sample_idx = int(np.max(sample_idx) + 1) if sample_idx.size else 0
@@ -549,10 +644,12 @@ def validate_probml_resume_pair(
 @dataclass(frozen=True)
 class AcopfInitializationConfig:
     julia: str
-    exajugo_root: Path
-    base_raw: Path
-    base_rop: Path
+    exajugo_root: Path | None
+    base_raw: Path | None
+    base_rop: Path | None
     acopf_timeout_s: float = 300.0
+    acopf_probability: float = 1.0
+    source_seed: int = 1234
 
 
 @dataclass(frozen=True)
@@ -565,6 +662,26 @@ class FaultReplayTask:
     fault_location_index: int
     fault_impedance_index: int
     scenario_id: str
+
+
+@dataclass(frozen=True)
+class PreflightCheck:
+    label: str
+    status: str
+    message: str
+    fix: str | None = None
+
+
+def _preflight_ok(label: str, message: str) -> PreflightCheck:
+    return PreflightCheck(label=label, status="ok", message=message)
+
+
+def _preflight_skip(label: str, message: str) -> PreflightCheck:
+    return PreflightCheck(label=label, status="skip", message=message)
+
+
+def _preflight_fail(label: str, message: str, fix: str) -> PreflightCheck:
+    return PreflightCheck(label=label, status="fail", message=message, fix=fix)
 
 
 def _json_safe(value: Any) -> Any:
@@ -647,6 +764,8 @@ def resolve_acopf_initialization_config(
     args: Any,
     config: Mapping[str, Any],
     env: Mapping[str, str] | None = None,
+    *,
+    require_paths: bool = True,
 ) -> AcopfInitializationConfig:
     """Resolve ACOPF paths from CLI, config, then environment variables."""
     env = env if env is not None else os.environ
@@ -693,6 +812,22 @@ def resolve_acopf_initialization_config(
         config_name="acopf_timeout_s",
         default=300.0,
     )
+    acopf_probability = _pick_setting(
+        args,
+        section,
+        env,
+        arg_name="acopf_probability",
+        config_name="acopf_probability",
+        default=1.0,
+    )
+    source_seed = _pick_setting(
+        args,
+        section,
+        env,
+        arg_name="source_seed",
+        config_name="source_seed",
+        default=1234,
+    )
 
     missing = [
         name
@@ -703,7 +838,7 @@ def resolve_acopf_initialization_config(
         }.items()
         if value is None
     ]
-    if missing:
+    if missing and require_paths:
         raise ValueError(
             "Missing ACOPF path setting(s): "
             + ", ".join(missing)
@@ -712,10 +847,12 @@ def resolve_acopf_initialization_config(
 
     return AcopfInitializationConfig(
         julia=str(julia),
-        exajugo_root=Path(exajugo_root).expanduser(),
-        base_raw=Path(base_raw).expanduser(),
-        base_rop=Path(base_rop).expanduser(),
+        exajugo_root=None if exajugo_root is None else Path(exajugo_root).expanduser(),
+        base_raw=None if base_raw is None else Path(base_raw).expanduser(),
+        base_rop=None if base_rop is None else Path(base_rop).expanduser(),
         acopf_timeout_s=float(timeout),
+        acopf_probability=parse_probability(acopf_probability),
+        source_seed=int(source_seed),
     )
 
 
@@ -767,6 +904,261 @@ def _resolve_model_path(
             return candidate.resolve()
     checked = ", ".join(str(candidate) for candidate in candidates)
     raise FileNotFoundError(f"Could not resolve model path {value!r}; checked: {checked}")
+
+
+def _preflight_path_check(
+    label: str,
+    path: str | Path | None,
+    *,
+    kind: str = "file",
+    fix: str,
+) -> PreflightCheck:
+    if path is None or str(path) == "":
+        return _preflight_fail(label, "missing", fix)
+    expanded = Path(path).expanduser()
+    if kind == "dir":
+        if expanded.is_dir():
+            return _preflight_ok(label, str(expanded.resolve()))
+        return _preflight_fail(label, f"missing directory: {expanded}", fix)
+    if expanded.is_file():
+        return _preflight_ok(label, str(expanded.resolve()))
+    return _preflight_fail(label, f"missing file: {expanded}", fix)
+
+
+def _preflight_executable_check(
+    label: str,
+    executable: str | None,
+    *,
+    which_func: Callable[[str], str | None] = shutil.which,
+    fix: str,
+) -> PreflightCheck:
+    if executable is None or str(executable).strip() == "":
+        return _preflight_fail(label, "missing", fix)
+    executable_text = str(executable)
+    executable_path = Path(executable_text).expanduser()
+    path_like = executable_path.is_absolute() or os.sep in executable_text
+    if os.altsep:
+        path_like = path_like or os.altsep in executable_text
+    if path_like:
+        if executable_path.is_file() and os.access(executable_path, os.X_OK):
+            return _preflight_ok(label, str(executable_path.resolve()))
+        if executable_path.exists():
+            return _preflight_fail(label, f"not executable: {executable_path}", fix)
+        return _preflight_fail(label, f"missing executable: {executable_path}", fix)
+
+    resolved = which_func(executable_text)
+    if resolved:
+        return _preflight_ok(label, resolved)
+    return _preflight_fail(label, f"not found on PATH: {executable_text}", fix)
+
+
+def _preflight_import_check(
+    label: str,
+    module_name: str,
+    *,
+    import_func: Callable[[str], Any] = importlib.import_module,
+    import_module: bool = True,
+    fix: str,
+) -> PreflightCheck:
+    if not import_module:
+        try:
+            spec = importlib.util.find_spec(module_name)
+        except Exception as exc:
+            return _preflight_fail(label, f"module lookup failed: {type(exc).__name__}: {exc}", fix)
+        if spec is None:
+            return _preflight_fail(label, "module not found", fix)
+        return _preflight_ok(label, "available")
+
+    try:
+        module = import_func(module_name)
+    except Exception as exc:
+        return _preflight_fail(label, f"import failed: {type(exc).__name__}: {exc}", fix)
+    version = getattr(module, "__version__", None)
+    message = "available" if version is None else f"available ({version})"
+    return _preflight_ok(label, message)
+
+
+def _preflight_model_path_check(
+    label: str,
+    config: Mapping[str, Any],
+    key: str,
+    *,
+    config_path: str | Path,
+    uqgrid_root: str | Path | None,
+) -> PreflightCheck:
+    model_cfg = config.get("model", {}) or {}
+    value = model_cfg.get(key)
+    fix = (
+        f"Set model.{key} to an existing file, pass --uqgrid-root, "
+        "or set UQGRID_ROOT so relative model paths can be resolved."
+    )
+    if value is None or str(value) == "":
+        return _preflight_fail(label, f"missing config model.{key}", fix)
+    try:
+        resolved = _resolve_model_path(value, config_path=config_path, uqgrid_root=uqgrid_root)
+    except Exception as exc:
+        return _preflight_fail(label, str(exc), fix)
+    return _preflight_ok(label, str(resolved))
+
+
+def collect_startup_preflight_checks(
+    *,
+    config_path: str | Path,
+    config: Mapping[str, Any],
+    args: Any,
+    acopf_config: AcopfInitializationConfig,
+    require_acopf_paths: bool,
+    dynamic_replay: bool,
+    import_func: Callable[[str], Any] = importlib.import_module,
+    which_func: Callable[[str], str | None] = shutil.which,
+) -> list[PreflightCheck]:
+    """Collect lightweight startup checks without running PF, ACOPF, or replay."""
+    checks: list[PreflightCheck] = [
+        _preflight_ok("Config JSON", str(Path(config_path).expanduser()))
+    ]
+
+    checks.append(
+        _preflight_model_path_check(
+            "UQGrid RAW",
+            config,
+            "raw",
+            config_path=config_path,
+            uqgrid_root=_get_optional_attr(args, "uqgrid_root"),
+        )
+    )
+    checks.append(
+        _preflight_model_path_check(
+            "UQGrid DYR",
+            config,
+            "dyr",
+            config_path=config_path,
+            uqgrid_root=_get_optional_attr(args, "uqgrid_root"),
+        )
+    )
+    checks.append(
+        _preflight_path_check(
+            "generate_scenarios.py",
+            Path(__file__).resolve().with_name("generate_scenarios.py"),
+            fix="Keep generate_scenarios.py next to generate_scenarios_acopf_init.py.",
+        )
+    )
+
+    checks.extend(
+        [
+            _preflight_import_check(
+                "Python numpy",
+                "numpy",
+                import_func=import_func,
+                fix="Install the UQGrid Python environment dependencies.",
+            ),
+            _preflight_import_check(
+                "Python joblib",
+                "joblib",
+                import_func=import_func,
+                fix="Install the UQGrid Python environment dependencies.",
+            ),
+            _preflight_import_check(
+                "Python uqgrid",
+                "uqgrid",
+                import_func=import_func,
+                import_module=False,
+                fix="Install UQGrid in the active Python environment.",
+            ),
+        ]
+    )
+
+    integration_cfg = _integration_config_from_config(config)
+    if not dynamic_replay:
+        checks.append(_preflight_skip("PETSc", "skipped because this mode does not run dynamic replay"))
+    elif not bool(integration_cfg.get("petsc", True)):
+        checks.append(_preflight_skip("PETSc", "skipped because integration.petsc=false"))
+    else:
+        checks.append(
+            _preflight_import_check(
+                "PETSc petsc4py",
+                "petsc4py",
+                import_func=import_func,
+                fix="Install UQGrid with the petsc extra, install petsc4py, or set integration.petsc=false.",
+            )
+        )
+
+    if not require_acopf_paths:
+        checks.append(
+            _preflight_skip(
+                "ExaJuGO",
+                "skipped because ACOPF initialization is disabled for this run",
+            )
+        )
+        return checks
+
+    checks.append(
+        _preflight_executable_check(
+            "Julia executable",
+            acopf_config.julia,
+            which_func=which_func,
+            fix="Provide --julia, acopf_initialization.julia, JULIA, or put julia on PATH.",
+        )
+    )
+    checks.append(
+        _preflight_path_check(
+            "ExaJuGO root",
+            acopf_config.exajugo_root,
+            kind="dir",
+            fix="Provide --exajugo-root, acopf_initialization.exajugo_root, or EXAJUGO_ROOT.",
+        )
+    )
+    exajugo_root = acopf_config.exajugo_root
+    checks.append(
+        _preflight_path_check(
+            "ExaJuGO ACOPF.jl",
+            None if exajugo_root is None else exajugo_root / "ACOPF.jl",
+            fix="Point ExaJuGO root at a checkout containing ACOPF.jl.",
+        )
+    )
+    checks.append(
+        _preflight_path_check(
+            "ExaJuGO Project.toml",
+            None if exajugo_root is None else exajugo_root / "Project.toml",
+            fix="Point ExaJuGO root at a valid Julia project checkout.",
+        )
+    )
+    checks.append(
+        _preflight_path_check(
+            "ExaJuGO base RAW",
+            acopf_config.base_raw,
+            fix="Provide --exajugo-base-raw, acopf_initialization.base_raw, or EXAJUGO_BASE_RAW.",
+        )
+    )
+    checks.append(
+        _preflight_path_check(
+            "ExaJuGO base ROP",
+            acopf_config.base_rop,
+            fix="Provide --exajugo-base-rop, acopf_initialization.base_rop, or EXAJUGO_BASE_ROP.",
+        )
+    )
+    return checks
+
+
+def _preflight_failures(checks: Sequence[PreflightCheck]) -> list[PreflightCheck]:
+    return [check for check in checks if check.status == "fail"]
+
+
+def _emit_preflight_report(
+    checks: Sequence[PreflightCheck],
+    *,
+    stream: Any | None = None,
+) -> None:
+    stream = sys.stderr if stream is None else stream
+    print("Startup preflight:", file=stream)
+    for check in checks:
+        prefix = {"ok": "\u2713", "skip": "-", "fail": "\u2717"}.get(check.status, "?")
+        print(f"{prefix} {check.label}: {check.message}", file=stream)
+    failures = _preflight_failures(checks)
+    if failures:
+        print("Preflight failed. Fix the failed checks above and rerun.", file=stream)
+        for failure in failures:
+            if failure.fix:
+                print(f"- {failure.label}: {failure.fix}", file=stream)
 
 
 def _load_generate_scenarios_module() -> Any:
@@ -929,6 +1321,8 @@ def replay_acopf_fault_task(
         "sample_idx": int(task.sample_idx),
         "operating_point_id": task.operating_point_id,
         "accepted_operating_point_index": int(task.accepted_operating_point_index),
+        "initialization_source": str(context.get("initialization_source", "acopf")),
+        "acopf_feasible": bool(context.get("acopf_feasible", True)),
         "fault_location": int(task.fault_location),
         "fault_impedance": float(task.fault_impedance),
         "fault_location_index": int(task.fault_location_index),
@@ -1006,6 +1400,136 @@ def replay_acopf_fault_task(
                 "adjusted_shunts": int(apply_summary["adjusted_shunts"]),
                 "num_loads": int(apply_summary["num_loads"]),
                 "num_generators": int(apply_summary["num_generators"]),
+            }
+        )
+        return record
+    except Exception as exc:
+        if context.get("debug_tracebacks", False):
+            traceback.print_exc()
+        record.update(
+            {
+                "success": False,
+                "accepted": False,
+                "reject_reason": "dynamic_fault_failed",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "simulation_diverged": True,
+                "file": None,
+            }
+        )
+        return record
+    finally:
+        tvec = None
+        history = None
+        sim = None
+        if psys is not None:
+            del psys
+        gc.collect()
+
+
+def replay_uqgrid_fault_task(
+    task: FaultReplayTask,
+    context: Mapping[str, Any],
+    *,
+    load_psse_func: Callable[..., Any] | None = None,
+    add_dyr_func: Callable[..., Any] | None = None,
+    integration_config_cls: Callable[..., Any] | None = None,
+    integrate_system_func: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Run one dynamic fault replay task from a PF-screened UQGrid operating point."""
+    psys = None
+    sim = None
+    history = None
+    tvec = None
+    record = {
+        "record_type": "fault_scenario",
+        "scenario_id": task.scenario_id,
+        "sample_idx": int(task.sample_idx),
+        "operating_point_id": task.operating_point_id,
+        "accepted_operating_point_index": int(task.accepted_operating_point_index),
+        "initialization_source": "uqgrid_pf",
+        "acopf_feasible": False,
+        "fault_location": int(task.fault_location),
+        "fault_impedance": float(task.fault_impedance),
+        "fault_location_index": int(task.fault_location_index),
+        "fault_impedance_index": int(task.fault_impedance_index),
+        "accepted": False,
+        "reject_reason": "dynamic_fault_failed",
+    }
+    try:
+        if (
+            load_psse_func is None
+            or add_dyr_func is None
+            or integration_config_cls is None
+            or integrate_system_func is None
+        ):
+            (
+                load_psse_func,
+                add_dyr_func,
+                integration_config_cls,
+                integrate_system_func,
+            ) = _load_dynamic_functions()
+
+        operating_point = context["operating_point"]
+        psys = load_psse_func(str(context["raw_path"]))
+        add_dyr_func(psys, str(context["dyr_path"]))
+        p_load = np.asarray(operating_point["p_load_scaled"], dtype=float).reshape(-1)
+        q_load = np.asarray(operating_point["q_load_scaled"], dtype=float).reshape(-1)
+        p_gen = np.asarray(operating_point["p_gen_scaled"], dtype=float).reshape(-1)
+        q_gen = np.asarray(operating_point["q_gen_scaled"], dtype=float).reshape(-1)
+        psys.set_load_pq(p_load, q_load)
+        psys.set_gen_pq(p_gen, q_gen)
+
+        v_magnitudes = operating_point.get("pf_v_magnitudes")
+        v_angles = operating_point.get("pf_v_angles")
+        if v_magnitudes is not None and v_angles is not None:
+            for bus_idx, bus in enumerate(psys.buses):
+                bus.set_vinit(float(v_magnitudes[bus_idx]), float(v_angles[bus_idx]))
+
+        psys.add_busfault(int(task.fault_location), float(task.fault_impedance))
+        psys.createYbusComplex()
+        cfg = integration_config_cls(**dict(context["integration_config"]))
+        sim = integrate_system_func(psys, cfg)
+        history = sim.get("history") if isinstance(sim, Mapping) else None
+        tvec = sim.get("tvec") if isinstance(sim, Mapping) else None
+        if history is None:
+            raise RuntimeError("UQGrid returned no history")
+
+        tsi_final, tsi_min, tsi_t = compute_tsi_final_min_from_history(
+            history,
+            context["delta_state_indices"],
+        )
+        history_file = None
+        if context.get("keep_fault_histories", False):
+            history_dir = Path(context["history_dir"])
+            history_dir.mkdir(parents=True, exist_ok=True)
+            history_file = history_dir / f"{task.scenario_id}_history.npz"
+            np.savez_compressed(
+                history_file,
+                history=history,
+                tvec=np.asarray([]) if tvec is None else tvec,
+                tsi=tsi_t,
+            )
+
+        final_time = None
+        if tvec is not None:
+            tvec_arr = np.asarray(tvec).reshape(-1)
+            if tvec_arr.size:
+                final_time = float(tvec_arr[-1])
+
+        record.update(
+            {
+                "accepted": True,
+                "reject_reason": None,
+                "success": True,
+                "simulation_diverged": False,
+                "file": None,
+                "history_file": None if history_file is None else str(history_file),
+                "tsi_final": float(tsi_final),
+                "tsi_min": float(tsi_min),
+                "final_simulation_time_s": final_time,
+                "num_loads": int(p_load.size),
+                "num_generators": int(p_gen.size),
             }
         )
         return record
@@ -1582,6 +2106,151 @@ def prepare_acopf_replay_context(
     }
 
 
+def prepare_uqgrid_candidate_context(
+    *,
+    config_path: str | Path,
+    output_dir: str | Path,
+    sample_idx: int,
+    accepted_operating_point_index: int,
+    target_accepted_scenarios: int,
+    max_total_attempts: int,
+    remaining_attempts: int,
+    uqgrid_root: str | Path | None = None,
+    pf_verbose: bool = False,
+    candidate_func: Callable[..., Mapping[str, Any]] | None = None,
+    op_config_resolver: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Prepare one PF-screened candidate for direct UQGrid dynamic replay."""
+    del output_dir, pf_verbose
+    config_path = Path(config_path).expanduser()
+    config = _load_json_config(config_path)
+    if candidate_func is None or op_config_resolver is None:
+        gs = _load_generate_scenarios_module()
+        candidate_func = candidate_func or gs._prepare_operating_point_candidate
+        op_config_resolver = op_config_resolver or gs._resolve_operating_point_config
+
+    model_cfg = config["model"]
+    raw_path = _resolve_model_path(
+        model_cfg["raw"],
+        config_path=config_path,
+        uqgrid_root=uqgrid_root,
+    )
+    dyr_path = _resolve_model_path(
+        model_cfg["dyr"],
+        config_path=config_path,
+        uqgrid_root=uqgrid_root,
+    )
+    pert_cfg = config.get("perturbation", {}) or {}
+    op_cfg = dict(op_config_resolver(config.get("operating_point", {})))
+    if "max_attempts_per_scenario" in op_cfg:
+        op_cfg["max_attempts_per_scenario"] = min(
+            int(op_cfg["max_attempts_per_scenario"]),
+            max(1, int(remaining_attempts)),
+        )
+
+    operating_point_id = str(uuid.uuid4())
+    scenario = {
+        "sample_idx": int(sample_idx),
+        "operating_point_id": operating_point_id,
+        "accepted_operating_point_index": int(accepted_operating_point_index),
+    }
+    records: list[Mapping[str, Any]] = []
+    prep = candidate_func(
+        str(raw_path),
+        str(dyr_path),
+        scenario,
+        operating_point_id,
+        noise_type=pert_cfg.get("load_noise_type", config.get("noise_type", "normal")),
+        noise_var=pert_cfg.get("load_noise_var", config.get("noise_var", 0.1)),
+        global_seed=1234,
+        balance_generation=pert_cfg.get("balance_generation", True),
+        perturb_loads=pert_cfg.get("perturb_loads", True),
+        perturb_gens=pert_cfg.get("perturb_gens", True),
+        load_noise_type=pert_cfg.get("load_noise_type"),
+        gen_noise_type=pert_cfg.get("gen_noise_type"),
+        load_noise_var=pert_cfg.get("load_noise_var"),
+        gen_noise_var=pert_cfg.get("gen_noise_var"),
+        keep_power_factor=pert_cfg.get("keep_power_factor", True),
+        clamp_gens=pert_cfg.get("clamp_gens", True),
+        load_scale=pert_cfg.get("load_scale", 1.0),
+        load_mean_shift=pert_cfg.get("load_mean_shift", 0.0),
+        generation_dispatch_init=pert_cfg.get("generation_dispatch_init", "perturbed"),
+        operating_point_config=op_cfg,
+    )
+    records.extend(prep.get("diagnostics_attempts") or [])
+    prep_diag = prep.get("diagnostics") or {}
+    candidate_attempts = int(prep_diag.get("attempts") or max(1, len(records)))
+    group_base = {
+        "record_type": "operating_point_group",
+        "sample_idx": int(sample_idx),
+        "operating_point_id": operating_point_id,
+        "accepted_operating_point_index": int(accepted_operating_point_index),
+        "target_accepted_scenarios": int(target_accepted_scenarios),
+        "max_total_attempts": int(max_total_attempts),
+        "candidate_attempts": candidate_attempts,
+        "pre_acopf_attempts": prep_diag.get("attempts"),
+        "pre_acopf_pf_residual": prep_diag.get("pf_residual"),
+        "initialization_source": "uqgrid_pf",
+        "acopf_feasible": False,
+    }
+
+    if prep.get("rejected") or not prep.get("operating_point"):
+        record = {
+            **prep_diag,
+            **group_base,
+            "accepted": False,
+            "reject_stage": "pre_pf",
+            "reject_reason": prep_diag.get("reject_reason", "operating_point_rejected"),
+            "faults_required": 0,
+            "faults_successful": 0,
+        }
+        records.append(record)
+        return {
+            "success": False,
+            "accepted": False,
+            "records": records,
+            "sample_idx": int(sample_idx),
+            "operating_point_id": operating_point_id,
+            "accepted_operating_point_index": int(accepted_operating_point_index),
+            "candidate_attempts": candidate_attempts,
+            "reject_stage": "pre_pf",
+            "reject_reason": record["reject_reason"],
+            "case_dir": None,
+            "initialization_source": "uqgrid_pf",
+            "acopf_feasible": False,
+        }
+
+    operating_point = dict(prep["operating_point"])
+    operating_point["operating_point_id"] = operating_point_id
+    operating_point["accepted_operating_point_index"] = int(accepted_operating_point_index)
+    records.append(
+        {
+            **group_base,
+            "record_type": "uqgrid_pf_initialization",
+            "accepted": True,
+            "reject_reason": None,
+        }
+    )
+    return {
+        "success": True,
+        "accepted": True,
+        "records": records,
+        "config": config,
+        "raw_path": raw_path,
+        "dyr_path": dyr_path,
+        "operating_point": operating_point,
+        "sample_idx": int(sample_idx),
+        "operating_point_id": operating_point_id,
+        "accepted_operating_point_index": int(accepted_operating_point_index),
+        "candidate_attempts": candidate_attempts,
+        "pre_acopf_attempts": prep_diag.get("attempts"),
+        "pre_acopf_pf_residual": prep_diag.get("pf_residual"),
+        "case_dir": None,
+        "initialization_source": "uqgrid_pf",
+        "acopf_feasible": False,
+    }
+
+
 def prepare_acopf_candidate_context(
     *,
     config_path: str | Path,
@@ -1669,6 +2338,8 @@ def prepare_acopf_candidate_context(
         "candidate_attempts": candidate_attempts,
         "pre_acopf_attempts": prep_diag.get("attempts"),
         "pre_acopf_pf_residual": prep_diag.get("pf_residual"),
+        "initialization_source": "acopf",
+        "acopf_feasible": False,
     }
 
     if prep.get("rejected") or not prep.get("operating_point"):
@@ -1693,6 +2364,8 @@ def prepare_acopf_candidate_context(
             "reject_stage": "pre_pf",
             "reject_reason": record["reject_reason"],
             "case_dir": None,
+            "initialization_source": "acopf",
+            "acopf_feasible": False,
         }
 
     operating_point = dict(prep["operating_point"])
@@ -1731,6 +2404,8 @@ def prepare_acopf_candidate_context(
             "reject_stage": "acopf",
             "reject_reason": acopf_result.get("reject_reason", "acopf_failed"),
             "case_dir": case_info["case_dir"],
+            "initialization_source": "acopf",
+            "acopf_feasible": False,
         }
 
     pf_summary = dict(
@@ -1768,6 +2443,8 @@ def prepare_acopf_candidate_context(
             "reject_stage": "post_acopf_pf",
             "reject_reason": pf_summary.get("reject_reason", "post_acopf_pf_failed"),
             "case_dir": case_info["case_dir"],
+            "initialization_source": "acopf",
+            "acopf_feasible": False,
         }
 
     try:
@@ -1798,6 +2475,8 @@ def prepare_acopf_candidate_context(
             "reject_stage": "basecase_parse",
             "reject_reason": "basecase_parse_failed",
             "case_dir": case_info["case_dir"],
+            "initialization_source": "acopf",
+            "acopf_feasible": False,
         }
 
     return {
@@ -1819,6 +2498,8 @@ def prepare_acopf_candidate_context(
         "pre_acopf_attempts": prep_diag.get("attempts"),
         "pre_acopf_pf_residual": prep_diag.get("pf_residual"),
         "base_mva": float(pf_summary.get("base_mva", 100.0)),
+        "initialization_source": "acopf",
+        "acopf_feasible": True,
     }
 
 
@@ -1877,16 +2558,19 @@ def run_fault_replay_tasks(
     )
 
 
-def append_acopf_probml_outputs(
+def append_probml_outputs_from_row(
     *,
     output_dir: str | Path,
     probml_basename: str,
-    parsed_basecase: ParsedExaJuGOBasecase,
-    base_mva: float,
+    X_row: np.ndarray,
+    n_gen: int,
+    n_load: int,
     sample_idx: int,
     fault_locations: Sequence[int],
     fault_impedances: Sequence[float],
     fault_results: Sequence[Mapping[str, Any]],
+    initialization_source: str,
+    acopf_feasible: bool,
     refuse_existing: bool = False,
 ) -> dict[str, Any]:
     final_path, min_path = _probml_output_paths(output_dir, probml_basename)
@@ -1895,9 +2579,6 @@ def append_acopf_probml_outputs(
             "Refusing to append; remove existing NPZ files, use a fresh basename, or resume explicitly"
         )
 
-    X_row = build_acopf_probml_x(parsed_basecase, base_mva)
-    n_gen = int(np.count_nonzero(parsed_basecase.nonzero_gen_mask))
-    n_load = int(parsed_basecase.load_bus_ids.size)
     y_shape = (len(fault_locations), len(fault_impedances))
     Y_final = np.empty(y_shape, dtype=np.float64)
     Y_min = np.empty(y_shape, dtype=np.float64)
@@ -1923,6 +2604,8 @@ def append_acopf_probml_outputs(
         n_gen=n_gen,
         n_load=n_load,
         tsi_mode="final",
+        initialization_source=initialization_source,
+        acopf_feasible=acopf_feasible,
     )
     min_payload = append_probml_dataset_row(
         min_path,
@@ -1935,6 +2618,8 @@ def append_acopf_probml_outputs(
         n_gen=n_gen,
         n_load=n_load,
         tsi_mode="min",
+        initialization_source=initialization_source,
+        acopf_feasible=acopf_feasible,
     )
     return {
         "final_path": str(final_path),
@@ -1945,7 +2630,66 @@ def append_acopf_probml_outputs(
         "Y_min_shape": tuple(int(v) for v in min_payload["Y"].shape),
         "n_gen": n_gen,
         "n_load": n_load,
+        "initialization_source": str(initialization_source),
+        "acopf_feasible": bool(acopf_feasible),
     }
+
+
+def append_acopf_probml_outputs(
+    *,
+    output_dir: str | Path,
+    probml_basename: str,
+    parsed_basecase: ParsedExaJuGOBasecase,
+    base_mva: float,
+    sample_idx: int,
+    fault_locations: Sequence[int],
+    fault_impedances: Sequence[float],
+    fault_results: Sequence[Mapping[str, Any]],
+    refuse_existing: bool = False,
+) -> dict[str, Any]:
+    X_row = build_acopf_probml_x(parsed_basecase, base_mva)
+    return append_probml_outputs_from_row(
+        output_dir=output_dir,
+        probml_basename=probml_basename,
+        X_row=X_row,
+        n_gen=int(np.count_nonzero(parsed_basecase.nonzero_gen_mask)),
+        n_load=int(parsed_basecase.load_bus_ids.size),
+        sample_idx=sample_idx,
+        fault_locations=fault_locations,
+        fault_impedances=fault_impedances,
+        fault_results=fault_results,
+        initialization_source="acopf",
+        acopf_feasible=True,
+        refuse_existing=refuse_existing,
+    )
+
+
+def append_uqgrid_probml_outputs(
+    *,
+    output_dir: str | Path,
+    probml_basename: str,
+    operating_point: Mapping[str, Any],
+    sample_idx: int,
+    fault_locations: Sequence[int],
+    fault_impedances: Sequence[float],
+    fault_results: Sequence[Mapping[str, Any]],
+    refuse_existing: bool = False,
+) -> dict[str, Any]:
+    X_row = build_uqgrid_probml_x(operating_point)
+    return append_probml_outputs_from_row(
+        output_dir=output_dir,
+        probml_basename=probml_basename,
+        X_row=X_row,
+        n_gen=len(np.asarray(operating_point["p_gen_scaled"]).reshape(-1)),
+        n_load=len(np.asarray(operating_point["p_load_scaled"]).reshape(-1)),
+        sample_idx=sample_idx,
+        fault_locations=fault_locations,
+        fault_impedances=fault_impedances,
+        fault_results=fault_results,
+        initialization_source="uqgrid_pf",
+        acopf_feasible=False,
+        refuse_existing=refuse_existing,
+    )
 
 
 def write_stage3_probml_outputs(
@@ -2227,6 +2971,20 @@ def _npz_shapes(path: Path) -> dict[str, tuple[int, ...]] | None:
         return {key: tuple(int(v) for v in data[key].shape) for key in data.files}
 
 
+def _npz_source_counts(path: Path | None) -> dict[str, int]:
+    if path is None or not path.exists():
+        return {}
+    with np.load(path, allow_pickle=True) as data:
+        row_count = int(data["Y"].shape[0]) if "Y" in data else 0
+        if "initialization_source" not in data:
+            return {"acopf": row_count} if row_count else {}
+        counts: dict[str, int] = {}
+        for source in np.asarray(data["initialization_source"], dtype=object).reshape(-1):
+            key = str(source)
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
+
 def _infer_status_paths(
     output_dir: str | Path,
     *,
@@ -2283,6 +3041,10 @@ def read_acopf_production_status(
         "target_accepted_scenarios": progress.get("target_accepted_scenarios"),
         "fault_rows_completed": len(simulation_log),
         "scenario_metadata_rows": len(scenario_metadata),
+        "initialization_source_counts": progress.get(
+            "initialization_source_counts",
+            _npz_source_counts(final_path),
+        ),
         "reject_reason_counts": summary.get("reject_reason_counts", {}),
         "latest_row_paths": {
             "final": None if final_path is None else str(final_path),
@@ -2310,6 +3072,7 @@ def _production_progress(
     fault_rows_completed: int,
     probml_outputs: Mapping[str, Any] | None = None,
     reject_reason: str | None = None,
+    source_counts: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     progress = {
         "stage": "stage_4_production",
@@ -2321,6 +3084,9 @@ def _production_progress(
         "max_total_attempts": int(max_total_attempts),
         "diagnostic_records": int(records_written),
         "fault_rows_completed": int(fault_rows_completed),
+        "initialization_source_counts": {
+            str(key): int(value) for key, value in (source_counts or {}).items()
+        },
         "completed": int(accepted_count) >= int(target_accepted_scenarios),
         "attempts_exhausted": int(total_candidate_attempts) >= int(max_total_attempts),
         "reject_reason": reject_reason,
@@ -2373,6 +3139,7 @@ def _load_production_resume_state(
             "scenario_metadata": {},
             "simulation_log": {},
             "progress": {},
+            "source_counts": {},
         }
 
     resume = validate_probml_resume_pair(final_path, min_path)
@@ -2426,6 +3193,7 @@ def _load_production_resume_state(
         "scenario_metadata": dict(scenario_metadata),
         "simulation_log": dict(simulation_log),
         "progress": progress,
+        "source_counts": _npz_source_counts(final_path),
     }
 
 
@@ -2446,6 +3214,8 @@ def _fault_result_entries(
             "fault_impedance": float(result["fault_impedance"]),
             "operating_point_id": str(operating_point_id),
             "accepted_operating_point_index": int(accepted_operating_point_index),
+            "initialization_source": str(result.get("initialization_source", "acopf")),
+            "acopf_feasible": bool(result.get("acopf_feasible", True)),
             "tsi_final": float(result["tsi_final"]),
             "tsi_min": float(result["tsi_min"]),
             "file": None,
@@ -2488,6 +3258,8 @@ def run_acopf_production(
     config_path: str | Path,
     output_dir: str | Path,
     acopf_config: AcopfInitializationConfig,
+    acopf_probability: float | None = None,
+    source_seed: int | None = None,
     target_accepted_scenarios: int | None = None,
     max_total_attempts: int | None = None,
     continue_run: bool = False,
@@ -2504,6 +3276,7 @@ def run_acopf_production(
     keep_fault_histories: bool = False,
     debug_tracebacks: bool = False,
     acopf_context_func: Callable[..., Mapping[str, Any]] = prepare_acopf_candidate_context,
+    direct_context_func: Callable[..., Mapping[str, Any]] = prepare_uqgrid_candidate_context,
     state_metadata_func: Callable[..., Mapping[str, Any]] = export_delta_state_metadata,
     fault_runner_func: Callable[..., Sequence[Mapping[str, Any]]] = run_fault_replay_tasks,
     candidate_func: Callable[..., Mapping[str, Any]] | None = None,
@@ -2559,6 +3332,14 @@ def run_acopf_production(
         else int(exec_cfg.get("n_jobs", task_count))
     )
     effective_n_jobs = _effective_n_jobs(requested_n_jobs, task_count)
+    resolved_acopf_probability = parse_probability(
+        acopf_probability
+        if acopf_probability is not None
+        else getattr(acopf_config, "acopf_probability", 1.0)
+    )
+    resolved_source_seed = int(
+        source_seed if source_seed is not None else getattr(acopf_config, "source_seed", 1234)
+    )
 
     basename = probml_basename or _default_probml_basename(config)
     final_path, min_path = _probml_output_paths(output_dir, basename)
@@ -2573,6 +3354,7 @@ def run_acopf_production(
     records = list(resume_state["records"])
     scenario_metadata = dict(resume_state["scenario_metadata"])
     simulation_log = dict(resume_state["simulation_log"])
+    source_counts = dict(resume_state["source_counts"])
     accepted_count = int(resume_state["accepted_count"])
     accepted_index = accepted_count
     sample_idx = int(
@@ -2605,6 +3387,7 @@ def run_acopf_production(
             records_written=len(records),
             fault_rows_completed=len(simulation_log),
             probml_outputs=latest_probml_outputs,
+            source_counts=source_counts,
         )
         _write_production_state(
             output_dir,
@@ -2625,10 +3408,24 @@ def run_acopf_production(
 
     while accepted_count < target and total_candidate_attempts < max_attempts:
         remaining_attempts = max_attempts - total_candidate_attempts
+        initialization_source = select_initialization_source(
+            sample_idx,
+            acopf_probability=resolved_acopf_probability,
+            source_seed=resolved_source_seed,
+        )
+        records.append(
+            {
+                "record_type": "initialization_source_selection",
+                "sample_idx": int(sample_idx),
+                "accepted_operating_point_index": int(accepted_index),
+                "initialization_source": initialization_source,
+                "acopf_probability": float(resolved_acopf_probability),
+                "source_seed": int(resolved_source_seed),
+            }
+        )
         context_kwargs: dict[str, Any] = {
             "config_path": config_path,
             "output_dir": output_dir,
-            "acopf_config": acopf_config,
             "sample_idx": sample_idx,
             "accepted_operating_point_index": accepted_index,
             "target_accepted_scenarios": target,
@@ -2636,20 +3433,37 @@ def run_acopf_production(
             "remaining_attempts": remaining_attempts,
             "uqgrid_root": uqgrid_root,
             "pf_verbose": pf_verbose,
-            "case_root": "acopf_cases",
-            "acopf_runner_func": acopf_runner_func,
-            "pf_validator_func": pf_validator_func,
         }
         if candidate_func is not None:
             context_kwargs["candidate_func"] = candidate_func
         if op_config_resolver is not None:
             context_kwargs["op_config_resolver"] = op_config_resolver
-        context = dict(acopf_context_func(**context_kwargs))
+        if initialization_source == "acopf":
+            context_kwargs.update(
+                {
+                    "acopf_config": acopf_config,
+                    "case_root": "acopf_cases",
+                    "acopf_runner_func": acopf_runner_func,
+                    "pf_validator_func": pf_validator_func,
+                }
+            )
+            context = dict(acopf_context_func(**context_kwargs))
+        else:
+            context = dict(direct_context_func(**context_kwargs))
+        context.setdefault("initialization_source", initialization_source)
+        context.setdefault(
+            "acopf_feasible",
+            bool(initialization_source == "acopf" and context.get("accepted")),
+        )
+        context_source = str(context["initialization_source"])
+        context_acopf_feasible = bool(context["acopf_feasible"])
         last_sample_idx = int(context.get("sample_idx", sample_idx))
         candidate_attempts = int(context.get("candidate_attempts", 1))
         total_candidate_attempts += candidate_attempts
         context_records = list(context.get("records", []))
         for record in context_records:
+            record.setdefault("initialization_source", context_source)
+            record.setdefault("acopf_feasible", context_acopf_feasible)
             if record.get("record_type") == "operating_point_group":
                 record.setdefault("total_candidate_attempts", total_candidate_attempts)
                 record.setdefault("faults_required", task_count)
@@ -2671,6 +3485,7 @@ def run_acopf_production(
                 fault_rows_completed=len(simulation_log),
                 probml_outputs=latest_probml_outputs,
                 reject_reason=last_reject_reason,
+                source_counts=source_counts,
             )
             _write_production_state(
                 output_dir,
@@ -2692,23 +3507,45 @@ def run_acopf_production(
         replay_context = {
             "raw_path": str(context["raw_path"]),
             "dyr_path": str(context["dyr_path"]),
-            "basecase_path": str(context["basecase_path"]),
-            "case_raw_path": str(context["case_raw_path"]),
             "integration_config": _integration_config_from_config(config),
             "delta_state_indices": list(state_info["delta_state_indices"]),
             "keep_fault_histories": bool(keep_fault_histories),
             "history_dir": str(output_dir / "fault_histories"),
             "debug_tracebacks": bool(debug_tracebacks),
+            "initialization_source": context_source,
+            "acopf_feasible": context_acopf_feasible,
         }
-        try:
-            fault_results = list(
-                fault_runner_func(
-                    tasks,
-                    replay_context,
-                    n_jobs=effective_n_jobs,
-                    parallel_timeout_s=float(parallel_timeout_s),
-                )
+        if context_source == "acopf":
+            replay_context.update(
+                {
+                    "basecase_path": str(context["basecase_path"]),
+                    "case_raw_path": str(context["case_raw_path"]),
+                }
             )
+            replay_worker_func = replay_acopf_fault_task
+        else:
+            replay_context["operating_point"] = context["operating_point"]
+            replay_worker_func = replay_uqgrid_fault_task
+        try:
+            if fault_runner_func is run_fault_replay_tasks:
+                fault_results = list(
+                    fault_runner_func(
+                        tasks,
+                        replay_context,
+                        n_jobs=effective_n_jobs,
+                        parallel_timeout_s=float(parallel_timeout_s),
+                        worker_func=replay_worker_func,
+                    )
+                )
+            else:
+                fault_results = list(
+                    fault_runner_func(
+                        tasks,
+                        replay_context,
+                        n_jobs=effective_n_jobs,
+                        parallel_timeout_s=float(parallel_timeout_s),
+                    )
+                )
         except Exception as exc:
             fault_results = []
             records.append(
@@ -2719,12 +3556,18 @@ def run_acopf_production(
                     "accepted_operating_point_index": int(
                         context["accepted_operating_point_index"]
                     ),
+                    "initialization_source": context_source,
+                    "acopf_feasible": context_acopf_feasible,
                     "accepted": False,
                     "reject_reason": "dynamic_fault_failed",
                     "error_type": type(exc).__name__,
                     "error": str(exc),
                 }
             )
+
+        for result in fault_results:
+            result.setdefault("initialization_source", context_source)
+            result.setdefault("acopf_feasible", context_acopf_feasible)
 
         records.extend(fault_results)
         failed = [result for result in fault_results if not result.get("accepted")]
@@ -2746,6 +3589,8 @@ def run_acopf_production(
                     "accepted_operating_point_index": int(
                         context["accepted_operating_point_index"]
                     ),
+                    "initialization_source": context_source,
+                    "acopf_feasible": context_acopf_feasible,
                     "accepted": False,
                     "reject_reason": "dynamic_fault_failed",
                     "total_candidate_attempts": total_candidate_attempts,
@@ -2757,7 +3602,7 @@ def run_acopf_production(
                     "fault_failure_reasons": failure_counts,
                 }
             )
-            if not keep_failed_acopf_cases:
+            if not keep_failed_acopf_cases and context_source == "acopf":
                 _delete_case_dir(context.get("case_dir"))
             sample_idx += 1
             progress = _production_progress(
@@ -2771,6 +3616,7 @@ def run_acopf_production(
                 fault_rows_completed=len(simulation_log),
                 probml_outputs=latest_probml_outputs,
                 reject_reason=last_reject_reason,
+                source_counts=source_counts,
             )
             _write_production_state(
                 output_dir,
@@ -2782,16 +3628,27 @@ def run_acopf_production(
             _print_production_progress(progress)
             continue
 
-        probml_outputs = append_acopf_probml_outputs(
-            output_dir=output_dir,
-            probml_basename=basename,
-            parsed_basecase=context["parsed_basecase"],
-            base_mva=float(context["base_mva"]),
-            sample_idx=int(context["sample_idx"]),
-            fault_locations=fault_locations_list,
-            fault_impedances=fault_impedances_list,
-            fault_results=fault_results,
-        )
+        if context_source == "acopf":
+            probml_outputs = append_acopf_probml_outputs(
+                output_dir=output_dir,
+                probml_basename=basename,
+                parsed_basecase=context["parsed_basecase"],
+                base_mva=float(context["base_mva"]),
+                sample_idx=int(context["sample_idx"]),
+                fault_locations=fault_locations_list,
+                fault_impedances=fault_impedances_list,
+                fault_results=fault_results,
+            )
+        else:
+            probml_outputs = append_uqgrid_probml_outputs(
+                output_dir=output_dir,
+                probml_basename=basename,
+                operating_point=context["operating_point"],
+                sample_idx=int(context["sample_idx"]),
+                fault_locations=fault_locations_list,
+                fault_impedances=fault_impedances_list,
+                fault_results=fault_results,
+            )
         final_tsi_values = np.asarray(
             [result["tsi_final"] for result in fault_results],
             dtype=float,
@@ -2808,6 +3665,8 @@ def run_acopf_production(
                 "accepted_operating_point_index": int(
                     context["accepted_operating_point_index"]
                 ),
+                "initialization_source": context_source,
+                "acopf_feasible": context_acopf_feasible,
                 "accepted": True,
                 "reject_reason": None,
                 "total_candidate_attempts": total_candidate_attempts,
@@ -2834,6 +3693,7 @@ def run_acopf_production(
         next_accepted_count = accepted_count + 1
         next_sample_idx = sample_idx + 1
         latest_probml_outputs = probml_outputs
+        source_counts[context_source] = source_counts.get(context_source, 0) + 1
         progress = _production_progress(
             target_accepted_scenarios=target,
             accepted_count=next_accepted_count,
@@ -2844,6 +3704,7 @@ def run_acopf_production(
             records_written=len(records),
             fault_rows_completed=len(simulation_log),
             probml_outputs=latest_probml_outputs,
+            source_counts=source_counts,
         )
         _write_production_state(
             output_dir,
@@ -2855,7 +3716,7 @@ def run_acopf_production(
         accepted_count = next_accepted_count
         accepted_index += 1
         sample_idx = next_sample_idx
-        if not keep_intermediate_acopf_cases:
+        if context_source == "acopf" and not keep_intermediate_acopf_cases:
             _delete_case_dir(context.get("case_dir"))
         _print_production_progress(progress)
         gc.collect()
@@ -2871,6 +3732,7 @@ def run_acopf_production(
         fault_rows_completed=len(simulation_log),
         probml_outputs=latest_probml_outputs,
         reject_reason=last_reject_reason,
+        source_counts=source_counts,
     )
     _write_production_state(
         output_dir,
@@ -2884,7 +3746,7 @@ def run_acopf_production(
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="ACOPF-initialized UQGrid scenario generation",
+        description="ACOPF/UQGrid-initialized scenario generation",
     )
     parser.add_argument("config", nargs="?", help="Scenario generator JSON config")
     parser.add_argument(
@@ -2912,6 +3774,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="ExaJuGO ACOPF subprocess timeout in seconds",
+    )
+    parser.add_argument(
+        "--acopf-probability",
+        type=float,
+        default=None,
+        help="Probability that a production operating point uses ACOPF initialization",
+    )
+    parser.add_argument(
+        "--source-seed",
+        type=int,
+        default=None,
+        help="Seed for deterministic production ACOPF/UQGrid source selection",
     )
     parser.add_argument(
         "--target-accepted-scenarios",
@@ -2942,7 +3816,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--fault-impedances",
         default=None,
-        help="Comma-separated fault impedances for Stage 3 smoke",
+        help="Comma-separated fault impedances",
     )
     parser.add_argument("--n-jobs", type=int, default=None, help="Parallel fault jobs")
     parser.add_argument(
@@ -2999,8 +3873,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.config:
         parser.error("generation modes require a config file")
 
-    config = _load_json_config(args.config)
-    acopf_config = resolve_acopf_initialization_config(args, config)
+    try:
+        config = _load_json_config(args.config)
+    except Exception as exc:
+        _emit_preflight_report(
+            [
+                _preflight_fail(
+                    "Config JSON",
+                    f"could not load {args.config}: {type(exc).__name__}: {exc}",
+                    "Provide a readable JSON scenario config file.",
+                )
+            ]
+        )
+        return 2
+
+    source_section = config.get("acopf_initialization", {}) or {}
+    source_probability = parse_probability(
+        _get_optional_attr(args, "acopf_probability")
+        if _get_optional_attr(args, "acopf_probability") is not None
+        else source_section.get("acopf_probability", 1.0)
+    )
+    require_acopf_paths = bool(args.smoke_acopf or args.smoke_replay or source_probability > 0.0)
+    acopf_config = resolve_acopf_initialization_config(
+        args,
+        config,
+        require_paths=False,
+    )
+    preflight_checks = collect_startup_preflight_checks(
+        config_path=args.config,
+        config=config,
+        args=args,
+        acopf_config=acopf_config,
+        require_acopf_paths=require_acopf_paths,
+        dynamic_replay=bool(args.smoke_replay or not args.smoke_acopf),
+    )
+    _emit_preflight_report(preflight_checks)
+    if _preflight_failures(preflight_checks):
+        return 2
+
     if args.smoke_replay:
         progress = run_acopf_replay_smoke(
             config_path=args.config,
@@ -3033,6 +3943,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_path=args.config,
             output_dir=args.output_dir,
             acopf_config=acopf_config,
+            acopf_probability=args.acopf_probability,
+            source_seed=args.source_seed,
             target_accepted_scenarios=args.target_accepted_scenarios,
             max_total_attempts=args.max_total_attempts,
             continue_run=args.continue_run,
