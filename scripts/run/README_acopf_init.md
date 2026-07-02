@@ -1,15 +1,16 @@
 # ACOPF-Initialized Scenario Generator
 
 `generate_scenarios_acopf_init.py` builds ProbML-compatible transient
-stability datasets from UQGrid operating-point candidates that are initialized
-through ExaJuGO ACOPF before dynamic replay.
+stability datasets from UQGrid operating-point candidates. Production rows can
+use either ExaJuGO ACOPF initialization or direct UQGrid PF initialization before
+dynamic replay.
 
 This generator is separate from `generate_scenarios.py`. The original generator
 does not import ExaJuGO and its behavior is unchanged.
 
 ## Workflow
 
-Production mode runs this pipeline for each accepted operating point:
+Production mode runs this ACOPF pipeline for each accepted operating point:
 
 1. Generate a PF-screened UQGrid operating-point candidate using the same
    target-mode candidate logic as `generate_scenarios.py`.
@@ -21,6 +22,16 @@ Production mode runs this pipeline for each accepted operating point:
 7. Compute final and minimum TSI during replay.
 8. Append one row to final and min ProbML NPZ files only after all faults pass.
 
+With `--acopf-probability 0.0`, production skips ExaJuGO and uses the direct
+UQGrid path instead:
+
+```text
+UQGrid PF-screened candidate -> UQGrid dynamic replay -> TSI
+```
+
+For values between `0.0` and `1.0`, the source is sampled once per operating
+point. All faults for that operating point use the same source.
+
 Dense dynamic histories are discarded by default.
 
 ## Required Inputs
@@ -28,10 +39,8 @@ Dense dynamic histories are discarded by default.
 - A standard UQGrid scenario JSON config with model RAW/DYR paths.
 - A Python environment that can import UQGrid and run the existing scenario
   generator helpers.
-- A Julia executable.
-- An ExaJuGO checkout containing `ACOPF.jl`, `Project.toml`, and
-  `Manifest.toml`.
-- ExaJuGO base `case.raw` and `case.rop` files for the same system.
+- A Julia executable, an ExaJuGO checkout, and ExaJuGO base RAW/ROP files when
+  running smoke modes or production with `--acopf-probability > 0`.
 
 Model RAW/DYR paths are resolved from the config path, current directory,
 `--uqgrid-root`, `UQGRID_ROOT`, the installed UQGrid package root, then the
@@ -53,8 +62,29 @@ The ACOPF settings are:
 | Base RAW | `--exajugo-base-raw` | `base_raw` | `EXAJUGO_BASE_RAW` |
 | Base ROP | `--exajugo-base-rop` | `base_rop` | `EXAJUGO_BASE_ROP` |
 | ACOPF timeout | `--acopf-timeout-s` | `acopf_timeout_s` | none |
+| ACOPF probability | `--acopf-probability` | `acopf_probability` | none |
+| Source seed | `--source-seed` | `source_seed` | none |
 
 The timeout defaults to `300` seconds.
+`acopf_probability` defaults to `1.0`, preserving ACOPF-only behavior.
+`source_seed` defaults to `1234` and makes mixed-source row selection
+deterministic by `sample_idx`.
+
+## Startup Preflight
+
+Generation commands run a lightweight startup preflight before creating output
+state or starting PF, ExaJuGO, or dynamic replay work. The report is written to
+stderr so stdout remains the final JSON progress payload.
+
+Successful checks are marked with `✓`, skipped checks with `-`, and failed checks
+with `✗`. The preflight validates the config was loaded, UQGrid RAW/DYR files can
+be resolved, `generate_scenarios.py` is available, required Python imports are
+available, PETSc is importable when `integration.petsc=true`, and ExaJuGO paths
+are present when ACOPF initialization can be used. Direct-only production with
+`--acopf-probability 0.0` skips ExaJuGO checks.
+
+This is intentionally a cheap check. It does not run Julia, instantiate packages,
+import ExaJuGO Julia dependencies, run ACOPF, or run UQGrid simulations.
 
 ## ExaJuGO Dependency Check
 
@@ -194,6 +224,24 @@ probml_basename = tsi_probml_fullinputs_ACTIVSg500
 Use `--target-accepted-scenarios 1` for validation runs. Do not use that flag
 for the full 1000-row dataset unless intentionally limiting the run.
 
+### Mixed-Source Production
+
+Use `--acopf-probability` to mix ACOPF-initialized rows with direct UQGrid PF
+rows:
+
+```bash
+python scripts/run/generate_scenarios_acopf_init.py \
+  /path/to/config_ACTIVSg500_L1_04_C8.json \
+  --output-dir /scratch/$USER/uqgrid_mixed_init_C8 \
+  --fault-locations all \
+  --n-jobs 64 \
+  --acopf-probability 0.5 \
+  --source-seed 1234
+```
+
+This is approximate Bernoulli sampling per operating point, not an exact quota.
+The chosen source is saved per row in the NPZ files.
+
 ## Restart and Status
 
 Resume a production output directory after interruption:
@@ -243,6 +291,8 @@ sample_idx
 fault_locations
 fault_impedances
 scenario_ids
+initialization_source
+acopf_feasible
 meta
 ```
 
@@ -263,6 +313,11 @@ Y       (n, 500, 1)
 ```
 
 The final and min NPZ files intentionally store different scalar TSI targets.
+
+`initialization_source` has shape `(N,)` and stores `"acopf"` or
+`"uqgrid_pf"` for each operating-point row. `acopf_feasible` has shape `(N,)`
+and is `True` for rows that used a successful ACOPF initialization. For
+UQGrid-direct rows, it is `False` because ExaJuGO was intentionally skipped.
 
 ## Stability Interpretation
 
@@ -285,6 +340,7 @@ TSI = (2*pi - delta_max) / (2*pi + delta_max) * 100
 - Accepted ACOPF case directories are deleted by default in production after a
   successful row write.
 - Failed ACOPF case directories are kept by default for debugging.
+- UQGrid-direct rows do not create ACOPF case directories.
 
 Useful flags:
 
