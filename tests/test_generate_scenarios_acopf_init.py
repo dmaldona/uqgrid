@@ -111,6 +111,12 @@ def test_parse_exajugo_basecase_falls_back_to_raw_loads(acopf, tmp_path):
     np.testing.assert_allclose(parsed.q_load_mvar, [2.0, 4.0])
 
 
+class _DummyBus:
+    def set_vinit(self, magnitude, angle):
+        self.v0m = magnitude
+        self.v0a = angle
+
+
 class _DummyPsys:
     def __init__(self):
         self.basemva = 100.0
@@ -118,7 +124,7 @@ class _DummyPsys:
         self.ext2int = {1: 0, 2: 1}
         self.loads = [SimpleNamespace(bus=0), SimpleNamespace(bus=1)]
         self.gens = [SimpleNamespace(bus=0, idx="1"), SimpleNamespace(bus=1, idx="A")]
-        self.buses = [SimpleNamespace(), SimpleNamespace()]
+        self.buses = [_DummyBus(), _DummyBus()]
         self.shunts = [SimpleNamespace(bus=0, bsh=0.01)]
         self.load_pq = None
         self.gen_pq = None
@@ -270,11 +276,15 @@ def test_probml_writer_appends_and_validates_resume_pair(acopf, tmp_path):
             "fault_locations",
             "fault_impedances",
             "scenario_ids",
+            "initialization_source",
+            "acopf_feasible",
             "meta",
         }
         assert data["X"].shape == (2, 2, 3)
         assert data["X_flat"].shape == (2, 6)
         assert data["Y"].shape == (2, 2, 1)
+        assert data["initialization_source"].tolist() == ["acopf", "acopf"]
+        assert data["acopf_feasible"].tolist() == [True, True]
         meta = data["meta"][0].item() if hasattr(data["meta"][0], "item") else data["meta"][0]
         assert meta["source"] == "uqgrid_acopf_initialized"
         assert meta["tsi_mode"] == "final"
@@ -311,6 +321,63 @@ def test_probml_resume_pair_rejects_row_count_mismatch(acopf, tmp_path):
         acopf.validate_probml_resume_pair(final_path, min_path)
 
 
+def test_probml_writer_backfills_legacy_source_labels(acopf, tmp_path):
+    path = tmp_path / "legacy.npz"
+    np.savez_compressed(
+        path,
+        X=np.asarray([[[0.5, 0.1, 0.2], [0.1, -0.03, -0.04]]]),
+        X_flat=np.asarray([[0.5, 0.1, 0.2, 0.1, -0.03, -0.04]]),
+        Y=np.asarray([[[1.0], [2.0]]]),
+        sample_idx=np.asarray([0]),
+        fault_locations=np.asarray([142, 143]),
+        fault_impedances=np.asarray([1e-4]),
+        scenario_ids=np.asarray([[["s142"], ["s143"]]], dtype=object),
+        meta=np.asarray([{}], dtype=object),
+    )
+
+    acopf.append_probml_dataset_row(
+        path,
+        X_row=np.asarray([[1.5, 1.1, 1.2], [1.1, 0.97, 0.96]]),
+        Y_row=np.asarray([[3.0], [4.0]]),
+        sample_idx=1,
+        fault_locations=[142, 143],
+        fault_impedances=[1e-4],
+        scenario_ids_row=np.asarray([["s142b"], ["s143b"]], dtype=object),
+        n_gen=1,
+        n_load=2,
+        tsi_mode="final",
+        initialization_source="uqgrid_pf",
+        acopf_feasible=False,
+    )
+
+    with np.load(path, allow_pickle=True) as data:
+        assert data["initialization_source"].tolist() == ["acopf", "uqgrid_pf"]
+        assert data["acopf_feasible"].tolist() == [True, False]
+
+
+def test_probml_resume_pair_rejects_source_label_mismatch(acopf, tmp_path):
+    final_path = tmp_path / "tsi_final.npz"
+    min_path = tmp_path / "tsi_min.npz"
+    kwargs = dict(
+        X_row=np.asarray([[0.5, 0.1, 0.2], [0.1, -0.03, -0.04]]),
+        Y_row=np.asarray([[1.0]]),
+        sample_idx=0,
+        fault_locations=[142],
+        fault_impedances=[1e-4],
+        scenario_ids_row=np.asarray([["s142"]], dtype=object),
+        n_gen=1,
+        n_load=2,
+    )
+    acopf.append_probml_dataset_row(final_path, tsi_mode="final", **kwargs)
+    acopf.append_probml_dataset_row(min_path, tsi_mode="min", **kwargs)
+    min_payload = acopf._load_npz_dict(min_path)
+    min_payload["initialization_source"] = np.asarray(["uqgrid_pf"], dtype=object)
+    np.savez_compressed(min_path, **min_payload)
+
+    with pytest.raises(ValueError, match="initialization_source"):
+        acopf.validate_probml_resume_pair(final_path, min_path)
+
+
 def test_resolve_acopf_initialization_config_precedence(acopf, tmp_path):
     env = {
         "JULIA": "env-julia",
@@ -325,6 +392,8 @@ def test_resolve_acopf_initialization_config_precedence(acopf, tmp_path):
             "base_raw": str(tmp_path / "config.raw"),
             "base_rop": str(tmp_path / "config.rop"),
             "acopf_timeout_s": 123,
+            "acopf_probability": 0.25,
+            "source_seed": 456,
         }
     }
     args = SimpleNamespace(
@@ -333,6 +402,8 @@ def test_resolve_acopf_initialization_config_precedence(acopf, tmp_path):
         exajugo_base_raw=str(tmp_path / "cli.raw"),
         exajugo_base_rop=str(tmp_path / "cli.rop"),
         acopf_timeout_s=11,
+        acopf_probability=0.75,
+        source_seed=789,
     )
 
     resolved = acopf.resolve_acopf_initialization_config(args, config, env=env)
@@ -341,6 +412,8 @@ def test_resolve_acopf_initialization_config_precedence(acopf, tmp_path):
     assert resolved.base_raw == tmp_path / "cli.raw"
     assert resolved.base_rop == tmp_path / "cli.rop"
     assert resolved.acopf_timeout_s == pytest.approx(11)
+    assert resolved.acopf_probability == pytest.approx(0.75)
+    assert resolved.source_seed == 789
 
     no_cli = SimpleNamespace(
         julia=None,
@@ -348,6 +421,8 @@ def test_resolve_acopf_initialization_config_precedence(acopf, tmp_path):
         exajugo_base_raw=None,
         exajugo_base_rop=None,
         acopf_timeout_s=None,
+        acopf_probability=None,
+        source_seed=None,
     )
     resolved = acopf.resolve_acopf_initialization_config(no_cli, config, env=env)
     assert resolved.julia == "config-julia"
@@ -355,6 +430,8 @@ def test_resolve_acopf_initialization_config_precedence(acopf, tmp_path):
     assert resolved.base_raw == tmp_path / "config.raw"
     assert resolved.base_rop == tmp_path / "config.rop"
     assert resolved.acopf_timeout_s == pytest.approx(123)
+    assert resolved.acopf_probability == pytest.approx(0.25)
+    assert resolved.source_seed == 456
 
     resolved = acopf.resolve_acopf_initialization_config(no_cli, {}, env=env)
     assert resolved.julia == "env-julia"
@@ -362,6 +439,179 @@ def test_resolve_acopf_initialization_config_precedence(acopf, tmp_path):
     assert resolved.base_raw == tmp_path / "env.raw"
     assert resolved.base_rop == tmp_path / "env.rop"
     assert resolved.acopf_timeout_s == pytest.approx(300)
+    assert resolved.acopf_probability == pytest.approx(1.0)
+    assert resolved.source_seed == 1234
+
+    direct_only = acopf.resolve_acopf_initialization_config(
+        no_cli,
+        {},
+        env={},
+        require_paths=False,
+    )
+    assert direct_only.exajugo_root is None
+    assert direct_only.base_raw is None
+    assert direct_only.base_rop is None
+
+
+def _fake_import_func(missing=()):
+    missing = set(missing)
+
+    def import_func(name):
+        if name in missing:
+            raise ImportError(name)
+        return SimpleNamespace(__version__="test")
+
+    return import_func
+
+
+def test_startup_preflight_success_for_acopf_inputs(acopf, tmp_path):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, target=1)
+    config = acopf._load_json_config(config_path)
+    config["integration"]["petsc"] = False
+    exajugo_root = tmp_path / "exajugo"
+    exajugo_root.mkdir()
+    (exajugo_root / "ACOPF.jl").write_text("# acopf", encoding="utf-8")
+    (exajugo_root / "Project.toml").write_text("[deps]\n", encoding="utf-8")
+    julia = tmp_path / "julia"
+    julia.write_text("#!/bin/sh\n", encoding="utf-8")
+    julia.chmod(0o755)
+
+    checks = acopf.collect_startup_preflight_checks(
+        config_path=config_path,
+        config=config,
+        args=SimpleNamespace(uqgrid_root=None),
+        acopf_config=acopf.AcopfInitializationConfig(
+            julia=str(julia),
+            exajugo_root=exajugo_root,
+            base_raw=base_raw,
+            base_rop=base_rop,
+        ),
+        require_acopf_paths=True,
+        dynamic_replay=True,
+        import_func=_fake_import_func(),
+    )
+
+    assert acopf._preflight_failures(checks) == []
+    labels = {check.label for check in checks}
+    assert {"UQGrid RAW", "UQGrid DYR", "ExaJuGO base RAW", "ExaJuGO base ROP"} <= labels
+
+
+def test_startup_preflight_reports_missing_model_paths(acopf, tmp_path):
+    config_path = tmp_path / "config.json"
+    config = {
+        "model": {
+            "raw": str(tmp_path / "missing.raw"),
+            "dyr": str(tmp_path / "missing.dyr"),
+        },
+        "integration": {"petsc": False},
+    }
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    checks = acopf.collect_startup_preflight_checks(
+        config_path=config_path,
+        config=config,
+        args=SimpleNamespace(uqgrid_root=None),
+        acopf_config=acopf.AcopfInitializationConfig(
+            julia="julia",
+            exajugo_root=None,
+            base_raw=None,
+            base_rop=None,
+        ),
+        require_acopf_paths=False,
+        dynamic_replay=True,
+        import_func=_fake_import_func(),
+    )
+
+    failures = acopf._preflight_failures(checks)
+    assert {failure.label for failure in failures} == {"UQGrid RAW", "UQGrid DYR"}
+    assert all("--uqgrid-root" in failure.fix for failure in failures)
+
+
+def test_startup_preflight_exajugo_required_only_when_acopf_can_run(acopf, tmp_path):
+    config_path, _, _, _, _, _ = _production_config(tmp_path, target=1)
+    config = acopf._load_json_config(config_path)
+    config["integration"]["petsc"] = False
+    cfg = acopf.AcopfInitializationConfig(
+        julia="julia",
+        exajugo_root=None,
+        base_raw=None,
+        base_rop=None,
+    )
+
+    direct_checks = acopf.collect_startup_preflight_checks(
+        config_path=config_path,
+        config=config,
+        args=SimpleNamespace(uqgrid_root=None),
+        acopf_config=cfg,
+        require_acopf_paths=False,
+        dynamic_replay=True,
+        import_func=_fake_import_func(),
+    )
+    assert acopf._preflight_failures(direct_checks) == []
+    assert any(check.label == "ExaJuGO" and check.status == "skip" for check in direct_checks)
+
+    acopf_checks = acopf.collect_startup_preflight_checks(
+        config_path=config_path,
+        config=config,
+        args=SimpleNamespace(uqgrid_root=None),
+        acopf_config=cfg,
+        require_acopf_paths=True,
+        dynamic_replay=True,
+        import_func=_fake_import_func(),
+        which_func=lambda executable: "/usr/bin/julia",
+    )
+    failure_labels = {failure.label for failure in acopf._preflight_failures(acopf_checks)}
+    assert {
+        "ExaJuGO root",
+        "ExaJuGO ACOPF.jl",
+        "ExaJuGO Project.toml",
+        "ExaJuGO base RAW",
+        "ExaJuGO base ROP",
+    } <= failure_labels
+
+
+def test_startup_preflight_petsc_checked_only_when_enabled(acopf, tmp_path):
+    config_path, _, _, _, _, _ = _production_config(tmp_path, target=1)
+    config = acopf._load_json_config(config_path)
+    cfg = acopf.AcopfInitializationConfig(
+        julia="julia",
+        exajugo_root=None,
+        base_raw=None,
+        base_rop=None,
+    )
+    imported = []
+
+    def import_func(name):
+        imported.append(name)
+        return SimpleNamespace(__version__="test")
+
+    config["integration"]["petsc"] = False
+    checks = acopf.collect_startup_preflight_checks(
+        config_path=config_path,
+        config=config,
+        args=SimpleNamespace(uqgrid_root=None),
+        acopf_config=cfg,
+        require_acopf_paths=False,
+        dynamic_replay=True,
+        import_func=import_func,
+    )
+    assert acopf._preflight_failures(checks) == []
+    assert "petsc4py" not in imported
+    assert any(check.label == "PETSc" and check.status == "skip" for check in checks)
+
+    imported.clear()
+    config["integration"]["petsc"] = True
+    checks = acopf.collect_startup_preflight_checks(
+        config_path=config_path,
+        config=config,
+        args=SimpleNamespace(uqgrid_root=None),
+        acopf_config=cfg,
+        require_acopf_paths=False,
+        dynamic_replay=True,
+        import_func=import_func,
+    )
+    assert acopf._preflight_failures(checks) == []
+    assert "petsc4py" in imported
 
 
 def test_write_exajugo_smoke_case_patches_raw_and_copies_rop(acopf, tmp_path):
@@ -729,6 +979,27 @@ def test_stage3_cli_list_parsing_and_effective_jobs(acopf):
     assert acopf._effective_n_jobs(1, 2) == 1
 
 
+def test_mixed_source_probability_parsing_and_selection(acopf):
+    assert acopf.parse_probability(None) == pytest.approx(1.0)
+    assert acopf.parse_probability("0.25") == pytest.approx(0.25)
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        acopf.parse_probability(1.1)
+
+    assert acopf.select_initialization_source(7, acopf_probability=1.0) == "acopf"
+    assert acopf.select_initialization_source(7, acopf_probability=0.0) == "uqgrid_pf"
+    first = acopf.select_initialization_source(
+        7,
+        acopf_probability=0.5,
+        source_seed=99,
+    )
+    second = acopf.select_initialization_source(
+        7,
+        acopf_probability=0.5,
+        source_seed=99,
+    )
+    assert first == second
+
+
 def test_export_delta_state_metadata_uses_injected_uqgrid(acopf, tmp_path):
     psys = _DummyPsys()
 
@@ -781,6 +1052,39 @@ def _replay_context(tmp_path, keep_fault_histories=False):
     }
 
 
+def _direct_replay_context(tmp_path, keep_fault_histories=False):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    raw = tmp_path / "uqgrid.raw"
+    dyr = tmp_path / "case.dyr"
+    raw.write_text(_raw_text(), encoding="utf-8")
+    dyr.write_text("", encoding="utf-8")
+    return {
+        "raw_path": str(raw),
+        "dyr_path": str(dyr),
+        "operating_point": {
+            "p_load_scaled": np.asarray([0.11, 0.22]),
+            "q_load_scaled": np.asarray([-0.03, -0.04]),
+            "p_gen_scaled": np.asarray([0.50, 0.60]),
+            "q_gen_scaled": np.asarray([0.10, 0.12]),
+            "pf_v_magnitudes": np.asarray([1.01, 0.99]),
+            "pf_v_angles": np.asarray([0.1, -0.2]),
+        },
+        "integration_config": {
+            "tend": 10.0,
+            "dt": 1 / 120,
+            "power_injection": False,
+            "ton": 0.25,
+            "toff": 0.3833333333333333,
+            "verbose": False,
+            "petsc": True,
+        },
+        "delta_state_indices": [0, 2],
+        "keep_fault_histories": keep_fault_histories,
+        "history_dir": str(tmp_path / "fault_histories"),
+        "debug_tracebacks": False,
+    }
+
+
 def test_replay_acopf_fault_task_success_and_history_default(acopf, tmp_path):
     psys = _DummyPsys()
     task = acopf.FaultReplayTask(
@@ -817,6 +1121,49 @@ def test_replay_acopf_fault_task_success_and_history_default(acopf, tmp_path):
     assert result["tsi_min"] < result["tsi_final"]
     assert result["history_file"] is None
     assert psys.faults == [(142, 1e-4)]
+    assert not (tmp_path / "fault_histories").exists()
+
+
+def test_replay_uqgrid_fault_task_applies_operating_point_and_no_history(acopf, tmp_path):
+    psys = _DummyPsys()
+    task = acopf.FaultReplayTask(
+        sample_idx=0,
+        operating_point_id="op",
+        accepted_operating_point_index=0,
+        fault_location=142,
+        fault_impedance=1e-4,
+        fault_location_index=0,
+        fault_impedance_index=0,
+        scenario_id="sid",
+    )
+
+    result = acopf.replay_uqgrid_fault_task(
+        task,
+        _direct_replay_context(tmp_path),
+        load_psse_func=lambda path: psys,
+        add_dyr_func=lambda psys, path: None,
+        integration_config_cls=_FakeIntegrationConfig,
+        integrate_system_func=lambda psys, cfg: {
+            "history": np.asarray(
+                [
+                    [0.0, 0.0, 0.0],
+                    [9.0, 9.0, 9.0],
+                    [0.0, 3.0, 1.0],
+                ]
+            ),
+            "tvec": np.asarray([0.0, 0.5, 1.0]),
+        },
+    )
+
+    assert result["accepted"] is True
+    assert result["initialization_source"] == "uqgrid_pf"
+    assert result["acopf_feasible"] is False
+    np.testing.assert_allclose(psys.load_pq[0], [0.11, 0.22])
+    np.testing.assert_allclose(psys.gen_pq[1], [0.10, 0.12])
+    assert psys.buses[0].v0m == pytest.approx(1.01)
+    assert psys.buses[1].v0a == pytest.approx(-0.2)
+    assert psys.faults == [(142, 1e-4)]
+    assert result["history_file"] is None
     assert not (tmp_path / "fault_histories").exists()
 
 
@@ -1006,6 +1353,36 @@ def _accepted_production_context(acopf, tmp_path, parsed):
     return context_func
 
 
+def _accepted_direct_production_context(tmp_path, *, n_gen=56, n_load=206):
+    def context_func(**kwargs):
+        sample_idx = int(kwargs["sample_idx"])
+        accepted_index = int(kwargs["accepted_operating_point_index"])
+        return {
+            "accepted": True,
+            "success": True,
+            "records": [{"record_type": "uqgrid_pf_initialization", "accepted": True}],
+            "raw_path": tmp_path / "model.raw",
+            "dyr_path": tmp_path / "model.dyr",
+            "operating_point": {
+                "p_load_scaled": np.linspace(0.1, 0.2, n_load),
+                "q_load_scaled": np.linspace(-0.01, -0.02, n_load),
+                "p_gen_scaled": np.linspace(0.3, 0.4, n_gen),
+                "q_gen_scaled": np.linspace(0.03, 0.04, n_gen),
+                "pf_v_magnitudes": np.ones(2),
+                "pf_v_angles": np.zeros(2),
+            },
+            "sample_idx": sample_idx,
+            "operating_point_id": f"direct-op-{sample_idx}",
+            "accepted_operating_point_index": accepted_index,
+            "candidate_attempts": 1,
+            "case_dir": None,
+            "initialization_source": "uqgrid_pf",
+            "acopf_feasible": False,
+        }
+
+    return context_func
+
+
 def _successful_fault_runner(calls):
     def fault_runner(tasks, context, n_jobs, parallel_timeout_s):
         calls.append(
@@ -1055,6 +1432,7 @@ def test_production_defaults_all_fault_locations_and_two_row_append(acopf, tmp_p
     assert progress["completed"] is True
     assert progress["accepted_count"] == 2
     assert progress["next_sample_idx"] == 2
+    assert progress["initialization_source_counts"] == {"acopf": 2}
     assert calls[0]["fault_locations"] == [0, 1]
     assert calls[0]["n_jobs"] == 2
     assert calls[0]["toff"] == pytest.approx(0.3833333333333333)
@@ -1066,6 +1444,8 @@ def test_production_defaults_all_fault_locations_and_two_row_append(acopf, tmp_p
         assert data["X_flat"].shape == (2, 524)
         assert data["Y"].shape == (2, 2, 1)
         assert data["sample_idx"].tolist() == [0, 1]
+        assert data["initialization_source"].tolist() == ["acopf", "acopf"]
+        assert data["acopf_feasible"].tolist() == [True, True]
     with np.load(min_path, allow_pickle=True) as data:
         assert data["Y"].shape == (2, 2, 1)
 
@@ -1075,8 +1455,63 @@ def test_production_defaults_all_fault_locations_and_two_row_append(acopf, tmp_p
     assert len(log) == 4
     first_log = next(iter(log.values()))
     assert first_log["file"] is None
+    assert first_log["initialization_source"] == "acopf"
+    assert first_log["acopf_feasible"] is True
     assert "tsi_final" in first_log
     assert "tsi_min" in first_log
+
+
+def test_production_acopf_probability_zero_uses_uqgrid_direct_only(acopf, tmp_path):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, n_bus=2, target=1)
+    calls = []
+
+    progress = acopf.run_acopf_production(
+        config_path=config_path,
+        output_dir=tmp_path / "out",
+        acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+        acopf_probability=0.0,
+        probml_basename="prod",
+        acopf_context_func=lambda **kwargs: pytest.fail("ACOPF should be skipped"),
+        direct_context_func=_accepted_direct_production_context(tmp_path),
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=_successful_fault_runner(calls),
+    )
+
+    assert progress["accepted_count"] == 1
+    assert progress["initialization_source_counts"] == {"uqgrid_pf": 1}
+    with np.load(tmp_path / "out" / "prod_final.npz", allow_pickle=True) as data:
+        assert data["initialization_source"].tolist() == ["uqgrid_pf"]
+        assert data["acopf_feasible"].tolist() == [False]
+        assert data["X"].shape == (1, 2, 262)
+
+    log = json.loads((tmp_path / "out" / "simulation_log.json").read_text())
+    assert {row["initialization_source"] for row in log.values()} == {"uqgrid_pf"}
+    assert {row["acopf_feasible"] for row in log.values()} == {False}
+
+
+def test_production_mixed_two_rows_writes_source_labels(acopf, tmp_path):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, n_bus=2, target=2)
+    parsed = _large_parsed_basecase(acopf)
+
+    progress = acopf.run_acopf_production(
+        config_path=config_path,
+        output_dir=tmp_path / "out",
+        acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+        acopf_probability=0.5,
+        source_seed=2,
+        probml_basename="prod",
+        acopf_context_func=_accepted_production_context(acopf, tmp_path, parsed),
+        direct_context_func=_accepted_direct_production_context(tmp_path),
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=_successful_fault_runner([]),
+    )
+
+    assert progress["accepted_count"] == 2
+    assert progress["initialization_source_counts"] == {"acopf": 1, "uqgrid_pf": 1}
+    with np.load(tmp_path / "out" / "prod_final.npz", allow_pickle=True) as data:
+        assert data["initialization_source"].tolist() == ["acopf", "uqgrid_pf"]
+        assert data["acopf_feasible"].tolist() == [True, False]
+        assert data["X"].shape == (2, 2, 262)
 
 
 def test_production_no_continue_rejects_existing_outputs(acopf, tmp_path):
@@ -1265,4 +1700,105 @@ def test_status_reads_existing_state_without_acopf_config(acopf, tmp_path, capsy
     printed = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert printed["accepted_count"] == 1
     assert printed["fault_rows_completed"] == 2
+    assert printed["initialization_source_counts"] == {"acopf": 1}
     assert printed["npz_shapes"]["final"]["Y"] == [1, 2, 1]
+
+
+def test_main_preflight_prints_to_stderr_and_preserves_stdout_json(
+    acopf,
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    config_path, _, _, _, _, _ = _production_config(tmp_path, target=1)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["integration"]["petsc"] = False
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    def fake_run(**kwargs):
+        return {"stage": "stage_4_production", "completed": True, "accepted_count": 0}
+
+    monkeypatch.setattr(acopf, "run_acopf_production", fake_run)
+
+    rc = acopf.main(
+        [
+            str(config_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--acopf-probability",
+            "0.0",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    printed = json.loads(captured.out.strip())
+    assert printed["completed"] is True
+    assert "Startup preflight:" in captured.err
+    assert "\u2713 UQGrid RAW:" in captured.err
+    assert "- ExaJuGO: skipped" in captured.err
+
+
+def test_main_preflight_failure_returns_2_before_generation(
+    acopf,
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "model": {
+                    "raw": str(tmp_path / "missing.raw"),
+                    "dyr": str(tmp_path / "missing.dyr"),
+                    "n_bus": 2,
+                },
+                "integration": {"petsc": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        acopf,
+        "run_acopf_production",
+        lambda **kwargs: pytest.fail("generation should not run after failed preflight"),
+    )
+
+    rc = acopf.main(
+        [
+            str(config_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--acopf-probability",
+            "0.0",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert captured.out == ""
+    assert "\u2717 UQGrid RAW:" in captured.err
+    assert "\u2717 UQGrid DYR:" in captured.err
+    assert "Preflight failed" in captured.err
+    assert not (tmp_path / "out").exists()
+
+
+def test_status_skips_startup_preflight(acopf, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        acopf,
+        "collect_startup_preflight_checks",
+        lambda **kwargs: pytest.fail("--status should not run startup preflight"),
+    )
+    monkeypatch.setattr(
+        acopf,
+        "read_acopf_production_status",
+        lambda **kwargs: {"accepted_count": 0, "next_sample_idx": 0},
+    )
+
+    rc = acopf.main(["--status", "--output-dir", str(tmp_path), "--probml-basename", "prod"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "Startup preflight" not in captured.err
+    assert json.loads(captured.out)["accepted_count"] == 0
