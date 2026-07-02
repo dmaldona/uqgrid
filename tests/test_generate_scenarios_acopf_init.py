@@ -1000,6 +1000,42 @@ def test_mixed_source_probability_parsing_and_selection(acopf):
     assert first == second
 
 
+def test_production_progress_prints_percent_rate_elapsed_and_eta(
+    acopf,
+    monkeypatch,
+    capsys,
+):
+    progress = acopf._production_progress(
+        target_accepted_scenarios=10,
+        accepted_count=2,
+        next_sample_idx=4,
+        last_sample_idx=3,
+        total_candidate_attempts=5,
+        max_total_attempts=100,
+        records_written=42,
+        fault_rows_completed=1000,
+        source_counts={"uqgrid_pf": 1, "acopf": 1},
+    )
+    monkeypatch.setattr(acopf.time, "time", lambda: 1120.0)
+
+    acopf._print_production_progress(
+        progress,
+        start_time=1000.0,
+        start_accepted_count=1,
+    )
+
+    out = capsys.readouterr().out.strip()
+    assert "accepted OPs 2/10 (20.0%)" in out
+    assert "candidate attempts 5/100" in out
+    assert "OP acceptance/attempt 40.0%" in out
+    assert "accepted OP rate 30.00/hr" in out
+    assert "fault rows 1000" in out
+    assert "diagnostics 42" in out
+    assert "sources acopf=1, uqgrid_pf=1" in out
+    assert "elapsed 0:02:00" in out
+    assert "ETA 0:16:00" in out
+
+
 def test_export_delta_state_metadata_uses_injected_uqgrid(acopf, tmp_path):
     psys = _DummyPsys()
 
