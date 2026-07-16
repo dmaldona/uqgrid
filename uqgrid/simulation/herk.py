@@ -133,10 +133,9 @@ def integrate_system_herk(psys, config, ctx=None):
     import math
 
     from uqgrid.simulation.dynamics import (
-        initialize_system,
+        _initialize_system_from_config,
         preallocate_jacobian,
     )
-    from uqgrid.simulation.pflow import runpf
 
     if config.petsc:
         raise ValueError("HERK driver does not support PETSc.")
@@ -159,8 +158,7 @@ def integrate_system_herk(psys, config, ctx=None):
 
     psys.power_injection = config.power_injection
 
-    pf_solution = runpf(psys, verbose=False)
-    z0, theta = initialize_system(psys, pf_solution)
+    pf_solution, z0, theta = _initialize_system_from_config(psys, config)
 
     z0_user = ctx.z0_user if ctx is not None else getattr(config, "z0_user", None)
     theta_user = ctx.theta_user if ctx is not None else getattr(config, "theta_user", None)
@@ -225,4 +223,7 @@ def integrate_system_herk(psys, config, ctx=None):
     if nsteps - 1 < step_off and len(psys.fault_events) > 0:
         psys.fault_events[0].remove()
 
-    return {"tvec": tvec, "history": history}
+    results = {"tvec": tvec, "history": history}
+    if pf_solution.validation is not None:
+        results["power_flow_diagnostics"] = pf_solution.validation
+    return results

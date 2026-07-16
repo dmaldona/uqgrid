@@ -3,6 +3,28 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 import numpy as np
 
+
+class PowerFlowValidationConfig(BaseModel):
+    enabled: bool = False
+    residual_tolerance: float = Field(1e-8, ge=0.0)
+    generator_limit_tolerance: float = Field(1e-6, ge=0.0)
+    voltage_min: Optional[float] = None
+    voltage_max: Optional[float] = None
+    branch_loading_max: Optional[float] = Field(None, gt=0.0)
+    branch_limit_tolerance: float = Field(1e-5, ge=0.0)
+    active_set_voltage_tolerance: float = Field(1e-6, ge=0.0)
+
+    @model_validator(mode="after")
+    def validate_voltage_range(self):
+        if (
+            self.voltage_min is not None
+            and self.voltage_max is not None
+            and self.voltage_min > self.voltage_max
+        ):
+            raise ValueError("power_flow_validation.voltage_min must not exceed voltage_max")
+        return self
+
+
 class IntegrationConfig(BaseModel):
     power_injection: bool = False
     tend: float = Field(10.0, description="Integration end time in seconds.")
@@ -19,6 +41,24 @@ class IntegrationConfig(BaseModel):
     petsc_args: List[str] = Field(
         default_factory=list,
         description="PETSc-specific command-line options to pass to petsc4py.init.",
+    )
+    enforce_q_limits: bool = Field(
+        False,
+        description="Enforce non-slack PV generator Q limits during initial power flow.",
+    )
+    q_limit_tolerance: float = Field(
+        1e-8,
+        ge=0.0,
+        description="Per-unit tolerance for initial power-flow Q-limit activation.",
+    )
+    max_q_limit_iterations: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Maximum active-set power-flow solves; defaults to the PV-bus count plus one.",
+    )
+    power_flow_validation: PowerFlowValidationConfig = Field(
+        default_factory=PowerFlowValidationConfig,
+        description="Optional final operating-point checks before dynamic initialization.",
     )
     solve_powerflow_dynamics: bool = Field(True, description="Solve power flow before dynamics.")
     arkimex: bool = Field(False, description="Use ARKIMEX integrator.")

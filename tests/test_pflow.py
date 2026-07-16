@@ -7,7 +7,8 @@ import cmath
 import numpy as np
 import scipy.io as sio
 from uqgrid.io.parse import load_matpower, load_psse
-from uqgrid.simulation.pflow import runpf
+from uqgrid.core.psydef import Bus
+from uqgrid.simulation.pflow import _project_reactive_dispatch, runpf
 
 EPS = 1e-8
 
@@ -89,3 +90,83 @@ def test_power_flow_from_psse(data_dir):
         computed_angle = v[2 * bus_idx + 1] * rad2ang
         assert np.isclose(computed_angle, expected_angle, rtol=rtol), \
             f'Bus ({bus_idx}) voltage angle differs: expected {expected_angle}, got {computed_angle}'
+
+
+def test_reactive_dispatch_projection_respects_individual_limits():
+    dispatch = _project_reactive_dispatch(
+        total_q=0.8,
+        lower=np.array([-0.2, 0.0]),
+        upper=np.array([0.2, 1.0]),
+    )
+
+    np.testing.assert_allclose(dispatch, [0.2, 0.6])
+    assert np.sum(dispatch) == pytest.approx(0.8)
+
+
+def test_power_flow_q_limit_enforcement_is_opt_in(data_dir):
+    psys = load_matpower(os.path.join(data_dir, "case9.m"))
+    psys.gens[1].qgub = 0.02
+    psys.createYbusComplex()
+
+    result = runpf(psys, verbose=False)
+
+    assert result.gen_qsch[1] > psys.gens[1].qgub
+    assert result.bus_types[1] == Bus.PV
+    assert not result.q_limit_enforced
+    assert result.q_limit_events == []
+
+
+def test_power_flow_qmax_active_set_switches_pv_bus_to_pq(data_dir):
+    psys = load_matpower(os.path.join(data_dir, "case9.m"))
+    psys.gens[1].qgub = 0.02
+    original_voltage_setpoint = psys.buses[1].v0m
+    psys.createYbusComplex()
+
+    result = runpf(psys, verbose=False, enforce_q_limits=True)
+
+    assert result.gen_qsch[1] == pytest.approx(psys.gens[1].qgub)
+    assert result.bus_types[1] == Bus.PQ
+    assert result.v_magnitudes[1] < original_voltage_setpoint
+    assert result.q_limit_enforced
+    assert result.q_limit_iterations == 2
+    assert result.q_limit_events[0]["side"] == "upper"
+    assert psys.buses[1].type == Bus.PV
+    assert psys.gens[1].qsch != pytest.approx(psys.gens[1].qgub)
+
+
+def test_power_flow_qmin_active_set_switches_pv_bus_to_pq(data_dir):
+    psys = load_matpower(os.path.join(data_dir, "case9.m"))
+    psys.gens[2].qglb = -0.05
+    psys.createYbusComplex()
+
+    result = runpf(psys, verbose=False, enforce_q_limits=True)
+
+    assert result.gen_qsch[2] == pytest.approx(psys.gens[2].qglb)
+    assert result.bus_types[2] == Bus.PQ
+    assert result.q_limit_events[0]["side"] == "lower"
+
+
+def test_power_flow_projects_q_across_generators_before_switching_bus(data_dir):
+    psys = load_matpower(os.path.join(data_dir, "case9.m"))
+    psys.gens[1].qgub = 0.02
+    psys.add_gen(
+        bus=1,
+        idx_name="2",
+        psch=0.0,
+        qsch=0.0,
+        pgub=100.0,
+        pglb=0.0,
+        qgub=100.0,
+        qglb=-100.0,
+    )
+    psys.createYbusComplex()
+
+    result = runpf(psys, verbose=False, enforce_q_limits=True)
+
+    assert result.bus_types[1] == Bus.PV
+    assert result.q_limit_events == []
+    assert result.gen_qsch[1] == pytest.approx(psys.gens[1].qgub)
+    assert result.gen_qsch[-1] > result.gen_qsch[1]
+    assert np.sum(result.gen_qsch[[1, -1]]) == pytest.approx(
+        result.s_inj_vector[2*1 + 1]
+    )

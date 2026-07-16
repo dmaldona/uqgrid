@@ -12,8 +12,16 @@ __version__ = "0.1.0"
 from .simulation.dynamics import integrate_system, initialize_system
 from .core.psydef import Psystem
 from .io.parse import load_psse, add_dyr, load_matpower, load_gic
-from .simulation.pflow import runpf
-from .simulation.config import IntegrationConfig, IntegrationCtx
+from .simulation.pflow import (
+    PowerFlowValidationError,
+    runpf,
+    validate_power_flow_solution,
+)
+from .simulation.config import (
+    IntegrationConfig,
+    IntegrationCtx,
+    PowerFlowValidationConfig,
+)
 
 # Check if PETSc is available
 try:
