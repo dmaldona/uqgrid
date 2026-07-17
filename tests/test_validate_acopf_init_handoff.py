@@ -194,11 +194,25 @@ def test_collect_exciter_limit_diagnostics(validator):
 
     result = validator.collect_exciter_limit_diagnostics(psys, state)
 
+    assert result["applicable"] is True
     assert result["count"] == 2
     assert result["violation_count"] == 1
     assert result["efd_min"] == pytest.approx(3.0)
     assert result["efd_max"] == pytest.approx(5.1)
     assert result["violations"][0]["id"] == "high"
+
+
+def test_collect_exciter_limit_diagnostics_without_sexs_is_not_applicable(validator):
+    result = validator.collect_exciter_limit_diagnostics(
+        SimpleNamespace(exc=[]),
+        np.asarray([0.0]),
+    )
+
+    assert result["applicable"] is False
+    assert result["count"] == 0
+    assert result["violation_count"] == 0
+    assert result["efd_min"] is None
+    assert result["efd_max"] is None
 
 
 def test_compute_trajectory_drift_by_state_block(validator):

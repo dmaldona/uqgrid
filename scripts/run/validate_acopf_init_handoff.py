@@ -181,6 +181,7 @@ def collect_exciter_limit_diagnostics(
     ]
     violations = [record for record in records if not record.get("within_limits")]
     return {
+        "applicable": bool(records),
         "count": len(records),
         "violation_count": len(violations),
         "finite_count": sum(bool(record.get("finite")) for record in records),
@@ -473,8 +474,9 @@ def validate_operating_point(args: argparse.Namespace) -> dict[str, Any]:
         _check(
             checks,
             "Initialized SEXS Efd limits",
-            efd["count"] > 0 and efd["violation_count"] == 0,
+            efd["violation_count"] == 0,
             {
+                "applicable": efd["applicable"],
                 "count": efd["count"],
                 "violation_count": efd["violation_count"],
                 "efd_min": efd["efd_min"],
