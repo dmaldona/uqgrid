@@ -1234,7 +1234,7 @@ def _integration_config_from_config(config: Mapping[str, Any]) -> dict[str, Any]
         "toff": integration_cfg.get("toff", 0.4),
         "verbose": integration_cfg.get("verbose", False),
         "petsc": integration_cfg.get("petsc", True),
-        "enforce_q_limits": integration_cfg.get("enforce_q_limits", False),
+        "enforce_q_limits": integration_cfg.get("enforce_q_limits", True),
         "q_limit_tolerance": integration_cfg.get("q_limit_tolerance", 1e-8),
         "max_q_limit_iterations": integration_cfg.get("max_q_limit_iterations"),
         "power_flow_validation": dict(validation_cfg),
