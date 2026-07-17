@@ -1086,10 +1086,15 @@ def test_integration_config_adapter_preserves_pf_contract(acopf):
     assert adapted["power_flow_validation"] is not validation
 
     defaults = acopf._integration_config_from_config({})
-    assert defaults["enforce_q_limits"] is False
+    assert defaults["enforce_q_limits"] is True
     assert defaults["q_limit_tolerance"] == pytest.approx(1e-8)
     assert defaults["max_q_limit_iterations"] is None
     assert defaults["power_flow_validation"] == {}
+
+    disabled = acopf._integration_config_from_config(
+        {"integration": {"enforce_q_limits": False}}
+    )
+    assert disabled["enforce_q_limits"] is False
 
 
 def _replay_context(tmp_path, keep_fault_histories=False):
