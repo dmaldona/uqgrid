@@ -57,10 +57,12 @@ before dynamic device initialization. Configure it under `integration`:
 }
 ```
 
-`enforce_q_limits` defaults to `false`, `q_limit_tolerance` defaults to
-`1e-8`, `max_q_limit_iterations` defaults to `null`, and final validation is
-disabled unless `power_flow_validation.enabled=true`. Existing configs
-therefore retain their previous behavior.
+`enforce_q_limits` defaults to `true`, `q_limit_tolerance` defaults to `1e-8`,
+and `max_q_limit_iterations` defaults to `null`. Set
+`enforce_q_limits=false` only when an unconstrained legacy operating point is
+required. Final validation remains disabled unless
+`power_flow_validation.enabled=true` because voltage and branch thresholds are
+model-specific.
 
 This final contract applies identically to ExaJuGO-initialized and direct
 UQGrid-PF rows. It is separate from:
