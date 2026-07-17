@@ -76,6 +76,83 @@ result is stored as `power_flow_validation` in
 `acopf_init_diagnostics.jsonl`; successful accepted-fault diagnostics are also
 retained in `simulation_log.json`.
 
+## PF-To-Replay Handoff Validation
+
+`validate_acopf_init_handoff.py` is a validation utility for checking the two
+initialization paths before changing dynamic limiter behavior. It does not
+modify the scenario generator or enable SEXS limits.
+
+The utility requires a config with the final PF contract enabled:
+
+```json
+{
+  "integration": {
+    "enforce_q_limits": true,
+    "q_limit_tolerance": 1e-8,
+    "max_q_limit_iterations": null,
+    "power_flow_validation": {
+      "enabled": true,
+      "residual_tolerance": 1e-8,
+      "generator_limit_tolerance": 1e-6,
+      "voltage_min": 0.9,
+      "voltage_max": 1.1,
+      "branch_loading_max": 1.0,
+      "branch_limit_tolerance": 1e-5,
+      "active_set_voltage_tolerance": 1e-6
+    }
+  }
+}
+```
+
+Derive the validation config from the exact production config. Preserve the
+existing perturbation, `dt`, `ton`, and `toff` values.
+
+Validate the ACOPF handoff and five undisturbed PETSc steps:
+
+```bash
+python scripts/run/validate_acopf_init_handoff.py operating-point \
+  /path/to/config_ACTIVSg500_L1_04_C8_stage5.json \
+  --source acopf \
+  --output-dir /scratch/$USER/stage5_handoff/acopf_petsc \
+  --petsc \
+  --julia "$JULIA" \
+  --exajugo-root "$EXAJUGO_ROOT" \
+  --exajugo-base-raw "$EXAJUGO_BASE_RAW" \
+  --exajugo-base-rop "$EXAJUGO_BASE_ROP" \
+  --uqgrid-root "$UQGRID_ROOT"
+```
+
+Validate the direct UQGrid PF handoff without PETSc:
+
+```bash
+python scripts/run/validate_acopf_init_handoff.py operating-point \
+  /path/to/config_ACTIVSg500_L1_04_C8_stage5.json \
+  --source uqgrid_pf \
+  --output-dir /scratch/$USER/stage5_handoff/uqgrid_beuler \
+  --no-petsc \
+  --uqgrid-root "$UQGRID_ROOT"
+```
+
+Run both commands with `--petsc` and `--no-petsc` to compare solver-independent
+initialization. Each command checks the final PF diagnostics, initialized DAE
+residual, all parsed SEXS `EMIN`/`EMAX` bounds, and no-disturbance trajectory
+drift. The utility registers a fault but sets `ton=tend=5*dt` and `toff=6*dt`,
+so it is never applied; this avoids the existing empty-fault cleanup assumption.
+
+Validate a generated final/min dataset and its restart files:
+
+```bash
+python scripts/run/validate_acopf_init_handoff.py dataset \
+  --output-dir /scratch/$USER/stage5_handoff/mixed \
+  --probml-basename tsi_probml_fullinputs_ACTIVSg500 \
+  --expected-sources acopf,uqgrid_pf \
+  --expected-fault-count 2
+```
+
+The operating-point and dataset commands write JSON reports in their output
+directories, print checkmarks to stderr, print the complete JSON report to
+stdout, and exit nonzero when any gate fails. Dense histories are not written.
+
 These settings constrain the initialization operating point only. They do not
 enforce generator reactive-power or SEXS field-voltage limits during the
 post-fault trajectory.
