@@ -1225,6 +1225,7 @@ def parse_float_list(value: Any, *, default: Sequence[float] | None = None) -> l
 
 def _integration_config_from_config(config: Mapping[str, Any]) -> dict[str, Any]:
     integration_cfg = config.get("integration", {}) or {}
+    validation_cfg = integration_cfg.get("power_flow_validation", {}) or {}
     return {
         "tend": integration_cfg.get("tend", 10.0),
         "dt": integration_cfg.get("dt", 1 / 120.0),
@@ -1233,7 +1234,70 @@ def _integration_config_from_config(config: Mapping[str, Any]) -> dict[str, Any]
         "toff": integration_cfg.get("toff", 0.4),
         "verbose": integration_cfg.get("verbose", False),
         "petsc": integration_cfg.get("petsc", True),
+        "enforce_q_limits": integration_cfg.get("enforce_q_limits", False),
+        "q_limit_tolerance": integration_cfg.get("q_limit_tolerance", 1e-8),
+        "max_q_limit_iterations": integration_cfg.get("max_q_limit_iterations"),
+        "power_flow_validation": dict(validation_cfg),
     }
+
+
+def _power_flow_validation_from_sim(sim: Any) -> Any:
+    if not isinstance(sim, Mapping):
+        return None
+    diagnostics = sim.get("power_flow_diagnostics")
+    if diagnostics is None:
+        return None
+    return _json_safe(diagnostics)
+
+
+def _fault_failure_details(exc: Exception) -> dict[str, Any]:
+    details = {
+        "success": False,
+        "accepted": False,
+        "reject_reason": "dynamic_fault_failed",
+        "error_type": type(exc).__name__,
+        "error": str(exc),
+        "simulation_diverged": True,
+        "file": None,
+    }
+    is_validation_error = any(
+        cls.__name__ == "PowerFlowValidationError" for cls in type(exc).__mro__
+    )
+    diagnostics = getattr(exc, "diagnostics", None)
+    if is_validation_error and isinstance(diagnostics, Mapping):
+        details.update(
+            {
+                "reject_reason": "power_flow_validation_failed",
+                "reject_stage": "power_flow_validation",
+                "power_flow_validation": _json_safe(diagnostics),
+                "simulation_diverged": False,
+            }
+        )
+    return details
+
+
+def _fault_group_failure_summary(
+    fault_results: Sequence[Mapping[str, Any]],
+    *,
+    expected_count: int,
+) -> tuple[list[Mapping[str, Any]], dict[str, int], str]:
+    failed = [result for result in fault_results if not result.get("accepted")]
+    failure_counts: dict[str, int] = {}
+    for result in failed:
+        reason = str(result.get("reject_reason", "dynamic_fault_failed"))
+        failure_counts[reason] = failure_counts.get(reason, 0) + 1
+
+    missing_count = max(0, int(expected_count) - len(fault_results))
+    unexpected_count = max(0, len(fault_results) - int(expected_count))
+    if missing_count:
+        failure_counts["dynamic_fault_missing_result"] = missing_count
+    if unexpected_count:
+        failure_counts["dynamic_fault_unexpected_result"] = unexpected_count
+
+    reject_reason = "dynamic_fault_failed"
+    if not missing_count and not unexpected_count and len(failure_counts) == 1:
+        reject_reason = next(iter(failure_counts))
+    return failed, failure_counts, reject_reason
 
 
 def _default_probml_basename(config: Mapping[str, Any], *, smoke: bool = False) -> str:
@@ -1356,6 +1420,9 @@ def replay_acopf_fault_task(
         psys.createYbusComplex()
         cfg = integration_config_cls(**dict(context["integration_config"]))
         sim = integrate_system_func(psys, cfg)
+        validation = _power_flow_validation_from_sim(sim)
+        if validation is not None:
+            record["power_flow_validation"] = validation
         history = sim.get("history") if isinstance(sim, Mapping) else None
         tvec = sim.get("tvec") if isinstance(sim, Mapping) else None
         if history is None:
@@ -1407,17 +1474,7 @@ def replay_acopf_fault_task(
     except Exception as exc:
         if context.get("debug_tracebacks", False):
             traceback.print_exc()
-        record.update(
-            {
-                "success": False,
-                "accepted": False,
-                "reject_reason": "dynamic_fault_failed",
-                "error_type": type(exc).__name__,
-                "error": str(exc),
-                "simulation_diverged": True,
-                "file": None,
-            }
-        )
+        record.update(_fault_failure_details(exc))
         return record
     finally:
         tvec = None
@@ -1491,6 +1548,9 @@ def replay_uqgrid_fault_task(
         psys.createYbusComplex()
         cfg = integration_config_cls(**dict(context["integration_config"]))
         sim = integrate_system_func(psys, cfg)
+        validation = _power_flow_validation_from_sim(sim)
+        if validation is not None:
+            record["power_flow_validation"] = validation
         history = sim.get("history") if isinstance(sim, Mapping) else None
         tvec = sim.get("tvec") if isinstance(sim, Mapping) else None
         if history is None:
@@ -1537,17 +1597,7 @@ def replay_uqgrid_fault_task(
     except Exception as exc:
         if context.get("debug_tracebacks", False):
             traceback.print_exc()
-        record.update(
-            {
-                "success": False,
-                "accepted": False,
-                "reject_reason": "dynamic_fault_failed",
-                "error_type": type(exc).__name__,
-                "error": str(exc),
-                "simulation_diverged": True,
-                "file": None,
-            }
-        )
+        record.update(_fault_failure_details(exc))
         return record
     finally:
         tvec = None
@@ -2885,23 +2935,30 @@ def run_acopf_replay_smoke(
         return progress
 
     records.extend(fault_results)
-    failed = [result for result in fault_results if not result.get("accepted")]
-    if failed:
+    failed, failure_counts, group_reject_reason = _fault_group_failure_summary(
+        fault_results,
+        expected_count=task_count,
+    )
+    if len(fault_results) != task_count or failed:
+        faults_successful = sum(
+            1 for result in fault_results if result.get("accepted")
+        )
         group_record = {
             "record_type": "operating_point_group",
             "sample_idx": sample_idx,
             "accepted": False,
-            "reject_reason": "dynamic_fault_failed",
+            "reject_reason": group_reject_reason,
             "faults_required": task_count,
-            "faults_successful": task_count - len(failed),
+            "faults_successful": faults_successful,
+            "fault_failure_reasons": failure_counts,
         }
         records.append(group_record)
         progress = _stage3_progress(
             accepted=False,
             sample_idx=sample_idx,
-            reject_reason="dynamic_fault_failed",
+            reject_reason=group_reject_reason,
             records_written=len(records),
-            fault_samples_completed=task_count - len(failed),
+            fault_samples_completed=faults_successful,
         )
         _write_smoke_diagnostics(output_dir, progress=progress, records=records)
         return progress
@@ -3231,6 +3288,10 @@ def _fault_result_entries(
             "history_file": result.get("history_file"),
             "final_simulation_time_s": result.get("final_simulation_time_s"),
         }
+        if result.get("power_flow_validation") is not None:
+            simulation_log[sid]["power_flow_validation"] = _json_safe(
+                result["power_flow_validation"]
+            )
     return metadata, simulation_log
 
 
@@ -3606,17 +3667,12 @@ def run_acopf_production(
             result.setdefault("acopf_feasible", context_acopf_feasible)
 
         records.extend(fault_results)
-        failed = [result for result in fault_results if not result.get("accepted")]
+        failed, failure_counts, group_reject_reason = _fault_group_failure_summary(
+            fault_results,
+            expected_count=task_count,
+        )
         if len(fault_results) != task_count or failed:
-            last_reject_reason = "dynamic_fault_failed"
-            failure_counts: dict[str, int] = {}
-            for result in failed:
-                reason = str(result.get("reject_reason", "dynamic_fault_failed"))
-                failure_counts[reason] = failure_counts.get(reason, 0) + 1
-            if len(fault_results) != task_count:
-                failure_counts["dynamic_fault_missing_result"] = (
-                    task_count - len(fault_results)
-                )
+            last_reject_reason = group_reject_reason
             records.append(
                 {
                     "record_type": "operating_point_group",
@@ -3628,7 +3684,7 @@ def run_acopf_production(
                     "initialization_source": context_source,
                     "acopf_feasible": context_acopf_feasible,
                     "accepted": False,
-                    "reject_reason": "dynamic_fault_failed",
+                    "reject_reason": group_reject_reason,
                     "total_candidate_attempts": total_candidate_attempts,
                     "max_total_attempts": max_attempts,
                     "faults_required": task_count,

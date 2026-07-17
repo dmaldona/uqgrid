@@ -34,6 +34,52 @@ point. All faults for that operating point use the same source.
 
 Dense dynamic histories are discarded by default.
 
+## Final Power-Flow Contract
+
+Both initialization sources use the same final UQGrid power flow immediately
+before dynamic device initialization. Configure it under `integration`:
+
+```json
+"integration": {
+  "enforce_q_limits": true,
+  "q_limit_tolerance": 1e-8,
+  "max_q_limit_iterations": null,
+  "power_flow_validation": {
+    "enabled": true,
+    "residual_tolerance": 1e-8,
+    "generator_limit_tolerance": 1e-6,
+    "voltage_min": 0.9,
+    "voltage_max": 1.1,
+    "branch_loading_max": 1.0,
+    "branch_limit_tolerance": 1e-5,
+    "active_set_voltage_tolerance": 1e-6
+  }
+}
+```
+
+`enforce_q_limits` defaults to `false`, `q_limit_tolerance` defaults to
+`1e-8`, `max_q_limit_iterations` defaults to `null`, and final validation is
+disabled unless `power_flow_validation.enabled=true`. Existing configs
+therefore retain their previous behavior.
+
+This final contract applies identically to ExaJuGO-initialized and direct
+UQGrid-PF rows. It is separate from:
+
+- `operating_point.q_limit_mitigation`, which screens the candidate before
+  source selection;
+- the ACOPF-only post-ExaJuGO PF handshake check, which verifies solution
+  import, ordering, convergence, and residual before fault replay.
+
+A final validation failure rejects the operating point before dynamics with
+`reject_reason="power_flow_validation_failed"`. The structured validator
+result is stored as `power_flow_validation` in
+`acopf_init_diagnostics.jsonl`; successful accepted-fault diagnostics are also
+retained in `simulation_log.json`.
+
+These settings constrain the initialization operating point only. They do not
+enforce generator reactive-power or SEXS field-voltage limits during the
+post-fault trajectory.
+
 ## Required Inputs
 
 - A standard UQGrid scenario JSON config with model RAW/DYR paths.

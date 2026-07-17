@@ -1057,6 +1057,41 @@ class _FakeIntegrationConfig:
         self.kwargs = kwargs
 
 
+def test_integration_config_adapter_preserves_pf_contract(acopf):
+    validation = {
+        "enabled": True,
+        "residual_tolerance": 2e-9,
+        "generator_limit_tolerance": 3e-7,
+        "voltage_min": 0.92,
+        "voltage_max": 1.08,
+        "branch_loading_max": 0.95,
+        "branch_limit_tolerance": 4e-6,
+        "active_set_voltage_tolerance": 5e-7,
+    }
+    adapted = acopf._integration_config_from_config(
+        {
+            "integration": {
+                "enforce_q_limits": True,
+                "q_limit_tolerance": 6e-8,
+                "max_q_limit_iterations": 12,
+                "power_flow_validation": validation,
+            }
+        }
+    )
+
+    assert adapted["enforce_q_limits"] is True
+    assert adapted["q_limit_tolerance"] == pytest.approx(6e-8)
+    assert adapted["max_q_limit_iterations"] == 12
+    assert adapted["power_flow_validation"] == validation
+    assert adapted["power_flow_validation"] is not validation
+
+    defaults = acopf._integration_config_from_config({})
+    assert defaults["enforce_q_limits"] is False
+    assert defaults["q_limit_tolerance"] == pytest.approx(1e-8)
+    assert defaults["max_q_limit_iterations"] is None
+    assert defaults["power_flow_validation"] == {}
+
+
 def _replay_context(tmp_path, keep_fault_histories=False):
     tmp_path.mkdir(parents=True, exist_ok=True)
     basecase = tmp_path / "Basecase_solution.txt"
@@ -1119,6 +1154,147 @@ def _direct_replay_context(tmp_path, keep_fault_histories=False):
         "history_dir": str(tmp_path / "fault_histories"),
         "debug_tracebacks": False,
     }
+
+
+def _fault_task(acopf, scenario_id="sid"):
+    return acopf.FaultReplayTask(
+        sample_idx=0,
+        operating_point_id="op",
+        accepted_operating_point_index=0,
+        fault_location=142,
+        fault_impedance=1e-4,
+        fault_location_index=0,
+        fault_impedance_index=0,
+        scenario_id=scenario_id,
+    )
+
+
+def test_replay_workers_share_pf_contract_and_success_diagnostics(acopf, tmp_path):
+    validation = {
+        "valid": True,
+        "failure_reasons": [],
+        "residual_norm": 1e-12,
+    }
+    integration_config = {
+        "tend": 10.0,
+        "dt": 1 / 120,
+        "power_injection": False,
+        "ton": 0.25,
+        "toff": 0.4,
+        "verbose": False,
+        "petsc": True,
+        "enforce_q_limits": True,
+        "q_limit_tolerance": 2e-8,
+        "max_q_limit_iterations": 9,
+        "power_flow_validation": {"enabled": True},
+    }
+    worker_contexts = [
+        (
+            acopf.replay_acopf_fault_task,
+            _replay_context(tmp_path / "acopf"),
+        ),
+        (
+            acopf.replay_uqgrid_fault_task,
+            _direct_replay_context(tmp_path / "direct"),
+        ),
+    ]
+
+    for index, (worker, context) in enumerate(worker_contexts):
+        context["integration_config"] = dict(integration_config)
+        captured = []
+
+        def integrate_system(psys, cfg):
+            captured.append(cfg.kwargs)
+            return {
+                "history": np.asarray(
+                    [[0.0, 0.0], [9.0, 9.0], [0.0, 1.0]]
+                ),
+                "tvec": np.asarray([0.0, 1.0]),
+                "power_flow_diagnostics": validation,
+            }
+
+        result = worker(
+            _fault_task(acopf, scenario_id=f"sid-{index}"),
+            context,
+            load_psse_func=lambda path: _DummyPsys(),
+            add_dyr_func=lambda psys, path: None,
+            integration_config_cls=_FakeIntegrationConfig,
+            integrate_system_func=integrate_system,
+        )
+
+        assert result["accepted"] is True
+        assert result["power_flow_validation"] == validation
+        assert captured == [integration_config]
+
+
+def test_replay_workers_preserve_power_flow_validation_failure(acopf, tmp_path):
+    class PowerFlowValidationError(RuntimeError):
+        def __init__(self, diagnostics):
+            self.diagnostics = diagnostics
+            super().__init__("Power-flow operating-point validation failed")
+
+    diagnostics = {
+        "valid": False,
+        "failure_reasons": ["gen_q_limit"],
+        "gen_q": {"violation_count": 1},
+    }
+    worker_contexts = [
+        (
+            acopf.replay_acopf_fault_task,
+            _replay_context(tmp_path / "acopf"),
+        ),
+        (
+            acopf.replay_uqgrid_fault_task,
+            _direct_replay_context(tmp_path / "direct"),
+        ),
+    ]
+
+    def fail_validation(psys, cfg):
+        raise PowerFlowValidationError(diagnostics)
+
+    for index, (worker, context) in enumerate(worker_contexts):
+        result = worker(
+            _fault_task(acopf, scenario_id=f"failed-{index}"),
+            context,
+            load_psse_func=lambda path: _DummyPsys(),
+            add_dyr_func=lambda psys, path: None,
+            integration_config_cls=_FakeIntegrationConfig,
+            integrate_system_func=fail_validation,
+        )
+
+        assert result["accepted"] is False
+        assert result["reject_reason"] == "power_flow_validation_failed"
+        assert result["reject_stage"] == "power_flow_validation"
+        assert result["power_flow_validation"] == diagnostics
+        assert result["simulation_diverged"] is False
+        assert "tsi_final" not in result
+        assert not os.path.exists(context["history_dir"])
+
+
+def test_fault_result_log_preserves_successful_power_flow_validation(acopf):
+    validation = {"valid": True, "failure_reasons": [], "residual_norm": 1e-12}
+    fault_result = {
+        "scenario_id": "sid",
+        "fault_location": 142,
+        "fault_impedance": 1e-4,
+        "initialization_source": "acopf",
+        "acopf_feasible": True,
+        "tsi_final": 10.0,
+        "tsi_min": 5.0,
+        "history_file": None,
+        "final_simulation_time_s": 10.0,
+        "power_flow_validation": validation,
+    }
+
+    metadata, simulation_log = acopf._fault_result_entries(
+        [fault_result],
+        sample_idx=0,
+        operating_point_id="op",
+        accepted_operating_point_index=0,
+    )
+
+    assert "power_flow_validation" not in metadata["sid"]
+    assert simulation_log["sid"]["power_flow_validation"] == validation
 
 
 def test_replay_acopf_fault_task_success_and_history_default(acopf, tmp_path):
@@ -1328,6 +1504,74 @@ def test_run_acopf_replay_smoke_writes_one_row_probml(acopf, tmp_path):
     with np.load(min_path, allow_pickle=True) as data:
         assert data["Y"].shape == (1, 2, 1)
         assert data["meta"][0]["tsi_mode"] == "min"
+
+
+def test_replay_smoke_preserves_power_flow_validation_rejection(acopf, tmp_path):
+    config_path, raw, dyr, base_raw, base_rop, _ = _smoke_config(tmp_path)
+    parsed = _large_parsed_basecase(acopf)
+
+    def context_func(**kwargs):
+        return {
+            "accepted": True,
+            "records": [{"record_type": "acopf_smoke", "accepted": True}],
+            "raw_path": raw,
+            "dyr_path": dyr,
+            "case_raw_path": tmp_path / "case.raw",
+            "basecase_path": tmp_path / "Basecase_solution.txt",
+            "parsed_basecase": parsed,
+            "sample_idx": 0,
+            "operating_point_id": "op",
+            "accepted_operating_point_index": 0,
+            "base_mva": 100.0,
+        }
+
+    def failed_fault_runner(tasks, context, n_jobs, parallel_timeout_s):
+        return [
+            {
+                "record_type": "fault_scenario",
+                "accepted": False,
+                "reject_reason": "power_flow_validation_failed",
+                "reject_stage": "power_flow_validation",
+                "power_flow_validation": {
+                    "valid": False,
+                    "failure_reasons": ["gen_q_limit"],
+                },
+                "scenario_id": task.scenario_id,
+                "fault_location_index": task.fault_location_index,
+                "fault_impedance_index": task.fault_impedance_index,
+                "fault_location": task.fault_location,
+                "fault_impedance": task.fault_impedance,
+            }
+            for task in tasks
+        ]
+
+    output_dir = tmp_path / "out"
+    progress = acopf.run_acopf_replay_smoke(
+        config_path=config_path,
+        output_dir=output_dir,
+        acopf_config=acopf.AcopfInitializationConfig(
+            julia="julia",
+            exajugo_root=tmp_path / "exajugo",
+            base_raw=base_raw,
+            base_rop=base_rop,
+        ),
+        fault_locations="142,143",
+        fault_impedances="1e-4",
+        probml_basename="stage3_probml",
+        acopf_context_func=context_func,
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=failed_fault_runner,
+    )
+
+    assert progress["accepted"] is False
+    assert progress["reject_reason"] == "power_flow_validation_failed"
+    assert not (output_dir / "stage3_probml_final.npz").exists()
+    records = acopf._read_jsonl(output_dir / "acopf_init_diagnostics.jsonl")
+    group = records[-1]
+    assert group["reject_reason"] == "power_flow_validation_failed"
+    assert group["fault_failure_reasons"] == {
+        "power_flow_validation_failed": 2
+    }
 
 
 def test_run_acopf_replay_smoke_rejects_existing_npz_before_work(acopf, tmp_path):
@@ -1714,6 +1958,76 @@ def test_production_dynamic_fault_rejection_does_not_append_npz(acopf, tmp_path)
     assert progress["accepted_count"] == 0
     assert progress["reject_reason"] == "dynamic_fault_failed"
     assert not (tmp_path / "out" / "prod_final.npz").exists()
+
+
+@pytest.mark.parametrize(
+    ("acopf_probability", "initialization_source"),
+    [(1.0, "acopf"), (0.0, "uqgrid_pf")],
+)
+def test_production_preserves_power_flow_validation_rejection(
+    acopf,
+    tmp_path,
+    acopf_probability,
+    initialization_source,
+):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(
+        tmp_path,
+        n_bus=2,
+        target=1,
+        max_total_attempts=1,
+    )
+    parsed = _large_parsed_basecase(acopf)
+
+    def failed_fault_runner(tasks, context, n_jobs, parallel_timeout_s):
+        return [
+            {
+                "record_type": "fault_scenario",
+                "accepted": False,
+                "reject_reason": "power_flow_validation_failed",
+                "reject_stage": "power_flow_validation",
+                "power_flow_validation": {
+                    "valid": False,
+                    "failure_reasons": ["gen_q_limit"],
+                },
+                "scenario_id": task.scenario_id,
+                "fault_location_index": task.fault_location_index,
+                "fault_impedance_index": task.fault_impedance_index,
+                "fault_location": task.fault_location,
+                "fault_impedance": task.fault_impedance,
+            }
+            for task in tasks
+        ]
+
+    def unexpected_acopf_context(**kwargs):
+        pytest.fail("ACOPF context should not be used for direct-only production")
+
+    output_dir = tmp_path / "out"
+    progress = acopf.run_acopf_production(
+        config_path=config_path,
+        output_dir=output_dir,
+        acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+        acopf_probability=acopf_probability,
+        probml_basename="prod",
+        acopf_context_func=(
+            _accepted_production_context(acopf, tmp_path, parsed)
+            if initialization_source == "acopf"
+            else unexpected_acopf_context
+        ),
+        direct_context_func=_accepted_direct_production_context(tmp_path),
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=failed_fault_runner,
+    )
+
+    assert progress["accepted_count"] == 0
+    assert progress["reject_reason"] == "power_flow_validation_failed"
+    assert not (output_dir / "prod_final.npz").exists()
+    records = acopf._read_jsonl(output_dir / "acopf_init_diagnostics.jsonl")
+    group = records[-1]
+    assert group["initialization_source"] == initialization_source
+    assert group["reject_reason"] == "power_flow_validation_failed"
+    assert group["fault_failure_reasons"] == {
+        "power_flow_validation_failed": 2
+    }
 
 
 def test_status_reads_existing_state_without_acopf_config(acopf, tmp_path, capsys):
