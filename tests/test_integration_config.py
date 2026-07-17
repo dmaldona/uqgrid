@@ -29,12 +29,13 @@ def test_integration_config_rejects_both_fast_and_slow_lists():
 def test_integration_config_q_limit_defaults():
     cfg = IntegrationConfig()
 
-    assert cfg.enforce_q_limits is False
+    assert cfg.enforce_q_limits is True
     assert cfg.q_limit_tolerance == pytest.approx(1e-8)
     assert cfg.max_q_limit_iterations is None
     assert cfg.power_flow_validation.enabled is False
     assert cfg.power_flow_validation.voltage_min is None
     assert cfg.power_flow_validation.branch_loading_max is None
+    assert IntegrationConfig(enforce_q_limits=False).enforce_q_limits is False
 
 
 @pytest.mark.parametrize(

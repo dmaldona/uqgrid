@@ -823,11 +823,11 @@ def validate_power_flow_solution(
 def runpf(
         psys,
         verbose=False,
-        enforce_q_limits=False,
+        enforce_q_limits=True,
         q_limit_tolerance=1e-8,
         max_q_limit_iterations=None,
 ):
-    """Solve AC power flow, optionally enforcing non-slack PV generator Q limits.
+    """Solve AC power flow, enforcing non-slack PV generator Q limits by default.
 
     Q-limit enforcement uses an outer active set. After each Newton solve, the
     required aggregate generator Q at every PV bus is compared with the summed

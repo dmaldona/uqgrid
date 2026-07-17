@@ -76,7 +76,7 @@ def test_integration_config_adapter_preserves_q_limit_controls(gs):
 def test_default_scenario_config_includes_q_limit_controls(gs):
     integration = gs.get_default_config("IEEE-9")["integration"]
 
-    assert integration["enforce_q_limits"] is False
+    assert integration["enforce_q_limits"] is True
     assert integration["q_limit_tolerance"] == pytest.approx(1e-8)
     assert integration["max_q_limit_iterations"] is None
     validation = integration["power_flow_validation"]
@@ -86,6 +86,13 @@ def test_default_scenario_config_includes_q_limit_controls(gs):
     assert validation["voltage_min"] == pytest.approx(0.9)
     assert validation["voltage_max"] == pytest.approx(1.1)
     assert validation["branch_loading_max"] == pytest.approx(1.0)
+
+    adapted = gs._integration_config_from_dict({})
+    assert adapted.enforce_q_limits is True
+    assert adapted.power_flow_validation.enabled is False
+
+    legacy = gs._integration_config_from_dict({"enforce_q_limits": False})
+    assert legacy.enforce_q_limits is False
 
 
 def _fault_worker_inputs():

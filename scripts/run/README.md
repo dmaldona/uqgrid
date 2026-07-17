@@ -491,12 +491,12 @@ configured separately under `integration`:
 
 `operating_point.q_limit_mitigation` controls candidate preparation and
 screening. `integration.enforce_q_limits` controls the final initialization PF
-used by backward Euler, PETSc, HERK2, or HERK4. Enable the integration setting
-when the dynamic replay must preserve generator Q feasibility even after the
-system is reloaded in a worker. These limits apply only to the initial
-operating point; dynamic exciter and field-voltage limits are separate models.
-When final validation is enabled, a violation rejects the fault replay before
-dynamic initialization. The fault diagnostic record includes the structured
+used by backward Euler, PETSc, HERK2, or HERK4 and defaults to `true`. Set it to
+`false` only when an unconstrained legacy operating point is required. These
+limits apply only to the initial operating point; dynamic exciter and
+field-voltage limits are separate models. Final validation remains opt-in.
+When enabled, a validation failure rejects the fault replay before dynamic
+initialization. The fault diagnostic record includes the structured
 `power_flow_validation` result.
 
 ### Available Models

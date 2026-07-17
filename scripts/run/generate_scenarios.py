@@ -1569,7 +1569,7 @@ def _integration_config_from_dict(integration_config=None):
         toff=int_cfg.get("toff", 0.4),
         verbose=int_cfg.get("verbose", False),
         petsc=int_cfg.get("petsc", True),
-        enforce_q_limits=int_cfg.get("enforce_q_limits", False),
+        enforce_q_limits=int_cfg.get("enforce_q_limits", True),
         q_limit_tolerance=int_cfg.get("q_limit_tolerance", 1e-8),
         max_q_limit_iterations=int_cfg.get("max_q_limit_iterations"),
         power_flow_validation=int_cfg.get("power_flow_validation", {}),
@@ -2265,7 +2265,7 @@ def run_single_scenario_worker(
             toff=int_cfg.get('toff', 0.4),            # Fault clearing time [s]
             verbose=int_cfg.get('verbose', False),
             petsc=int_cfg.get('petsc', True),
-            enforce_q_limits=int_cfg.get('enforce_q_limits', False),
+            enforce_q_limits=int_cfg.get('enforce_q_limits', True),
             q_limit_tolerance=int_cfg.get('q_limit_tolerance', 1e-8),
             max_q_limit_iterations=int_cfg.get('max_q_limit_iterations'),
             power_flow_validation=int_cfg.get('power_flow_validation', {}),
@@ -3451,7 +3451,7 @@ def get_default_config(model_name: str) -> dict:
             "toff": 0.4,               # Fault clearing time [s]
             "verbose": False,
             "petsc": True,
-            "enforce_q_limits": False,
+            "enforce_q_limits": True,
             "q_limit_tolerance": 1e-8,
             "max_q_limit_iterations": None,
             "power_flow_validation": {
@@ -3710,7 +3710,7 @@ def main(config_path: str = None):
                 "toff": 0.4,
                 "verbose": false,
                 "petsc": true,
-                "enforce_q_limits": false,
+                "enforce_q_limits": true,
                 "q_limit_tolerance": 1e-8,
                 "max_q_limit_iterations": null,
                 "power_flow_validation": {
@@ -3861,7 +3861,7 @@ Examples:
         else:
             max_total_attempts = int(max_total_attempts)
 
-    # Integration configuration (with defaults for backward compatibility)
+    # Integration configuration
     integration_cfg = config.get("integration", {})
     validation_cfg = integration_cfg.get("power_flow_validation", {}) or {}
     integration_config = {
@@ -3872,7 +3872,7 @@ Examples:
         "toff": integration_cfg.get("toff", 0.4),
         "verbose": integration_cfg.get("verbose", False),
         "petsc": integration_cfg.get("petsc", True),
-        "enforce_q_limits": integration_cfg.get("enforce_q_limits", False),
+        "enforce_q_limits": integration_cfg.get("enforce_q_limits", True),
         "q_limit_tolerance": integration_cfg.get("q_limit_tolerance", 1e-8),
         "max_q_limit_iterations": integration_cfg.get("max_q_limit_iterations"),
         "power_flow_validation": {

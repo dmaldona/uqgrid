@@ -59,7 +59,7 @@ config = IntegrationConfig(
     comp_sens=False,
     fsolve=False,
     petsc=True,
-    enforce_q_limits=False,
+    enforce_q_limits=True,
     q_limit_tolerance=1e-8,
     max_q_limit_iterations=None,
     power_flow_validation={
@@ -102,11 +102,13 @@ Key fields:
 
 ### Initial reactive-power limits
 
-Set `enforce_q_limits=True` to project generator reactive dispatch onto its
-RAW/MATPOWER bounds before dynamic initialization. If a non-slack PV bus cannot
-hold its voltage setpoint within aggregate generator Q capability, the power
-flow switches that bus to PQ and solves again. The same initialization is used
-for PETSc, backward Euler, HERK2, and HERK4.
+Q-limit enforcement is enabled by default and projects generator reactive
+dispatch onto its RAW/MATPOWER bounds before dynamic initialization. Set
+`enforce_q_limits=False` only when an unconstrained legacy operating point is
+required. If a non-slack PV bus cannot hold its voltage setpoint within
+aggregate generator Q capability, the power flow switches that bus to PQ and
+solves again. The same initialization is used for PETSc, backward Euler,
+HERK2, and HERK4.
 
 This constrains the operating point only. It does not impose generator
 reactive-power or exciter field-voltage limits during the dynamic trajectory.

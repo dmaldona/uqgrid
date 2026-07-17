@@ -43,7 +43,7 @@ class IntegrationConfig(BaseModel):
         description="PETSc-specific command-line options to pass to petsc4py.init.",
     )
     enforce_q_limits: bool = Field(
-        False,
+        True,
         description="Enforce non-slack PV generator Q limits during initial power flow.",
     )
     q_limit_tolerance: float = Field(

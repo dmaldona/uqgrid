@@ -103,12 +103,12 @@ def test_reactive_dispatch_projection_respects_individual_limits():
     assert np.sum(dispatch) == pytest.approx(0.8)
 
 
-def test_power_flow_q_limit_enforcement_is_opt_in(data_dir):
+def test_power_flow_q_limit_enforcement_can_be_disabled(data_dir):
     psys = load_matpower(os.path.join(data_dir, "case9.m"))
     psys.gens[1].qgub = 0.02
     psys.createYbusComplex()
 
-    result = runpf(psys, verbose=False)
+    result = runpf(psys, verbose=False, enforce_q_limits=False)
 
     assert result.gen_qsch[1] > psys.gens[1].qgub
     assert result.bus_types[1] == Bus.PV
@@ -122,7 +122,7 @@ def test_power_flow_qmax_active_set_switches_pv_bus_to_pq(data_dir):
     original_voltage_setpoint = psys.buses[1].v0m
     psys.createYbusComplex()
 
-    result = runpf(psys, verbose=False, enforce_q_limits=True)
+    result = runpf(psys, verbose=False)
 
     assert result.gen_qsch[1] == pytest.approx(psys.gens[1].qgub)
     assert result.bus_types[1] == Bus.PQ
