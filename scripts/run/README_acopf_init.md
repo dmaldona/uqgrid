@@ -82,6 +82,15 @@ retained in `simulation_log.json`.
 initialization paths before changing dynamic limiter behavior. It does not
 modify the scenario generator or enable SEXS limits.
 
+The ACTIVSg500 C8 commands and array dimensions below are concrete examples,
+not model requirements. The generator and validator resolve model files,
+device counts, fault axes, and feature widths from the supplied configuration
+and UQGrid model. Models without SEXS exciters remain supported; the Efd
+initialization check is reported as not applicable for those models. When SEXS
+models are present, their initialized Efd values are checked against the parsed
+`EMIN`/`EMAX` bounds, and their dynamic trajectories can differ from otherwise
+equivalent models without SEXS.
+
 The utility requires a config with the final PF contract enabled:
 
 ```json
@@ -135,9 +144,10 @@ python scripts/run/validate_acopf_init_handoff.py operating-point \
 
 Run both commands with `--petsc` and `--no-petsc` to compare solver-independent
 initialization. Each command checks the final PF diagnostics, initialized DAE
-residual, all parsed SEXS `EMIN`/`EMAX` bounds, and no-disturbance trajectory
-drift. The utility registers a fault but sets `ton=tend=5*dt` and `toff=6*dt`,
-so it is never applied; this avoids the existing empty-fault cleanup assumption.
+residual, parsed SEXS `EMIN`/`EMAX` bounds when SEXS models are present, and
+no-disturbance trajectory drift. The utility registers a fault but sets
+`ton=tend=5*dt` and `toff=6*dt`, so it is never applied; this avoids the
+existing empty-fault cleanup assumption.
 
 Validate a generated final/min dataset and its restart files:
 
