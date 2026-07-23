@@ -44,17 +44,17 @@ def _ppc_from_matpower(case_path):
 def test_pypower_matches_uqgrid_powerflow(case_file, data_dir):
     case_path = os.path.join(data_dir, case_file)
 
-    # UQGrid power flow
+    # Compare the same unconstrained PF formulation in both implementations.
     psys = load_matpower(case_path)
     psys.createYbusComplex()
-    res = runpf(psys, verbose=False)
+    res = runpf(psys, verbose=False, enforce_q_limits=False)
     v = res.v_vector
     vmag_uq = v[0::2]
     vang_uq = v[1::2]
 
     # PYPOWER power flow
     ppc = _ppc_from_matpower(case_path)
-    ppopt = ppoption(VERBOSE=0, OUT_ALL=0)
+    ppopt = ppoption(VERBOSE=0, OUT_ALL=0, ENFORCE_Q_LIMS=0)
     results, success = pp_runpf(ppc, ppopt)
     assert success
 
