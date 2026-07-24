@@ -50,7 +50,13 @@ def _get_petsc_for_config(config):
 
 from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 from uqgrid.core import Psystem
-from uqgrid.simulation.pflow import runpf, compute_pinj_alt, PowerFlowSolution
+from uqgrid.simulation.pflow import (
+    PowerFlowSolution,
+    PowerFlowValidationError,
+    compute_pinj_alt,
+    runpf,
+    validate_power_flow_solution,
+)
 from uqgrid.simulation.gradients import gradient_p, gradient_xp, gradient_pp
 from uqgrid.simulation.residual import residual_function
 from uqgrid.simulation.herk import integrate_system_herk
@@ -937,6 +943,36 @@ def initialize_system(psys: Psystem, pf_solution: PowerFlowSolution):
     return sysvec, theta
 
 
+def _initialize_system_from_config(psys: Psystem, config: IntegrationConfig):
+    """Solve and initialize the operating point specified by an integration config."""
+    pf_solution = runpf(
+        psys,
+        verbose=False,
+        enforce_q_limits=config.enforce_q_limits,
+        q_limit_tolerance=config.q_limit_tolerance,
+        max_q_limit_iterations=config.max_q_limit_iterations,
+    )
+    validation = config.power_flow_validation
+    if validation.enabled:
+        pf_solution.validation = validate_power_flow_solution(
+            psys,
+            pf_solution,
+            residual_tolerance=validation.residual_tolerance,
+            generator_limit_tolerance=validation.generator_limit_tolerance,
+            voltage_min=validation.voltage_min,
+            voltage_max=validation.voltage_max,
+            branch_loading_max=validation.branch_loading_max,
+            branch_limit_tolerance=validation.branch_limit_tolerance,
+            active_set_voltage_tolerance=(
+                validation.active_set_voltage_tolerance
+            ),
+        )
+        if not pf_solution.validation["valid"]:
+            raise PowerFlowValidationError(pf_solution.validation)
+    z0, theta = initialize_system(psys, pf_solution)
+    return pf_solution, z0, theta
+
+
 def initialize_sensitivities(volt, p_inj, psys, z, u, v):
 
     alg_size = psys.num_dof_alg
@@ -1614,8 +1650,9 @@ def integrate_system(
     psys.power_injection=power_injection
 
     # retrieve parameters
-    pf_solution = runpf(psys, verbose=False)
-    z0, theta = initialize_system(psys, pf_solution)
+    pf_solution, z0, theta = _initialize_system_from_config(psys, config)
+    if pf_solution.validation is not None:
+        results["power_flow_diagnostics"] = pf_solution.validation
 
     # Use context if provided, otherwise fallback to config attributes
     z0_user = ctx.z0_user if ctx is not None else getattr(config, 'z0_user', None)

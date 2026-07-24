@@ -212,7 +212,7 @@ from joblib import Parallel, delayed
 
 from uqgrid.simulation.dynamics import integrate_system
 from uqgrid.simulation.config import IntegrationConfig
-from uqgrid.simulation.pflow import runpf
+from uqgrid.simulation.pflow import PowerFlowValidationError, runpf
 from uqgrid.io.parse import load_psse, add_dyr
 from uqgrid.core.psydef import Bus
 
@@ -1569,6 +1569,10 @@ def _integration_config_from_dict(integration_config=None):
         toff=int_cfg.get("toff", 0.4),
         verbose=int_cfg.get("verbose", False),
         petsc=int_cfg.get("petsc", True),
+        enforce_q_limits=int_cfg.get("enforce_q_limits", True),
+        q_limit_tolerance=int_cfg.get("q_limit_tolerance", 1e-8),
+        max_q_limit_iterations=int_cfg.get("max_q_limit_iterations"),
+        power_flow_validation=int_cfg.get("power_flow_validation", {}),
     )
 
 
@@ -1863,11 +1867,17 @@ def _run_fault_with_operating_point_worker(
         try:
             sim = integrate_system(psys, _integration_config_from_dict(integration_config))
             diverged = False
+            diagnostics["power_flow_validation"] = sim.get(
+                "power_flow_diagnostics"
+            )
         except Exception as e:
             print(f"Simulation failed for scenario {scenario_id}: {str(e)}")
             sim = {"history": None, "tvec": None}
             diverged = True
             diagnostics["simulation_error"] = str(e)
+            if isinstance(e, PowerFlowValidationError):
+                diagnostics["reject_reason"] = "power_flow_validation_failed"
+                diagnostics["power_flow_validation"] = e.diagnostics
 
         diagnostics["simulation_diverged"] = diverged
         diagnostics["file"] = None if diverged else _simulation_file_path(scenario_id)
@@ -2254,17 +2264,27 @@ def run_single_scenario_worker(
             ton=int_cfg.get('ton', 0.25),             # Fault onset time [s]
             toff=int_cfg.get('toff', 0.4),            # Fault clearing time [s]
             verbose=int_cfg.get('verbose', False),
-            petsc=int_cfg.get('petsc', True)
+            petsc=int_cfg.get('petsc', True),
+            enforce_q_limits=int_cfg.get('enforce_q_limits', True),
+            q_limit_tolerance=int_cfg.get('q_limit_tolerance', 1e-8),
+            max_q_limit_iterations=int_cfg.get('max_q_limit_iterations'),
+            power_flow_validation=int_cfg.get('power_flow_validation', {}),
         )
 
         try:
             sim = integrate_system(psys, cfg)
             diverged = False
+            diagnostics["power_flow_validation"] = sim.get(
+                "power_flow_diagnostics"
+            )
         except Exception as e:
             print(f"Simulation failed for scenario {scenario_id}: {str(e)}")
             sim = {"history": None, "tvec": None}
             diverged = True
             diagnostics["simulation_error"] = str(e)
+            if isinstance(e, PowerFlowValidationError):
+                diagnostics["reject_reason"] = "power_flow_validation_failed"
+                diagnostics["power_flow_validation"] = e.diagnostics
 
         diagnostics["simulation_diverged"] = diverged
         diagnostics["file"] = None if diverged else f"simulation_data/scenario_{scenario_id}.npz"
@@ -3430,7 +3450,20 @@ def get_default_config(model_name: str) -> dict:
             "ton": 0.25,               # Fault onset time [s]
             "toff": 0.4,               # Fault clearing time [s]
             "verbose": False,
-            "petsc": True
+            "petsc": True,
+            "enforce_q_limits": True,
+            "q_limit_tolerance": 1e-8,
+            "max_q_limit_iterations": None,
+            "power_flow_validation": {
+                "enabled": False,
+                "residual_tolerance": 1e-8,
+                "generator_limit_tolerance": 1e-6,
+                "voltage_min": 0.9,
+                "voltage_max": 1.1,
+                "branch_loading_max": 1.0,
+                "branch_limit_tolerance": 1e-5,
+                "active_set_voltage_tolerance": 1e-6
+            }
         }
     }
 
@@ -3676,7 +3709,20 @@ def main(config_path: str = None):
                 "ton": 0.25,
                 "toff": 0.4,
                 "verbose": false,
-                "petsc": true
+                "petsc": true,
+                "enforce_q_limits": true,
+                "q_limit_tolerance": 1e-8,
+                "max_q_limit_iterations": null,
+                "power_flow_validation": {
+                    "enabled": false,
+                    "residual_tolerance": 1e-8,
+                    "generator_limit_tolerance": 1e-6,
+                    "voltage_min": 0.9,
+                    "voltage_max": 1.1,
+                    "branch_loading_max": 1.0,
+                    "branch_limit_tolerance": 1e-5,
+                    "active_set_voltage_tolerance": 1e-6
+                }
             }
         }
 
@@ -3815,8 +3861,9 @@ Examples:
         else:
             max_total_attempts = int(max_total_attempts)
 
-    # Integration configuration (with defaults for backward compatibility)
+    # Integration configuration
     integration_cfg = config.get("integration", {})
+    validation_cfg = integration_cfg.get("power_flow_validation", {}) or {}
     integration_config = {
         "tend": integration_cfg.get("tend", 10.0),
         "dt": integration_cfg.get("dt", 1/120.0),
@@ -3824,7 +3871,28 @@ Examples:
         "ton": integration_cfg.get("ton", 0.25),
         "toff": integration_cfg.get("toff", 0.4),
         "verbose": integration_cfg.get("verbose", False),
-        "petsc": integration_cfg.get("petsc", True)
+        "petsc": integration_cfg.get("petsc", True),
+        "enforce_q_limits": integration_cfg.get("enforce_q_limits", True),
+        "q_limit_tolerance": integration_cfg.get("q_limit_tolerance", 1e-8),
+        "max_q_limit_iterations": integration_cfg.get("max_q_limit_iterations"),
+        "power_flow_validation": {
+            "enabled": validation_cfg.get("enabled", False),
+            "residual_tolerance": validation_cfg.get(
+                "residual_tolerance", 1e-8
+            ),
+            "generator_limit_tolerance": validation_cfg.get(
+                "generator_limit_tolerance", 1e-6
+            ),
+            "voltage_min": validation_cfg.get("voltage_min"),
+            "voltage_max": validation_cfg.get("voltage_max"),
+            "branch_loading_max": validation_cfg.get("branch_loading_max"),
+            "branch_limit_tolerance": validation_cfg.get(
+                "branch_limit_tolerance", 1e-5
+            ),
+            "active_set_voltage_tolerance": validation_cfg.get(
+                "active_set_voltage_tolerance", 1e-6
+            ),
+        },
     }
 
     # -------------------------------------------------------------------------
@@ -3917,6 +3985,24 @@ Examples:
     print(f"  - Fault clearing (toff): {integration_config['toff']} s")
     print(f"  - Power injection: {integration_config['power_injection']}")
     print(f"  - PETSc solver: {integration_config['petsc']}")
+    print(f"  - Enforce PF Q limits: {integration_config['enforce_q_limits']}")
+    print(f"  - PF Q-limit tolerance: {integration_config['q_limit_tolerance']}")
+    print(
+        "  - PF Q-limit max solves: "
+        f"{integration_config['max_q_limit_iterations']}"
+    )
+    validation_summary = integration_config["power_flow_validation"]
+    print(f"  - Validate final PF: {validation_summary['enabled']}")
+    if validation_summary["enabled"]:
+        print(
+            "  - Final PF voltage range: "
+            f"{validation_summary['voltage_min']} to "
+            f"{validation_summary['voltage_max']}"
+        )
+        print(
+            "  - Final PF branch loading max: "
+            f"{validation_summary['branch_loading_max']}"
+        )
     print(f"  - Verbose: {integration_config['verbose']}")
     print("=" * 60 + "\n")
 

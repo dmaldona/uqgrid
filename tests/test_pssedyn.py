@@ -248,6 +248,48 @@ def test_static_generator_initialization_and_jacobian(data_dir, tmp_path):
     assert mismatches == []
 
 
+def test_petsc_uses_q_limited_initial_power_flow(data_dir, monkeypatch):
+    pytest.importorskip("petsc4py")
+    from uqgrid.simulation import dynamics
+
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    add_dyr(psys, os.path.join(data_dir, "ieee9bus.dyr"))
+    psys.gens[1].qgub = 0.02
+    psys.add_busfault(4, 1e-4)
+    psys.createYbusComplex()
+    captured = []
+    original_runpf = dynamics.runpf
+
+    def recording_runpf(*args, **kwargs):
+        result = original_runpf(*args, **kwargs)
+        captured.append(result)
+        return result
+
+    monkeypatch.setattr(dynamics, "runpf", recording_runpf)
+    config = IntegrationConfig(
+        steps=2,
+        dt=1.0 / 120.0,
+        power_injection=False,
+        petsc=True,
+        ton=10.0,
+        toff=11.0,
+        enforce_q_limits=True,
+        power_flow_validation={
+            "enabled": True,
+            "voltage_min": 0.9,
+            "voltage_max": 1.1,
+        },
+    )
+
+    result = integrate_system(psys, config)
+
+    assert len(captured) == 1
+    assert captured[0].q_limit_events[0]["side"] == "upper"
+    assert captured[0].gen_qsch[1] == pytest.approx(psys.gens[1].qgub)
+    assert result["power_flow_diagnostics"] == captured[0].validation
+    assert result["history"].shape[1] == 2
+
+
 def test_static_generators_reject_inconsistent_voltage_setpoints(data_dir, tmp_path):
     psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
     psys.add_gen(bus=1, idx_name="extra", psch=0.0, qsch=0.0, vset=0.95)

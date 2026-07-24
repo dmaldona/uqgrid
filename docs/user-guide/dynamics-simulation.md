@@ -59,6 +59,19 @@ config = IntegrationConfig(
     comp_sens=False,
     fsolve=False,
     petsc=True,
+    enforce_q_limits=True,
+    q_limit_tolerance=1e-8,
+    max_q_limit_iterations=None,
+    power_flow_validation={
+        "enabled": False,
+        "residual_tolerance": 1e-8,
+        "generator_limit_tolerance": 1e-6,
+        "voltage_min": None,
+        "voltage_max": None,
+        "branch_loading_max": None,
+        "branch_limit_tolerance": 1e-5,
+        "active_set_voltage_tolerance": 1e-6,
+    },
     check_jacobian=False,
     jacobian_check_tol=1e-6,
     jacobian_check_top_k=10,
@@ -75,10 +88,41 @@ Key fields:
 - **comp_sens**: Enable adjoint-based sensitivities (requires PETSc).
 - **petsc**: Switch to PETSc-backed integrators for improved robustness and
   adjoint capabilities.
+- **enforce_q_limits**: Enforce non-slack PV generator reactive-power limits
+  during the power flow used for dynamic initialization.
+- **q_limit_tolerance**: Per-unit tolerance for activating a generator
+  reactive-power limit.
+- **max_q_limit_iterations**: Optional cap on active-set power-flow solves.
+- **power_flow_validation**: Optional final operating-point checks performed
+  after PF convergence and before dynamic device initialization.
 - **check_jacobian**: Run a finite-difference Jacobian check (non-PETSc only).
 - **jacobian_check_tol**: Absolute tolerance for reporting FD mismatches.
 - **jacobian_check_top_k**: Number of mismatches to report.
 - **jacobian_check_csv**: Optional CSV file path for mismatch report.
+
+### Initial reactive-power limits
+
+Q-limit enforcement is enabled by default and projects generator reactive
+dispatch onto its RAW/MATPOWER bounds before dynamic initialization. Set
+`enforce_q_limits=False` only when an unconstrained legacy operating point is
+required. If a non-slack PV bus cannot hold its voltage setpoint within
+aggregate generator Q capability, the power flow switches that bus to PQ and
+solves again. The same initialization is used for PETSc, backward Euler,
+HERK2, and HERK4.
+
+This constrains the operating point only. It does not impose generator
+reactive-power or exciter field-voltage limits during the dynamic trajectory.
+
+### Final operating-point validation
+
+Validation is disabled by default. When enabled, UQGrid checks the final Newton
+residual, finite voltages, generator P/Q limits, optional voltage and branch
+loading bounds, Q-limit active-set consistency, and one slack bus per electrical
+island. A failed check raises `PowerFlowValidationError` before
+`initialize_system()` or PETSc setup.
+
+Successful backward Euler, PETSc, HERK2, and HERK4 runs include the JSON-safe
+diagnostics under `results["power_flow_diagnostics"]`.
 
 ### Jacobian diagnostics (optional)
 

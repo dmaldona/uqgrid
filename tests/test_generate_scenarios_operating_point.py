@@ -49,6 +49,148 @@ def _dummy_export_psys():
     return SimpleNamespace(export_state_metadata=lambda: None)
 
 
+def test_integration_config_adapter_preserves_q_limit_controls(gs):
+    cfg = gs._integration_config_from_dict({
+        "petsc": True,
+        "enforce_q_limits": True,
+        "q_limit_tolerance": 2e-7,
+        "max_q_limit_iterations": 11,
+        "power_flow_validation": {
+            "enabled": True,
+            "voltage_min": 0.9,
+            "voltage_max": 1.1,
+            "branch_loading_max": 1.0,
+        },
+    })
+
+    assert cfg.petsc is True
+    assert cfg.enforce_q_limits is True
+    assert cfg.q_limit_tolerance == pytest.approx(2e-7)
+    assert cfg.max_q_limit_iterations == 11
+    assert cfg.power_flow_validation.enabled is True
+    assert cfg.power_flow_validation.voltage_min == pytest.approx(0.9)
+    assert cfg.power_flow_validation.voltage_max == pytest.approx(1.1)
+    assert cfg.power_flow_validation.branch_loading_max == pytest.approx(1.0)
+
+
+def test_default_scenario_config_includes_q_limit_controls(gs):
+    integration = gs.get_default_config("IEEE-9")["integration"]
+
+    assert integration["enforce_q_limits"] is True
+    assert integration["q_limit_tolerance"] == pytest.approx(1e-8)
+    assert integration["max_q_limit_iterations"] is None
+    validation = integration["power_flow_validation"]
+    assert validation["enabled"] is False
+    assert validation["residual_tolerance"] == pytest.approx(1e-8)
+    assert validation["generator_limit_tolerance"] == pytest.approx(1e-6)
+    assert validation["voltage_min"] == pytest.approx(0.9)
+    assert validation["voltage_max"] == pytest.approx(1.1)
+    assert validation["branch_loading_max"] == pytest.approx(1.0)
+
+    adapted = gs._integration_config_from_dict({})
+    assert adapted.enforce_q_limits is True
+    assert adapted.power_flow_validation.enabled is False
+
+    legacy = gs._integration_config_from_dict({"enforce_q_limits": False})
+    assert legacy.enforce_q_limits is False
+
+
+def _fault_worker_inputs():
+    scenario = {
+        "sample_idx": 0,
+        "fault_location": 1,
+        "fault_impedance": 1e-4,
+        "operating_point_id": "op-0",
+        "accepted_operating_point_index": 0,
+    }
+    operating_point = {
+        "operating_point_id": "op-0",
+        "accepted_operating_point_index": 0,
+        "p_load_scaled": np.array([0.5]),
+        "q_load_scaled": np.array([-0.2]),
+        "p_gen_scaled": np.array([0.5]),
+        "q_gen_scaled": np.array([0.2]),
+        "p_load_noise": np.array([0.0]),
+        "q_load_noise": np.array([0.0]),
+        "p_gen_noise": np.array([0.0]),
+        "q_gen_noise": np.array([0.0]),
+        "load_scale": 1.0,
+        "load_mean_shift": 0.0,
+        "diagnostics": {},
+    }
+    return scenario, operating_point
+
+
+def _fake_fault_psys():
+    class BusStub:
+        def set_vinit(self, vmag, vang):
+            self.vmag = vmag
+            self.vang = vang
+
+    return SimpleNamespace(
+        buses=[BusStub(), BusStub()],
+        set_load_pq=lambda *args: None,
+        set_gen_pq=lambda *args: None,
+        add_busfault=lambda *args: None,
+        createYbusComplex=lambda: None,
+    )
+
+
+def test_fault_worker_preserves_successful_pf_validation(
+        gs, tmp_path, monkeypatch):
+    scenario, operating_point = _fault_worker_inputs()
+    validation = {"valid": True, "failure_reasons": []}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gs, "_load_power_system", lambda *args: _fake_fault_psys())
+    monkeypatch.setattr(
+        gs,
+        "integrate_system",
+        lambda *args: {
+            "history": np.zeros((2, 2)),
+            "tvec": np.array([0.0, 0.1]),
+            "power_flow_diagnostics": validation,
+        },
+    )
+
+    result = gs._run_fault_with_operating_point_worker(
+        "case.raw",
+        "case.dyr",
+        scenario,
+        "scenario-0",
+        operating_point,
+        {"power_flow_validation": {"enabled": True}},
+    )
+
+    assert result["diverged"] is False
+    assert result["diagnostics"]["power_flow_validation"] == validation
+
+
+def test_fault_worker_preserves_failed_pf_validation(
+        gs, tmp_path, monkeypatch):
+    scenario, operating_point = _fault_worker_inputs()
+    validation = {"valid": False, "failure_reasons": ["gen_p_limit"]}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gs, "_load_power_system", lambda *args: _fake_fault_psys())
+
+    def fail_validation(*args):
+        raise gs.PowerFlowValidationError(validation)
+
+    monkeypatch.setattr(gs, "integrate_system", fail_validation)
+
+    result = gs._run_fault_with_operating_point_worker(
+        "case.raw",
+        "case.dyr",
+        scenario,
+        "scenario-0",
+        operating_point,
+        {"power_flow_validation": {"enabled": True}},
+    )
+
+    assert result["diverged"] is True
+    assert result["diagnostics"]["reject_reason"] == "power_flow_validation_failed"
+    assert result["diagnostics"]["power_flow_validation"] == validation
+
+
 def test_stress_load_preserves_load_power_factor_with_no_noise(gs):
     base_p = np.array([1.0, 2.0, 0.0])
     base_q = np.array([0.4, 0.8, 0.5])

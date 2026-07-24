@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from uqgrid.io.parse import add_dyr, load_psse
+from uqgrid.simulation import dynamics
 from uqgrid.simulation.config import IntegrationConfig
 from uqgrid.simulation.dynamics import (
     initialize_system,
@@ -98,6 +99,57 @@ def _build_ieee9_no_fault(data_dir):
     add_dyr(psys, os.path.join(data_dir, "ieee9bus.dyr"))
     psys.createYbusComplex()
     return psys
+
+
+@pytest.mark.parametrize(
+    ("method", "gen_index", "bound_name", "bound_value", "side"),
+    [
+        ("beuler", 1, "qgub", 0.02, "upper"),
+        ("beuler", 2, "qglb", -0.05, "lower"),
+        ("herk2", 1, "qgub", 0.02, "upper"),
+        ("herk4", 1, "qgub", 0.02, "upper"),
+    ],
+)
+def test_integration_config_enforces_initial_q_limits(
+        data_dir, monkeypatch, method, gen_index, bound_name, bound_value, side):
+    psys = _build_ieee9_no_fault(data_dir)
+    setattr(psys.gens[gen_index], bound_name, bound_value)
+    psys.add_busfault(4, 1e-4)
+    captured = []
+    original_runpf = dynamics.runpf
+
+    def recording_runpf(*args, **kwargs):
+        result = original_runpf(*args, **kwargs)
+        captured.append(result)
+        return result
+
+    monkeypatch.setattr(dynamics, "runpf", recording_runpf)
+    cfg = IntegrationConfig(
+        method=method,
+        steps=3,
+        dt=1e-4,
+        power_injection=False,
+        petsc=False,
+        ton=10.0,
+        toff=11.0,
+        enforce_q_limits=True,
+        power_flow_validation={
+            "enabled": True,
+            "voltage_min": 0.9,
+            "voltage_max": 1.1,
+        },
+    )
+
+    result = integrate_system(psys, cfg)
+
+    assert len(captured) == 1
+    assert captured[0].q_limit_enforced
+    assert captured[0].q_limit_events[0]["side"] == side
+    assert captured[0].gen_qsch[gen_index] == pytest.approx(bound_value)
+    assert result["power_flow_diagnostics"] == captured[0].validation
+    assert result["power_flow_diagnostics"]["valid"]
+    differential = result["history"][:psys.num_dof_dif]
+    assert np.max(np.abs(differential - differential[:, [0]])) < 1e-8
 
 
 def _build_ieee9_gov_no_fault(data_dir):

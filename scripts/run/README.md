@@ -468,6 +468,37 @@ solve. This trades fixed voltage control for fixed reactive output at the
 generator limit. The temporary bus-type changes are restored before dynamics
 are launched. It is not ACOPF and does not modify core UQGrid PF behavior.
 
+The final power flow performed immediately before dynamic initialization is
+configured separately under `integration`:
+
+```json
+"integration": {
+    "enforce_q_limits": true,
+    "q_limit_tolerance": 1e-8,
+    "max_q_limit_iterations": null,
+    "power_flow_validation": {
+        "enabled": true,
+        "residual_tolerance": 1e-8,
+        "generator_limit_tolerance": 1e-6,
+        "voltage_min": 0.9,
+        "voltage_max": 1.1,
+        "branch_loading_max": 1.0,
+        "branch_limit_tolerance": 1e-5,
+        "active_set_voltage_tolerance": 1e-6
+    }
+}
+```
+
+`operating_point.q_limit_mitigation` controls candidate preparation and
+screening. `integration.enforce_q_limits` controls the final initialization PF
+used by backward Euler, PETSc, HERK2, or HERK4 and defaults to `true`. Set it to
+`false` only when an unconstrained legacy operating point is required. These
+limits apply only to the initial operating point; dynamic exciter and
+field-voltage limits are separate models. Final validation remains opt-in.
+When enabled, a validation failure rejects the fault replay before dynamic
+initialization. The fault diagnostic record includes the structured
+`power_flow_validation` result.
+
 ### Available Models
 
 | Model | Buses | Description |

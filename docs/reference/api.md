@@ -16,10 +16,16 @@ from uqgrid.io.parse import load_psse, add_dyr
 ## `uqgrid.simulation.config`
 
 ```python
-from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
+from uqgrid.simulation.config import (
+    IntegrationConfig,
+    IntegrationCtx,
+    PowerFlowValidationConfig,
+)
 ```
 
 - `IntegrationConfig`: Validated settings for time integration.
+- `PowerFlowValidationConfig`: Optional strict operating-point checks performed
+  before dynamic initialization.
 - `IntegrationCtx`: Optional container for custom initial conditions and
   parameter overrides.
 
@@ -45,11 +51,19 @@ from uqgrid.simulation.dynamics import integrate_system
 ## `uqgrid.simulation.pflow`
 
 ```python
-from uqgrid.simulation.pflow import runpf
+from uqgrid.simulation.pflow import (
+    PowerFlowValidationError,
+    runpf,
+    validate_power_flow_solution,
+)
 ```
 
 - `runpf(psys, verbose=False) -> PowerFlowSolution`: Compute steady-state
   voltages and injections before dynamics.
+- `validate_power_flow_solution`: Return JSON-safe operating-point diagnostics
+  without modifying the solution.
+- `PowerFlowValidationError`: Raised before initialization when enabled
+  validation fails.
 - `compute_pinj_alt`: Alternative formulation for power-injection Jacobians.
 
 ## `uqgrid.core.psydef`
