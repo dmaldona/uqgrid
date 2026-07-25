@@ -1564,6 +1564,7 @@ def _integration_config_from_dict(integration_config=None):
     return IntegrationConfig(
         tend=int_cfg.get("tend", 10.0),
         dt=int_cfg.get("dt", 1 / 120.0),
+        method=int_cfg.get("method", "beuler"),
         power_injection=int_cfg.get("power_injection", False),
         ton=int_cfg.get("ton", 0.25),
         toff=int_cfg.get("toff", 0.4),
@@ -2005,6 +2006,7 @@ def run_single_scenario_worker(
 
         - 'tend': Simulation end time in seconds (default: 10.0)
         - 'dt': Time step in seconds (default: 1/120.0)
+        - 'method': beuler, cn, herk2, or herk4 (default: beuler)
         - 'power_injection': Use power injection model (default: False)
         - 'ton': Fault onset time in seconds (default: 0.25)
         - 'toff': Fault clearing time in seconds (default: 0.4)
@@ -2260,6 +2262,7 @@ def run_single_scenario_worker(
         cfg = IntegrationConfig(
             tend=int_cfg.get('tend', 10.0),           # Simulation end time [s]
             dt=int_cfg.get('dt', 1/120.0),            # Time step [s]
+            method=int_cfg.get('method', 'beuler'),
             power_injection=int_cfg.get('power_injection', False),
             ton=int_cfg.get('ton', 0.25),             # Fault onset time [s]
             toff=int_cfg.get('toff', 0.4),            # Fault clearing time [s]
@@ -3446,6 +3449,7 @@ def get_default_config(model_name: str) -> dict:
         "integration": {
             "tend": 10.0,              # Simulation end time [s]
             "dt": 0.008333333333333333, # Time step [s] (1/120)
+            "method": "cn",
             "power_injection": False,
             "ton": 0.25,               # Fault onset time [s]
             "toff": 0.4,               # Fault clearing time [s]
@@ -3705,6 +3709,7 @@ def main(config_path: str = None):
             "integration": {
                 "tend": 10.0,
                 "dt": 0.008333333333333333,
+                "method": "cn",
                 "power_injection": false,
                 "ton": 0.25,
                 "toff": 0.4,
@@ -3867,6 +3872,7 @@ Examples:
     integration_config = {
         "tend": integration_cfg.get("tend", 10.0),
         "dt": integration_cfg.get("dt", 1/120.0),
+        "method": integration_cfg.get("method", "beuler"),
         "power_injection": integration_cfg.get("power_injection", False),
         "ton": integration_cfg.get("ton", 0.25),
         "toff": integration_cfg.get("toff", 0.4),
@@ -3981,6 +3987,7 @@ Examples:
     print(f"Integration:")
     print(f"  - End time (tend): {integration_config['tend']} s")
     print(f"  - Time step (dt): {integration_config['dt']:.6f} s")
+    print(f"  - Method: {integration_config['method']}")
     print(f"  - Fault onset (ton): {integration_config['ton']} s")
     print(f"  - Fault clearing (toff): {integration_config['toff']} s")
     print(f"  - Power injection: {integration_config['power_injection']}")

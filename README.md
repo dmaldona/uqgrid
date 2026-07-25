@@ -57,6 +57,7 @@ psys.set_load_parameters(np.zeros(psys.nloads))
 config = IntegrationConfig(
     tend=2.0,
     dt=1.0 / 120.0,
+    method="cn",
     ton=0.10,
     toff=0.15,
     petsc=True,

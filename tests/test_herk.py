@@ -5,7 +5,7 @@ import pytest
 
 from uqgrid.io.parse import add_dyr, load_psse
 from uqgrid.simulation import dynamics
-from uqgrid.simulation.config import IntegrationConfig
+from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 from uqgrid.simulation.dynamics import (
     initialize_system,
     integrate_system,
@@ -39,12 +39,9 @@ def test_config_defaults_preserve_beuler():
     assert cfg.herk_alg_max_iter == 50
 
 
-def test_unknown_method_raises(data_dir):
-    psys = _build_two_bus_psys(data_dir)
-    cfg = IntegrationConfig(method="bogus", tend=0.0, steps=1, petsc=False)
-
-    with pytest.raises(ValueError, match="Unknown integration method: bogus"):
-        integrate_system(psys, cfg)
+def test_unknown_method_raises():
+    with pytest.raises(ValueError, match="method"):
+        IntegrationConfig(method="bogus", tend=0.0, steps=1, petsc=False)
 
 
 def test_beuler_regression_unchanged(data_dir):
@@ -71,6 +68,86 @@ def test_beuler_regression_unchanged(data_dir):
 
     assert np.array_equal(res_default["tvec"], res_explicit["tvec"])
     assert np.allclose(res_default["history"], res_explicit["history"])
+
+
+@pytest.mark.parametrize("method", ["beuler", "herk2", "herk4"])
+def test_fixed_step_drivers_store_initial_state_and_common_grid(data_dir, method):
+    psys = _build_two_bus_no_fault(data_dir)
+    pf_solution = runpf(psys, verbose=False)
+    z0, theta = initialize_system(psys, pf_solution)
+    ctx = IntegrationCtx()
+    ctx.set_initial_conditions(z0.copy())
+    ctx.set_theta(theta.copy())
+    config = IntegrationConfig(
+        method=method,
+        steps=3,
+        dt=0.01,
+        petsc=False,
+        ton=10.0,
+        toff=11.0,
+        power_injection=True,
+    )
+
+    result = integrate_system(psys, config, ctx)
+
+    np.testing.assert_allclose(result["tvec"], [0.0, 0.01, 0.02, 0.03])
+    np.testing.assert_allclose(result["history"][:, 0], z0)
+    assert result["history"].shape[1] == 4
+
+
+@pytest.mark.parametrize("method", ["beuler", "herk2", "herk4"])
+def test_fixed_step_fault_transitions_use_exact_post_switch_states(
+        data_dir, method):
+    psys = _build_two_bus_psys(data_dir)
+    pf_solution = runpf(psys, verbose=False)
+    z0, theta = initialize_system(psys, pf_solution)
+    ctx = IntegrationCtx()
+    ctx.set_initial_conditions(z0.copy())
+    ctx.set_theta(theta.copy())
+    psys.fault_events[0].apply()
+    config = IntegrationConfig(
+        method=method,
+        steps=4,
+        dt=0.01,
+        petsc=False,
+        ton=0.015,
+        toff=0.027,
+        power_injection=True,
+    )
+
+    result = integrate_system(psys, config, ctx)
+
+    expected_times = [0.0, 0.01, 0.015, 0.02, 0.027, 0.03, 0.04]
+    np.testing.assert_allclose(result["tvec"], expected_times)
+    np.testing.assert_allclose(result["history"][:, 0], z0)
+    assert np.all(np.diff(result["tvec"]) > 0.0)
+
+    residual = np.zeros_like(z0)
+    fault = psys.fault_events[0]
+    fault.remove()
+    residual_function(residual, result["history"][:, 1], theta, psys)
+    assert np.linalg.norm(residual[psys.num_dof_dif:], np.inf) < 1e-8
+    fault.apply()
+    residual_function(residual, result["history"][:, 2], theta, psys)
+    assert np.linalg.norm(residual[psys.num_dof_dif:], np.inf) < 1e-8
+    fault.remove()
+    residual_function(residual, result["history"][:, 4], theta, psys)
+    assert np.linalg.norm(residual[psys.num_dof_dif:], np.inf) < 1e-8
+    assert fault.active is False
+
+
+def test_fault_at_initial_time_is_rejected(data_dir):
+    psys = _build_two_bus_psys(data_dir)
+    config = IntegrationConfig(
+        steps=1,
+        dt=0.01,
+        petsc=False,
+        ton=0.0,
+        toff=0.01,
+    )
+
+    with pytest.raises(ValueError, match="ton=0"):
+        integrate_system(psys, config)
 
 
 # ---------------------------------------------------------------------------

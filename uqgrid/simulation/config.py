@@ -27,16 +27,22 @@ class PowerFlowValidationConfig(BaseModel):
 
 class IntegrationConfig(BaseModel):
     power_injection: bool = False
-    tend: float = Field(10.0, description="Integration end time in seconds.")
-    dt: float = Field(1.0 / 120.0, description="Time step in seconds.")
-    steps: int = Field(-1, description="Number of integration steps. If >0, overrides tend.")
+    tend: float = Field(10.0, ge=0.0, description="Integration end time in seconds.")
+    dt: float = Field(1.0 / 120.0, gt=0.0, description="Nominal time step in seconds.")
+    steps: int = Field(
+        -1,
+        description=(
+            "Number of nominal integration advances. If positive, overrides "
+            "tend and produces steps + 1 base samples including t=0."
+        ),
+    )
     verbose: bool = Field(False, description="Enable verbose output.")
     comp_sens: bool = Field(False, description="Compute first and second-order sensitivities.")
     fsolve: bool = Field(False, description="Use fsolve for solving nonlinear equations.")
     newton_tol: float = Field(1e-10, gt=0.0, description="Newton residual norm tolerance.")
     newton_max_iter: int = Field(500, gt=0, description="Maximum Newton iterations per integration step.")
-    ton: float = Field(0.25, description="Fault activation time.")
-    toff: float = Field(0.4, description="Fault deactivation time.")
+    ton: float = Field(0.25, ge=0.0, description="Fault activation time.")
+    toff: float = Field(0.4, ge=0.0, description="Fault deactivation time.")
     petsc: bool = Field(False, description="Enable PETSc integration.")
     petsc_args: List[str] = Field(
         default_factory=list,
@@ -80,31 +86,76 @@ class IntegrationConfig(BaseModel):
             " must be treated as fast in the ARKIMEX fast/slow split."
         ),
     )
-    method: str = Field("beuler", description="Integrator method: beuler | herk2 | herk4.")
+    method: str = Field(
+        "beuler",
+        description="Integrator method: beuler | cn | herk2 | herk4.",
+    )
     herk_alg_tol: float = Field(1e-10, gt=0.0, description="HERK stage algebraic tolerance.")
     herk_alg_max_iter: int = Field(50, gt=0, description="HERK stage Newton max iterations.")
 
-    @field_validator('tend', 'dt', 'ton', 'toff', mode='after')
-    def positive_values(cls, v, info: Any):
-        if v < 0:
-            raise ValueError(f"`{info.field_name}` must be non-negative.")
-        return v
-
     @field_validator('steps', mode='after')
     def steps_non_negative(cls, v, info: Any):
-        if v < -1:
-            raise ValueError("`steps` must be -1 or a non-negative integer.")
+        if v == 0 or v < -1:
+            raise ValueError("`steps` must be -1 or a positive integer.")
         return v
 
+    @field_validator("method")
+    def supported_method(cls, value):
+        if value not in {"beuler", "cn", "herk2", "herk4"}:
+            raise ValueError(
+                "`method` must be one of: beuler, cn, herk2, herk4."
+            )
+        return value
+
     @model_validator(mode="after")
-    def validate_partition_spec(cls, values):
-        slow = values.arkimex_slow_differential
-        fast = values.arkimex_fast_differential
+    def validate_integration_contract(self):
+        slow = self.arkimex_slow_differential
+        fast = self.arkimex_fast_differential
         if slow is not None and fast is not None:
             raise ValueError(
                 "Specify only one of `arkimex_slow_differential` or `arkimex_fast_differential`."
             )
-        return values
+        if self.toff < self.ton:
+            raise ValueError("`toff` must be greater than or equal to `ton`.")
+        if self.method == "cn" and not self.petsc:
+            raise ValueError("`method='cn'` requires `petsc=True`.")
+        if self.method in {"herk2", "herk4"} and self.petsc:
+            raise ValueError(f"`method='{self.method}'` requires `petsc=False`.")
+        if self.comp_sens and (not self.petsc or self.method != "cn"):
+            raise ValueError(
+                "`comp_sens=True` requires `petsc=True` and `method='cn'`."
+            )
+        if self.arkimex:
+            if not self.petsc:
+                raise ValueError("`arkimex=True` requires `petsc=True`.")
+            if self.method != "beuler":
+                raise ValueError(
+                    "`arkimex=True` cannot be combined with `cn`, `herk2`, or `herk4`."
+                )
+
+        reserved_petsc_options = {
+            "ts_type",
+            "ts_theta_theta",
+            "ts_theta_endpoint",
+            "ts_dt",
+            "ts_max_time",
+            "ts_max_steps",
+            "ts_exact_final_time",
+            "ts_time_span",
+            "ts_adapt_type",
+        }
+        conflicts = sorted({
+            arg.lstrip("-").split("=", 1)[0]
+            for arg in self.petsc_args
+            if arg.startswith("-")
+            and arg.lstrip("-").split("=", 1)[0] in reserved_petsc_options
+        })
+        if conflicts:
+            raise ValueError(
+                "PETSc options cannot override IntegrationConfig method or time grid: "
+                + ", ".join(f"-{name}" for name in conflicts)
+            )
+        return self
     
 class IntegrationCtx:
     def __init__(self):

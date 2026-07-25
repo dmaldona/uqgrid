@@ -1,7 +1,6 @@
 from __future__ import print_function
 
 import copy
-import math
 from typing import Optional
 
 import numdifftools as nd
@@ -48,6 +47,43 @@ def _get_petsc_for_config(config):
         return None
     return _initialize_petsc(config.petsc_args)
 
+
+def _petsc_ts_type(PETSc, method, arkimex):
+    if arkimex:
+        return PETSc.TS.Type.ARKIMEX
+    if method == "beuler":
+        return PETSc.TS.Type.BEULER
+    if method == "cn":
+        return PETSc.TS.Type.CN
+    raise ValueError(f"Unsupported PETSc integration method: {method}")
+
+
+def _algebraic_projection_adjoint(
+        psys, state, theta, jacobian, lambda_values, mu_values):
+    """Apply the adjoint jump for a fixed-differential algebraic projection."""
+    ndiff = psys.num_dof_dif
+    residual_jacobian(jacobian, state, theta, psys)
+    algebraic_jacobian = jacobian[ndiff:, ndiff:].tocsc()
+    differential_jacobian = jacobian[ndiff:, :ndiff]
+    multiplier = spsolve(
+        algebraic_jacobian.transpose().tocsc(),
+        lambda_values[ndiff:],
+    )
+
+    parameter_jacobian = preallocate_jacobian_parameters(psys)
+    residual_jacobian_parameters(parameter_jacobian, state, theta, psys)
+
+    projected_lambda = np.array(lambda_values, copy=True)
+    projected_lambda[:ndiff] -= np.asarray(
+        differential_jacobian.transpose().dot(multiplier)
+    ).ravel()
+    projected_lambda[ndiff:] = 0.0
+    projected_mu = np.array(mu_values, copy=True)
+    projected_mu -= np.asarray(
+        parameter_jacobian[ndiff:, :].transpose().dot(multiplier)
+    ).ravel()
+    return projected_lambda, projected_mu
+
 from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 from uqgrid.core import Psystem
 from uqgrid.simulation.pflow import (
@@ -61,6 +97,7 @@ from uqgrid.simulation.gradients import gradient_p, gradient_xp, gradient_pp
 from uqgrid.simulation.residual import residual_function
 from uqgrid.simulation.herk import integrate_system_herk
 from uqgrid.simulation.jacobian import residual_jacobian
+from uqgrid.simulation.timing import build_integration_schedule
 from uqgrid.utils.tools import (
     matprint,
     csr_mult_row,
@@ -1168,12 +1205,10 @@ def preallocate_hessian(psys):
 
 class DAE_petsc(object):
         n = 1
-        def __init__(self, psys, theta, J, tfon, tfoff):
+        def __init__(self, psys, theta, J):
             self.psys = psys
             self.theta = theta
             self.J = J
-            self.tfon = tfon
-            self.tfoff = tfoff
 
             # ARKIMEX INFORMATION
             self.slow_indices = None
@@ -1206,17 +1241,6 @@ class DAE_petsc(object):
             self.ts_ref = ts
         
         def evalFunction(self, ts, t, x, xdot, f):
-            # This operation is redundant but necessary for the correct
-            # computation of the adjoint in the backward run. Might
-            # not generalize when we consider multiple faults.
-            # (TODO): consider using TSEvent.
-            if t < self.tfon:
-                self.psys.fault_events[0].remove()
-            elif t > self.tfoff:
-                self.psys.fault_events[0].remove()
-            else:
-                self.psys.fault_events[0].apply()
-
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
             xx = np.array(x[start:end])
@@ -1227,12 +1251,6 @@ class DAE_petsc(object):
             f.assemble()
         
         def evalJacobian(self, ts, t, x, xdot, a, J, P):
-            if t < self.tfon:
-                self.psys.fault_events[0].remove()
-            elif t > self.tfoff:
-                self.psys.fault_events[0].remove()
-            else:
-                self.psys.fault_events[0].apply()
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
             xx = np.array(x[start:end])
@@ -1635,7 +1653,7 @@ def integrate_system(
     arkimex = config.arkimex
     method = config.method
 
-    if method == "beuler":
+    if method in {"beuler", "cn"}:
         pass
     elif method in {"herk2", "herk4"}:
         return integrate_system_herk(psys, config, ctx)
@@ -1713,16 +1731,19 @@ def integrate_system(
                 for m in mismatches:
                     writer.writerow(m)
 
-    # calculate nsteps
-    h = dt
-    if steps > 0:
-        nsteps = steps
-    else:
-        nsteps = int(math.floor(tend/dt)) + 1
-
-    # hacky fault event time step calculation
-    step_on = int(ton/h)
-    step_off = int(toff/h)
+    has_fault = bool(psys.fault_events)
+    schedule = build_integration_schedule(
+        dt=dt,
+        tend=tend,
+        steps=steps,
+        ton=ton,
+        toff=toff,
+        has_fault=has_fault,
+    )
+    tvec = schedule.times
+    fault = psys.fault_events[0] if has_fault else None
+    if fault is not None:
+        fault.remove()
 
     # Integration of D.A.E
     z = z0
@@ -1768,10 +1789,12 @@ def integrate_system(
         rhs_vec = z0p.duplicate()
 
         # Create integration object
-        dae = DAE_petsc(psys, theta, jacobian, ton, toff)
+        dae = DAE_petsc(psys, theta, jacobian)
 
         ts = PETSc.TS().create(comm=PETSc.COMM_WORLD)
         ts.setProblemType(ts.ProblemType.NONLINEAR)
+        opts = PETSc.Options()
+        opts.setValue("ts_adapt_type", "none")
 
         if arkimex:
             slow_indices, fast_indices, fast_indices_alg, fast_indices_dif, ndiff_fast = generate_default_partition_indices(
@@ -1788,11 +1811,6 @@ def integrate_system(
             dae.set_ts_ref(ts)
 
             # Provide stable default PETSc options for ARKIMEX unless the user overrides them.
-            opts = PETSc.Options()
-
-            if not opts.hasName("ts_adapt_type"):
-                opts.setValue("ts_adapt_type", "none")
-
             if not opts.hasName("ts_arkimex_type"):
                 opts.setValue("ts_arkimex_type", "a2")
 
@@ -1820,7 +1838,7 @@ def integrate_system(
             ts.setRHSSplitRHSFunction("fast", dae.evalRHSFunctionFast_split, None)
             ts.setRHSSplitIJacobian("fast", dae.evalIJacobianFast_split, jac_fast, jac_fast)
         else:
-            ts.setType(ts.Type.THETA)
+            ts.setType(_petsc_ts_type(PETSc, method, arkimex=False))
             ts.setIFunction(dae.evalFunction, rhs_vec)
             ts.setIJacobian(dae.evalJacobian, jac_rhs)
             ts.setIJacobianP(dae.evalJacobianP, jac_par)
@@ -1844,56 +1862,129 @@ def integrate_system(
             ts.setCostGradients(v_lambda, v_mu)
             ts.setSaveTrajectory()
 
-        historyp = []
-        tvecp = []
-        def monitor(ts, i, t, x):
-            xx = x[:].tolist()
-            historyp.append(xx)
-            tvecp.append(t)
-        ts.setMonitor(monitor)
-        ts.setTime(0.0)
-        ts.setTimeStep(dt)
-        ts.setMaxTime(ton)
-        ts.setExactFinalTime(PETSc.TS.ExactFinalTime.MATCHSTEP)
+        expected_ts_type = _petsc_ts_type(PETSc, method, arkimex)
         ts.setFromOptions()
-        ts.solve(z0p)
-        
-        if ton < tend:
-            # fault application
-            psys.fault_events[0].apply()
-            alg = ALG_petsc(psys, theta, jacobian)
-            fsp = z0p.duplicate()
-            snes = PETSc.SNES()
-            snes.create(PETSc.COMM_WORLD)
-            snes.setFunction(alg.evalFunction, fsp)
-            snes.setJacobian(alg.evalJacobian, jac_rhs)
-            snes.setOptionsPrefix("alg_")
-            snes.setFromOptions()
-            snes.solve(None, z0p)
+        if ts.getType() != expected_ts_type:
+            raise ValueError(
+                "PETSc options changed the configured integration method: "
+                f"expected {expected_ts_type}, got {ts.getType()}"
+            )
+        ts.setExactFinalTime(PETSc.TS.ExactFinalTime.MATCHSTEP)
 
-            # disturbance time
-            ts.setTime(ton)
-            ts.setMaxTime(toff)
+        transition_actions = {}
+        if schedule.fault_on_index is not None:
+            transition_actions.setdefault(schedule.fault_on_index, []).append("apply")
+        if schedule.fault_off_index is not None:
+            transition_actions.setdefault(schedule.fault_off_index, []).append("remove")
+
+        historyp = [np.array(z0, copy=True)]
+        tvecp = [float(tvec[0])]
+        event_transitions = {}
+
+        def monitor(ts, step, time, solution):
+            value = np.array(solution[:], copy=True)
+            if abs(time - tvecp[-1]) <= 1e-11:
+                tvecp[-1] = float(time)
+                historyp[-1] = value
+            else:
+                tvecp.append(float(time))
+                historyp.append(value)
+
+        ts.setMonitor(monitor)
+
+        runs = []
+        start_index = 0
+        while start_index < len(tvec) - 1:
+            step_width = tvec[start_index + 1] - tvec[start_index]
+            boundary_index = start_index + 1
+            while boundary_index < len(tvec) - 1:
+                if boundary_index in transition_actions:
+                    break
+                next_width = tvec[boundary_index + 1] - tvec[boundary_index]
+                if not np.isclose(next_width, step_width, rtol=0.0, atol=1e-12):
+                    break
+                boundary_index += 1
+            runs.append((start_index, boundary_index, step_width))
+            start_index = boundary_index
+
+        for start_index, boundary_index, step_width in runs:
+            ts.setTime(float(tvec[start_index]))
+            ts.setTimeStep(float(step_width))
+            ts.setMaxTime(float(tvec[boundary_index]))
             ts.solve(z0p)
 
-            # fault removal
-            psys.fault_events[0].remove()
-            snes.solve(None, z0p)
+            for action in transition_actions.get(boundary_index, ()):
+                if action == "apply":
+                    fault.apply()
+                else:
+                    fault.remove()
+                projected, _, _, _ = integrate(
+                    np.array(z0p[:], copy=True),
+                    theta,
+                    0.0,
+                    psys,
+                    residual,
+                    jacobian,
+                    None,
+                    verbose=verbose,
+                    fsolve=False,
+                    newton_tol=newton_tol,
+                    newton_max_iter=newton_max_iter,
+                    uold=None,
+                    vold=None,
+                    mold=None,
+                )
+                z0p.setArray(projected)
+                z0p.assemble()
+                event_transitions.setdefault(boundary_index, []).append(
+                    (action, np.array(z0p[:], copy=True))
+                )
+            if boundary_index in transition_actions:
+                ts.setSolution(z0p)
+                ts.setTime(float(tvec[boundary_index]))
+                ts.restartStep()
 
-            # post disturbance time
-            ts.setTime(toff)
-            ts.setMaxTime(tend)
-            ts.solve(z0p)
+        if (
+            len(tvecp) != len(tvec)
+            or not np.allclose(tvecp, tvec, rtol=0.0, atol=1e-11)
+        ):
+            raise RuntimeError("PETSc did not return the configured integration time grid")
+        for event_index, transitions in event_transitions.items():
+            historyp[event_index] = transitions[-1][1]
 
         # adjoint computation
         if comp_sens:
             if verbose:
                 logger.info("Solving adjoint problem...")
-            ts.adjointSolve()
+            if fault is not None and ton <= tvec[-1] < toff:
+                fault.apply()
+            elif fault is not None:
+                fault.remove()
+            for start_index, boundary_index, _ in reversed(runs):
+                ts.adjointSetSteps(boundary_index - start_index)
+                ts.adjointSolve()
+                for action, event_state in reversed(
+                        event_transitions.get(start_index, ())):
+                    lambda_values, mu_values = _algebraic_projection_adjoint(
+                        psys,
+                        event_state,
+                        theta,
+                        jacobian,
+                        np.array(v_lambda[:], copy=True),
+                        np.array(v_mu[:], copy=True),
+                    )
+                    v_lambda.setArray(lambda_values)
+                    v_lambda.assemble()
+                    v_mu.setArray(mu_values)
+                    v_mu.assemble()
+                    if action == "apply":
+                        fault.remove()
+                    else:
+                        fault.apply()
+            if fault is not None:
+                fault.remove()
 
             # extract results
-            cst = ts.getCostIntegral()
-            
             # Get the trajectory contribution
             cost_value = ts.getCostIntegral()
             mu_trajectory = np.array(v_mu[:])      # μᵢ term
@@ -1917,23 +2008,25 @@ def integrate_system(
             results["lambda_final"] = lambda_final
             results["adjoint_gradient_complete"] = complete_gradient # Total
 
-        # Cast history to numpy arrays
-        history = np.transpose(np.array(historyp))
-        tvec = np.array(tvecp)
+        if fault is not None:
+            fault.remove()
+
+        history = np.transpose(np.asarray(historyp))
 
     else:
-        tvec = np.linspace(0, nsteps*h, nsteps)
-        history = np.zeros((system_size, nsteps))
-        for i in range(nsteps):
+        history = np.zeros((system_size, len(tvec)))
+        history[:, 0] = np.copy(z)
+        for i in range(1, len(tvec)):
+            t_start = tvec[i - 1]
+            h_step = tvec[i] - t_start
             if verbose:
-                logger.info("Step: %i. Time: %g (sec)", i, i * h)
+                logger.info("Step: %i. Time: %g (sec)", i, tvec[i])
             if psys.signal_injectors:
-                t_now = i * h
                 for inj in psys.signal_injectors:
-                    inj.update(t_now, theta, psys)
+                    inj.update(t_start, theta, psys)
             z, u, v, m = integrate(z,
                                 theta,
-                                h,
+                                h_step,
                                 psys,
                                 residual,
                                 jacobian,
@@ -1945,82 +2038,31 @@ def integrate_system(
                                 uold=None,
                                 vold=None,
                                 mold=None)
-            history[:, i] = np.copy(z)
 
-            if i == step_on:
+            if i == schedule.fault_on_index:
                 if verbose:
                     logger.info("Apply fault")
-                if len(psys.fault_events) > 0:
-                    psys.fault_events[0].apply()
-                try:
-                    z, _, _, _ = integrate(z,
-                                        theta,
-                                        0.0,
-                                        psys,
-                                        residual,
-                                        jacobian,
-                                        None,
-                                        verbose=verbose,
-                                        fsolve=False,
-                                        newton_tol=newton_tol,
-                                        newton_max_iter=newton_max_iter,
-                                        uold=None,
-                                        vold=None,
-                                        mold=None)
-                except NameError:
-                    z, _, _, _ = integrate(z,
-                                        theta,
-                                        0.0,
-                                        psys,
-                                        residual,
-                                        jacobian,
-                                        None,
-                                        verbose=verbose,
-                                        fsolve=False,
-                                        newton_tol=newton_tol,
-                                        newton_max_iter=newton_max_iter,
-                                        uold=None,
-                                        vold=None,
-                                        mold=None)
-            if i == step_off:
+                fault.apply()
+                z, _, _, _ = integrate(
+                    z, theta, 0.0, psys, residual, jacobian, None,
+                    verbose=verbose, fsolve=False,
+                    newton_tol=newton_tol, newton_max_iter=newton_max_iter,
+                    uold=None, vold=None, mold=None,
+                )
+            if i == schedule.fault_off_index:
                 if verbose:
                     logger.info("Remove fault")
-                if len(psys.fault_events) > 0:
-                    psys.fault_events[0].remove()
-                try:
-                    z, _, _, _ = integrate(z,
-                                        theta,
-                                        0.0,
-                                        psys,
-                                        residual,
-                                        jacobian,
-                                        None,
-                                        verbose=verbose,
-                                        fsolve=False,
-                                        newton_tol=newton_tol,
-                                        newton_max_iter=newton_max_iter,
-                                        uold=None,
-                                        vold=None,
-                                        mold=None)
-                except NameError:
-                    z, _, _, _ = integrate(z,
-                                        theta,
-                                        0.0,
-                                        psys,
-                                        residual,
-                                        jacobian,
-                                        None,
-                                        verbose=verbose,
-                                        fsolve=False,
-                                        newton_tol=newton_tol,
-                                        newton_max_iter=newton_max_iter,
-                                        uold=None,
-                                        vold=None,
-                                        mold=None)
+                fault.remove()
+                z, _, _, _ = integrate(
+                    z, theta, 0.0, psys, residual, jacobian, None,
+                    verbose=verbose, fsolve=False,
+                    newton_tol=newton_tol, newton_max_iter=newton_max_iter,
+                    uold=None, vold=None, mold=None,
+                )
+            history[:, i] = np.copy(z)
 
-        # if tend < toff we remove fault before exiting
-        if i < step_off:
-            psys.fault_events[0].remove()
+        if fault is not None:
+            fault.remove()
 
     # pack results into dict
     results["tvec"] = tvec

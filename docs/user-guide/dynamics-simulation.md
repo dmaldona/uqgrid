@@ -26,8 +26,8 @@ psys.add_busfault(bus=1, rfault=0.01)
 ```
 
 The first fault registered is toggled automatically using `IntegrationConfig.ton`
-(fault-on time) and `IntegrationConfig.toff` (fault clearing time). Multiple
-faults can be registered when more elaborate sequencing is needed.
+(fault-on time) and `IntegrationConfig.toff` (fault clearing time). The automatic
+scheduler currently supports one fault event.
 
 ## Initialize with a power flow
 
@@ -52,6 +52,7 @@ from uqgrid.simulation.config import IntegrationConfig
 config = IntegrationConfig(
     tend=10.0,
     dt=1.0 / 120.0,
+    method="cn",
     ton=0.25,
     toff=0.40,
     steps=-1,
@@ -83,9 +84,12 @@ Key fields:
 
 - **tend**: Final simulation time (seconds).
 - **dt**: Integration step size (seconds).
-- **steps**: Optional fixed number of steps (overrides `tend` when positive).
+- **steps**: Number of nominal advances. A positive value overrides `tend` and
+  produces `steps + 1` base samples, including `t=0`.
+- **method**: `"beuler"`, `"cn"`, `"herk2"`, or `"herk4"`.
 - **ton/toff**: Fault activation and removal times.
-- **comp_sens**: Enable adjoint-based sensitivities (requires PETSc).
+- **comp_sens**: Enable adjoint-based sensitivities (requires PETSc and
+  `method="cn"`).
 - **petsc**: Switch to PETSc-backed integrators for improved robustness and
   adjoint capabilities.
 - **enforce_q_limits**: Enforce non-slack PV generator reactive-power limits
@@ -99,6 +103,29 @@ Key fields:
 - **jacobian_check_tol**: Absolute tolerance for reporting FD mismatches.
 - **jacobian_check_top_k**: Number of mismatches to report.
 - **jacobian_check_csv**: Optional CSV file path for mismatch report.
+
+### Integration methods
+
+| Configuration | Backend |
+|---|---|
+| `method="beuler", petsc=False` | Native backward Euler |
+| `method="beuler", petsc=True` | PETSc `TSBEULER` |
+| `method="cn", petsc=True` | PETSc `TSCN` |
+| `method="herk2", petsc=False` | HERK2 |
+| `method="herk4", petsc=False` | HERK4 |
+| `arkimex=True, petsc=True` | PETSc ARKIMEX |
+
+`cn` is explicitly mapped to PETSc `TSCN`. This is not the same as selecting
+the midpoint form of `TSTHETA`; PETSc distinguishes endpoint Crank-Nicolson
+from its theta-method midpoint formulation for DAEs. See the
+[PETSc TSTHETA documentation](https://petsc.org/release/manualpages/TS/TSTHETA/).
+
+`cn` requires PETSc, HERK requires the native backend, and ARKIMEX cannot be
+combined with `cn` or HERK. The library default remains `method="beuler"`.
+Configurations that previously omitted `method` therefore select backward
+Euler. PETSc command-line options may tune solver internals, but options that
+override the configured TS type, time step, horizon, exact-final-time policy,
+or adaptivity are rejected.
 
 ### Initial reactive-power limits
 
@@ -149,17 +176,23 @@ results = integrate_system(psys, config)
 ```
 
 The solver returns a dictionary with time stamps (`tvec`), state trajectory
-(`history`), and optional adjoint outputs when sensitivities are enabled.
-
-When PETSc is unavailable, UQGrid falls back to the pure-Python integrator with
-the same interface.
+(`history`), and optional adjoint outputs when sensitivities are enabled. The
+first column of `history` is the initialized state at `t=0`.
 
 ## Interpret the trajectory
 
 Generator speed deviations, bus voltages, and other state variables can be
-plotted directly from the result arrays. Fault transitions occur immediately
-after the step in which the simulation time first exceeds `ton` or `toff`; a
-zero-step Newton solve re-establishes the algebraic manifold at each transition.
+plotted directly from the result arrays. With `steps=N`, the regular grid runs
+from `0` through `N*dt` and contains `N+1` samples. With `steps=-1`, integration
+ends exactly at `tend`; a shortened final interval is added when needed.
+
+Exact `ton`, `toff`, and `tend` values are inserted when they are off the regular
+grid, so fault events can add samples beyond the base count. Timestamps are
+strictly increasing and are stored once. The fault is active on `[ton, toff)`.
+At each transition, UQGrid holds differential states fixed, solves the
+algebraic equations for the new topology, and stores that post-switch state.
+`ton=0` is rejected when a fault is registered because both the initialized and
+post-switch states cannot occupy the single `t=0` sample.
 
 ```python
 import matplotlib.pyplot as plt
@@ -172,14 +205,25 @@ plt.title("Generator speed response after Bus 1 fault")
 plt.show()
 ```
 
+This normalized time contract changes the axes and potentially the TSI values of
+trajectories produced by older releases. Do not append corrected trajectories to
+an existing dense-history dataset created with the previous convention.
+
 ## Sensitivities and post-processing
 
-Setting `comp_sens=True` and `petsc=True` activates the adjoint solve and adds:
+Setting `comp_sens=True`, `petsc=True`, and `method="cn"` activates the
+adjoint solve and adds:
 
 - `adjoint_cost`: Scalar performance index over the simulated interval.
 - `adjoint_gradient_trajectory`: Contribution from the trajectory (`μᵢ`).
 - `adjoint_gradient_initial`: Contribution from the initial condition (`λᵢ ∂y₀/∂p`).
 - `adjoint_gradient_complete`: Sum of trajectory and initial-condition terms.
+
+Faulted adjoints replay the saved trajectory by time segment and apply the
+fixed-differential algebraic projection jump at each topology transition.
+Backward Euler remains supported for forward PETSc simulation, but its integral
+adjoint is rejected because that combination does not satisfy the repository's
+finite-difference validation.
 
 Example: rank loads by their influence on the monitored quantity.
 
