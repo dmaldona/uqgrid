@@ -41,6 +41,10 @@ before dynamic device initialization. Configure it under `integration`:
 
 ```json
 "integration": {
+  "method": "beuler",
+  "arkimex": false,
+  "steps": -1,
+  "petsc": true,
   "enforce_q_limits": true,
   "q_limit_tolerance": 1e-8,
   "max_q_limit_iterations": null,
@@ -63,6 +67,13 @@ and `max_q_limit_iterations` defaults to `null`. Set
 required. Final validation remains disabled unless
 `power_flow_validation.enabled=true` because voltage and branch thresholds are
 model-specific.
+
+`integration.method` defaults to `"beuler"`, and `integration.steps`
+defaults to `-1`. Set `method="cn"` explicitly for PETSc
+Crank-Nicolson. Both initialization sources use the same resolved method and
+normalized time grid, including the initialized sample at `t=0` and exact
+off-grid fault transitions. `integration.arkimex=true` selects PETSc ARKIMEX
+and is retained as a distinct integration contract.
 
 This final contract applies identically to ExaJuGO-initialized and direct
 UQGrid-PF rows. It is separate from:
@@ -118,14 +129,15 @@ The utility requires a config with the final PF contract enabled:
 Derive the validation config from the exact production config. Preserve the
 existing perturbation, `dt`, `ton`, and `toff` values.
 
-Validate the ACOPF handoff and five undisturbed PETSc steps:
+Validate the ACOPF handoff and five undisturbed PETSc Crank-Nicolson steps:
 
 ```bash
 python scripts/run/validate_acopf_init_handoff.py operating-point \
-  /path/to/config_ACTIVSg500_L1_04_C8_stage5.json \
+  /path/to/scenario_config.json \
   --source acopf \
-  --output-dir /scratch/$USER/stage5_handoff/acopf_petsc \
+  --output-dir /scratch/$USER/handoff/acopf_petsc_cn \
   --petsc \
+  --method cn \
   --julia "$JULIA" \
   --exajugo-root "$EXAJUGO_ROOT" \
   --exajugo-base-raw "$EXAJUGO_BASE_RAW" \
@@ -137,26 +149,27 @@ Validate the direct UQGrid PF handoff without PETSc:
 
 ```bash
 python scripts/run/validate_acopf_init_handoff.py operating-point \
-  /path/to/config_ACTIVSg500_L1_04_C8_stage5.json \
+  /path/to/scenario_config.json \
   --source uqgrid_pf \
-  --output-dir /scratch/$USER/stage5_handoff/uqgrid_beuler \
+  --output-dir /scratch/$USER/handoff/uqgrid_beuler \
   --no-petsc \
+  --method beuler \
   --uqgrid-root "$UQGRID_ROOT"
 ```
 
-Run both commands with `--petsc` and `--no-petsc` to compare solver-independent
-initialization. Each command checks the final PF diagnostics, initialized DAE
+When no method or backend override is supplied, the validator uses the exact
+`integration.method` and `integration.petsc` settings from the config. Each
+command checks the final PF diagnostics, initialized DAE
 residual, parsed SEXS `EMIN`/`EMAX` bounds when SEXS models are present, and
-no-disturbance trajectory drift. The utility registers a fault but sets
-`ton=tend=5*dt` and `toff=6*dt`, so it is never applied; this avoids the
-existing empty-fault cleanup assumption.
+no-disturbance trajectory drift. The flat-trajectory check runs with no
+registered fault.
 
 Validate a generated final/min dataset and its restart files:
 
 ```bash
 python scripts/run/validate_acopf_init_handoff.py dataset \
-  --output-dir /scratch/$USER/stage5_handoff/mixed \
-  --probml-basename tsi_probml_fullinputs_ACTIVSg500 \
+  --output-dir /scratch/$USER/handoff/mixed \
+  --probml-basename tsi_probml_fullinputs_<model> \
   --expected-sources acopf,uqgrid_pf \
   --expected-fault-count 2
 ```
@@ -176,6 +189,13 @@ post-fault trajectory.
   generator helpers.
 - A Julia executable, an ExaJuGO checkout, and ExaJuGO base RAW/ROP files when
   running smoke modes or production with `--acopf-probability > 0`.
+
+The generator does not assume a fixed network size. Model paths, bus count,
+device counts, feature width, and fault axes come from the scenario config and
+loaded UQGrid model. The ExaJuGO base RAW/ROP pair must describe the same
+network as the UQGrid RAW/DYR inputs, with compatible load and active-generator
+ordering. The current ACOPF handshake patches loads in the RAW file and lets
+ExaJuGO recompute generator dispatch.
 
 Model RAW/DYR paths are resolved from the config path, current directory,
 `--uqgrid-root`, `UQGRID_ROOT`, the installed UQGrid package root, then the
@@ -245,10 +265,11 @@ UQGrid replay uses:
 <case_dir>/acopf_system/Basecase_solution.txt
 ```
 
-## Local Commands
+## ACTIVSg500 Local Development Example
 
-These examples use the local paths from the ACOPF handoff. Adjust them on other
-machines.
+These commands document the model used for local development and regression
+testing. ACTIVSg500 paths, dimensions, fault buses, and C8 settings are examples
+only and are not runtime defaults or model requirements.
 
 ### ACOPF Smoke
 
@@ -260,7 +281,7 @@ validation. It does not run dynamic replay or write ProbML rows.
   /Users/emconsta/Research/REPO/uqgrid-feature-acopf-init/scripts/run/generate_scenarios_acopf_init.py \
   /Users/emconsta/Research/REPO/base-surrogates-power-grid/CNF/838_tsi/config_ACTIVSg500_L1_04_C8.json \
   --smoke-acopf \
-  --output-dir /private/tmp/uqgrid_acopf_stage2_smoke \
+  --output-dir /private/tmp/uqgrid_acopf_smoke \
   --julia /Users/emconsta/.juliaup/bin/julia \
   --exajugo-root /Users/emconsta/Research/REPO/exajugo \
   --exajugo-base-raw /Users/emconsta/Research/REPO/tsSLOPE/example/ACTIVSg500/case.raw \
@@ -279,7 +300,7 @@ It writes one-row final and min NPZ files.
   /Users/emconsta/Research/REPO/uqgrid-feature-acopf-init/scripts/run/generate_scenarios_acopf_init.py \
   /Users/emconsta/Research/REPO/base-surrogates-power-grid/CNF/838_tsi/config_ACTIVSg500_L1_04_C8.json \
   --smoke-replay \
-  --output-dir /private/tmp/uqgrid_acopf_stage3_smoke \
+  --output-dir /private/tmp/uqgrid_acopf_replay_smoke \
   --julia /Users/emconsta/.juliaup/bin/julia \
   --exajugo-root /Users/emconsta/Research/REPO/exajugo \
   --exajugo-base-raw /Users/emconsta/Research/REPO/tsSLOPE/example/ACTIVSg500/case.raw \
@@ -301,14 +322,14 @@ Y       (1, 2, 1)
 
 ### One-OP All-Bus Validation
 
-This is the Stage 4 local validation command. It runs one accepted operating
-point over all 500 ACTIVSg500 fault buses with six parallel replay workers.
+This command runs one accepted operating point over all 500 ACTIVSg500 fault
+buses with six parallel replay workers.
 
 ```bash
 /Users/emconsta/venvs/cnf-uqgrid-py313/bin/python \
   /Users/emconsta/Research/REPO/uqgrid-feature-acopf-init/scripts/run/generate_scenarios_acopf_init.py \
   /Users/emconsta/Research/REPO/base-surrogates-power-grid/CNF/838_tsi/config_ACTIVSg500_L1_04_C8.json \
-  --output-dir /private/tmp/uqgrid_acopf_stage4_allbus_one_op_njobs6 \
+  --output-dir /private/tmp/uqgrid_acopf_allbus_one_op_njobs6 \
   --julia /Users/emconsta/.juliaup/bin/julia \
   --exajugo-root /Users/emconsta/Research/REPO/exajugo \
   --exajugo-base-raw /Users/emconsta/Research/REPO/tsSLOPE/example/ACTIVSg500/case.raw \
@@ -336,28 +357,20 @@ outputs on scratch storage.
 ```bash
 export JULIA=/path/to/julia
 export EXAJUGO_ROOT=/path/to/exajugo
-export EXAJUGO_BASE_RAW=/path/to/ACTIVSg500/case.raw
-export EXAJUGO_BASE_ROP=/path/to/ACTIVSg500/case.rop
+export EXAJUGO_BASE_RAW=/path/to/model/case.raw
+export EXAJUGO_BASE_ROP=/path/to/model/case.rop
 export UQGRID_ROOT=/path/to/uqgrid
 
 python scripts/run/generate_scenarios_acopf_init.py \
-  /path/to/config_ACTIVSg500_L1_04_C8.json \
-  --output-dir /scratch/$USER/uqgrid_acopf_init_C8 \
+  /path/to/scenario_config.json \
+  --output-dir /scratch/$USER/uqgrid_acopf_init \
   --fault-locations all \
   --n-jobs 64
 ```
 
-For the C8 config, the production defaults are:
-
-```text
-target_accepted_scenarios = 1000
-fault_locations = all
-fault_impedances = [1e-4]
-probml_basename = tsi_probml_fullinputs_ACTIVSg500
-```
-
-Use `--target-accepted-scenarios 1` for validation runs. Do not use that flag
-for the full 1000-row dataset unless intentionally limiting the run.
+The accepted-row target, fault locations, fault impedances, parallelism, and
+output basename are read from the supplied config unless overridden on the CLI.
+Use `--target-accepted-scenarios 1` for a one-row validation run.
 
 ### Mixed-Source Production
 
@@ -366,8 +379,8 @@ rows:
 
 ```bash
 python scripts/run/generate_scenarios_acopf_init.py \
-  /path/to/config_ACTIVSg500_L1_04_C8.json \
-  --output-dir /scratch/$USER/uqgrid_mixed_init_C8 \
+  /path/to/scenario_config.json \
+  --output-dir /scratch/$USER/uqgrid_mixed_init \
   --fault-locations all \
   --n-jobs 64 \
   --acopf-probability 0.5 \
@@ -383,22 +396,26 @@ Resume a production output directory after interruption:
 
 ```bash
 python scripts/run/generate_scenarios_acopf_init.py \
-  /path/to/config_ACTIVSg500_L1_04_C8.json \
-  --output-dir /scratch/$USER/uqgrid_acopf_init_C8 \
+  /path/to/scenario_config.json \
+  --output-dir /scratch/$USER/uqgrid_acopf_init \
   --continue
 ```
 
 `--continue` validates that final/min NPZ files, progress, scenario metadata,
-and simulation log row counts agree before appending more rows. If they do not
-agree, the run stops with a repair instruction instead of guessing.
+simulation logs, fault axes, and the resolved integration contract agree before
+appending rows. The contract includes the normalized time-grid version, method,
+backend, ARKIMEX selector, `dt`, `steps`/`tend`, `ton`, and `toff`. Outputs created before
+the normalized time-grid contract cannot be continued with this version; use a
+new output directory or basename. Existing ML readers remain compatible because
+the established NPZ arrays and shapes are unchanged.
 
 Read status without running ACOPF, candidate generation, or replay:
 
 ```bash
 python scripts/run/generate_scenarios_acopf_init.py \
   --status \
-  --output-dir /scratch/$USER/uqgrid_acopf_init_C8 \
-  --probml-basename tsi_probml_fullinputs_ACTIVSg500
+  --output-dir /scratch/$USER/uqgrid_acopf_init \
+  --probml-basename tsi_probml_fullinputs_<model>
 ```
 
 ## Outputs
@@ -431,13 +448,13 @@ acopf_feasible
 meta
 ```
 
-For ACTIVSg500 with all 500 buses and one impedance, each accepted operating
-point appends:
+For `N` accepted operating points, `Ngen` active generators, `Nload`
+loads, `Nfault` fault locations, and `Nimpedance` fault impedances:
 
 ```text
-X       (n, 2, 262)
-X_flat  (n, 524)
-Y       (n, 500, 1)
+X       (N, 2, Ngen + Nload)
+X_flat  (N, 2 * (Ngen + Nload))
+Y       (N, Nfault, Nimpedance)
 ```
 
 `X[i]` stores:
@@ -453,6 +470,9 @@ The final and min NPZ files intentionally store different scalar TSI targets.
 `"uqgrid_pf"` for each operating-point row. `acopf_feasible` has shape `(N,)`
 and is `True` for rows that used a successful ACOPF initialization. For
 UQGrid-direct rows, it is `False` because ExaJuGO was intentionally skipped.
+The `meta` dictionary stores the normalized `integration_contract` used for
+resume compatibility checks; existing readers that access only the established
+arrays do not need to consume it.
 
 ## Stability Interpretation
 
