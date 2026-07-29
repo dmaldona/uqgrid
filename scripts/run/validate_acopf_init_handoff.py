@@ -225,6 +225,7 @@ def build_validation_integration_config(
     *,
     steps: int = 5,
     petsc: bool | None = None,
+    method: str | None = None,
     integration_config_cls: Callable[..., Any] | None = None,
 ) -> Any:
     """Build the strict, undisturbed IntegrationConfig used by the validator."""
@@ -233,10 +234,10 @@ def build_validation_integration_config(
     values = acopf_init._integration_config_from_config(config)
     validation = values.get("power_flow_validation", {}) or {}
     if not values.get("enforce_q_limits", False):
-        raise ValueError("Stage 5 requires integration.enforce_q_limits=true")
+        raise ValueError("Handoff validation requires integration.enforce_q_limits=true")
     if not validation.get("enabled", False):
         raise ValueError(
-            "Stage 5 requires integration.power_flow_validation.enabled=true"
+            "Handoff validation requires integration.power_flow_validation.enabled=true"
         )
     dt = float(values["dt"])
     if dt <= 0.0:
@@ -247,14 +248,13 @@ def build_validation_integration_config(
         {
             "steps": int(steps),
             "tend": tend,
-            "ton": tend,
-            "toff": tend + dt,
-            "method": "beuler",
             "verbose": False,
         }
     )
     if petsc is not None:
         values["petsc"] = bool(petsc)
+    if method is not None:
+        values["method"] = str(method)
     if integration_config_cls is None:
         from uqgrid.simulation.config import IntegrationConfig
 
@@ -407,10 +407,7 @@ def validate_operating_point(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     config_path = Path(args.config).expanduser()
-    report_path = Path(args.report_path) if args.report_path else (
-        output_dir
-        / f"handoff_validation_{args.source}_{'petsc' if args.petsc else 'beuler'}.json"
-    )
+    report_path = Path(args.report_path) if args.report_path else None
     checks: list[dict[str, Any]] = []
     report: dict[str, Any] = {
         "mode": "operating_point",
@@ -428,8 +425,15 @@ def validate_operating_point(args: argparse.Namespace) -> dict[str, Any]:
             config,
             steps=int(args.steps),
             petsc=args.petsc,
+            method=args.method,
         )
-        report["solver"] = "petsc" if integration_config.petsc else "beuler"
+        backend = "petsc" if integration_config.petsc else "native"
+        method = str(integration_config.method)
+        if report_path is None:
+            report_path = output_dir / (
+                f"handoff_validation_{args.source}_{backend}_{method}.json"
+            )
+        report["solver"] = {"backend": backend, "method": method}
         context = _prepare_context(args, config)
         _check(checks, "PF-screened source context accepted", context.get("accepted"), {
             "reject_reason": context.get("reject_reason"),
@@ -485,7 +489,6 @@ def validate_operating_point(args: argparse.Namespace) -> dict[str, Any]:
         )
 
         replay_psys, replay_application = apply_initialization_context(context, args.source)
-        replay_psys.add_busfault(0, float(args.dormant_fault_impedance))
         replay_psys.createYbusComplex()
         simulation = integrate_system(replay_psys, integration_config)
         replay_pf_diagnostics = simulation.get("power_flow_diagnostics")
@@ -525,6 +528,8 @@ def validate_operating_point(args: argparse.Namespace) -> dict[str, Any]:
             }
         )
     except Exception as exc:
+        if report_path is None:
+            report_path = output_dir / f"handoff_validation_{args.source}_failed.json"
         report["error_type"] = type(exc).__name__
         report["error"] = str(exc)
         diagnostics = getattr(exc, "diagnostics", None)
@@ -539,6 +544,8 @@ def validate_operating_point(args: argparse.Namespace) -> dict[str, Any]:
         _check(checks, "Operating-point validation completed", False, str(exc))
 
     report["valid"] = bool(checks) and all(check["passed"] for check in checks)
+    if report_path is None:
+        raise RuntimeError("Could not resolve handoff validation report path")
     report["report_path"] = str(report_path)
     _write_json(report_path, report)
     return report
@@ -851,7 +858,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "operating-point",
         help="Validate one initialized operating point and undisturbed replay",
     )
-    operating.add_argument("config", help="Strict Stage 5 scenario config")
+    operating.add_argument("config", help="Scenario config with strict final PF validation")
     operating.add_argument("--source", choices=["acopf", "uqgrid_pf"], required=True)
     operating.add_argument("--output-dir", required=True)
     operating.add_argument("--sample-idx", type=int, default=0)
@@ -869,11 +876,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override integration.petsc for the undisturbed replay",
     )
+    operating.add_argument(
+        "--method",
+        choices=["beuler", "cn", "herk2", "herk4"],
+        default=None,
+        help="Override integration.method for the undisturbed replay",
+    )
     operating.add_argument("--steps", type=int, default=5)
     operating.add_argument("--residual-tolerance", type=float, default=1e-8)
     operating.add_argument("--trajectory-tolerance", type=float, default=1e-8)
     operating.add_argument("--efd-limit-tolerance", type=float, default=1e-8)
-    operating.add_argument("--dormant-fault-impedance", type=float, default=1e-4)
     operating.add_argument("--report-path", default=None)
 
     dataset = subparsers.add_parser(

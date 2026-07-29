@@ -37,6 +37,9 @@ import numpy as np
 from joblib import Parallel, delayed
 
 
+_TIME_GRID_CONTRACT = "initialized_t0_exact_events_v1"
+
+
 @dataclass(frozen=True)
 class RawLoadRow:
     line_index: int
@@ -377,7 +380,82 @@ def build_uqgrid_probml_x(operating_point: Mapping[str, Any]) -> np.ndarray:
     return np.stack([np.concatenate([pg, pl]), np.concatenate([qg, ql])], axis=0)
 
 
-def _probml_meta(n_gen: int, n_load: int, tsi_mode: str) -> dict[str, Any]:
+def _normalize_integration_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
+    required = {
+        "time_grid_contract",
+        "method",
+        "petsc",
+        "arkimex",
+        "dt",
+        "steps",
+        "tend",
+        "ton",
+        "toff",
+    }
+    missing = sorted(required.difference(contract))
+    if missing:
+        raise ValueError(f"Integration contract is missing keys: {missing}")
+    return {
+        "time_grid_contract": str(contract["time_grid_contract"]),
+        "method": str(contract["method"]),
+        "petsc": bool(contract["petsc"]),
+        "arkimex": bool(contract["arkimex"]),
+        "dt": float(contract["dt"]),
+        "steps": int(contract["steps"]),
+        "tend": float(contract["tend"]),
+        "ton": float(contract["ton"]),
+        "toff": float(contract["toff"]),
+    }
+
+
+def _integration_contract_from_npz(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    if "meta" not in payload:
+        return None
+    values = np.asarray(payload["meta"], dtype=object).reshape(-1)
+    if not values.size or not isinstance(values[0], Mapping):
+        return None
+    contract = values[0].get("integration_contract")
+    if not isinstance(contract, Mapping):
+        return None
+    return _normalize_integration_contract(contract)
+
+
+def _assert_integration_contract_matches(
+    actual: Mapping[str, Any] | None,
+    expected: Mapping[str, Any],
+    *,
+    source: str,
+) -> dict[str, Any]:
+    normalized_expected = _normalize_integration_contract(expected)
+    if actual is None:
+        raise ValueError(
+            f"{source} has no normalized integration contract. It was created before "
+            "the corrected time-grid convention; use a new output directory or basename."
+        )
+    normalized_actual = _normalize_integration_contract(actual)
+    mismatches = []
+    for key, expected_value in normalized_expected.items():
+        actual_value = normalized_actual[key]
+        if isinstance(expected_value, float):
+            matches = bool(np.isclose(actual_value, expected_value, rtol=0.0, atol=1e-15))
+        else:
+            matches = actual_value == expected_value
+        if not matches:
+            mismatches.append(f"{key}={actual_value!r} (requested {expected_value!r})")
+    if mismatches:
+        raise ValueError(
+            f"{source} integration contract does not match this run: "
+            + "; ".join(mismatches)
+        )
+    return normalized_actual
+
+
+def _probml_meta(
+    n_gen: int,
+    n_load: int,
+    tsi_mode: str,
+    integration_contract: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     if tsi_mode not in {"final", "min"}:
         raise ValueError("tsi_mode must be 'final' or 'min'")
     meaning = (
@@ -385,7 +463,7 @@ def _probml_meta(n_gen: int, n_load: int, tsi_mode: str) -> dict[str, Any]:
         if tsi_mode == "final"
         else "Minimum TSI across all time steps for each (fault_location, fault_impedance)"
     )
-    return {
+    meta = {
         "inputs": "full_per_unit",
         "channels": ["P", "Q"],
         "unit_axis_order": "generators_then_loads",
@@ -399,6 +477,11 @@ def _probml_meta(n_gen: int, n_load: int, tsi_mode: str) -> dict[str, Any]:
         "axes_Y": {"axis0": "fault_location", "axis1": "fault_impedance"},
         "source": "uqgrid_acopf_initialized",
     }
+    if integration_contract is not None:
+        meta["integration_contract"] = _normalize_integration_contract(
+            integration_contract
+        )
+    return meta
 
 
 def _load_npz_dict(path: Path) -> dict[str, Any]:
@@ -508,6 +591,7 @@ def append_probml_dataset_row(
     tsi_mode: str,
     initialization_source: str = "acopf",
     acopf_feasible: bool = True,
+    integration_contract: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Append one accepted operating-point row to a ProbML NPZ dataset."""
     out_path = Path(out_path)
@@ -544,6 +628,12 @@ def append_probml_dataset_row(
         missing = required.difference(existing)
         if missing:
             raise ValueError(f"Existing NPZ is missing keys: {sorted(missing)}")
+        if integration_contract is not None:
+            _assert_integration_contract_matches(
+                _integration_contract_from_npz(existing),
+                integration_contract,
+                source=str(out_path),
+            )
         if existing["X"].shape[2] != X_new.shape[1]:
             raise ValueError(
                 "Existing NPZ feature width does not match requested append: "
@@ -596,7 +686,17 @@ def append_probml_dataset_row(
         "scenario_ids": scenario_ids,
         "initialization_source": initialization_source_arr,
         "acopf_feasible": acopf_feasible_arr,
-        "meta": np.asarray([_probml_meta(n_gen, n_load, tsi_mode)], dtype=object),
+        "meta": np.asarray(
+            [
+                _probml_meta(
+                    n_gen,
+                    n_load,
+                    tsi_mode,
+                    integration_contract=integration_contract,
+                )
+            ],
+            dtype=object,
+        ),
     }
     _atomic_save_npz(out_path, payload)
     return payload
@@ -605,7 +705,9 @@ def append_probml_dataset_row(
 def validate_probml_resume_pair(
     final_path: str | Path,
     min_path: str | Path,
-) -> dict[str, int]:
+    *,
+    expected_integration_contract: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Validate final/min ProbML files agree before resuming generation."""
     final_path = Path(final_path)
     min_path = Path(min_path)
@@ -636,10 +738,31 @@ def validate_probml_resume_pair(
         if final_has and not np.array_equal(final[optional_key], min_data[optional_key]):
             raise ValueError(f"final/min NPZ key {optional_key!r} disagrees")
 
+    final_contract = _integration_contract_from_npz(final)
+    min_contract = _integration_contract_from_npz(min_data)
+    if (final_contract is None) != (min_contract is None):
+        raise ValueError("final/min NPZ integration contracts disagree")
+    if final_contract is not None and min_contract is not None:
+        _assert_integration_contract_matches(
+            min_contract,
+            final_contract,
+            source="minimum NPZ",
+        )
+    if expected_integration_contract is not None:
+        final_contract = _assert_integration_contract_matches(
+            final_contract,
+            expected_integration_contract,
+            source="existing final/min NPZ files",
+        )
+
     accepted_count = int(final["Y"].shape[0])
     sample_idx = np.asarray(final["sample_idx"], dtype=np.int64)
     next_sample_idx = int(np.max(sample_idx) + 1) if sample_idx.size else 0
-    return {"accepted_count": accepted_count, "next_sample_idx": next_sample_idx}
+    return {
+        "accepted_count": accepted_count,
+        "next_sample_idx": next_sample_idx,
+        "integration_contract": final_contract,
+    }
 
 
 @dataclass(frozen=True)
@@ -1229,16 +1352,36 @@ def _integration_config_from_config(config: Mapping[str, Any]) -> dict[str, Any]
     return {
         "tend": integration_cfg.get("tend", 10.0),
         "dt": integration_cfg.get("dt", 1 / 120.0),
+        "steps": integration_cfg.get("steps", -1),
+        "method": integration_cfg.get("method", "beuler"),
         "power_injection": integration_cfg.get("power_injection", False),
         "ton": integration_cfg.get("ton", 0.25),
         "toff": integration_cfg.get("toff", 0.4),
         "verbose": integration_cfg.get("verbose", False),
         "petsc": integration_cfg.get("petsc", True),
+        "arkimex": integration_cfg.get("arkimex", False),
         "enforce_q_limits": integration_cfg.get("enforce_q_limits", True),
         "q_limit_tolerance": integration_cfg.get("q_limit_tolerance", 1e-8),
         "max_q_limit_iterations": integration_cfg.get("max_q_limit_iterations"),
         "power_flow_validation": dict(validation_cfg),
     }
+
+
+def _integration_contract_from_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    values = _integration_config_from_config(config)
+    return _normalize_integration_contract(
+        {
+            "time_grid_contract": _TIME_GRID_CONTRACT,
+            "method": values["method"],
+            "petsc": values["petsc"],
+            "arkimex": values["arkimex"],
+            "dt": values["dt"],
+            "steps": values["steps"],
+            "tend": values["tend"],
+            "ton": values["ton"],
+            "toff": values["toff"],
+        }
+    )
 
 
 def _power_flow_validation_from_sim(sim: Any) -> Any:
@@ -1927,9 +2070,9 @@ def run_acopf_smoke(
     acopf_runner_func: Callable[..., Mapping[str, Any]] = run_exajugo_acopf,
     pf_validator_func: Callable[..., Mapping[str, Any]] = validate_acopf_power_flow,
 ) -> dict[str, Any]:
-    """Run the Stage 2 ACOPF smoke path for one PF-screened operating point."""
+    """Run the ACOPF handoff smoke path for one PF-screened operating point."""
     if int(target_accepted_scenarios) != 1:
-        raise ValueError("Stage 2 smoke mode supports exactly one accepted scenario")
+        raise ValueError("ACOPF smoke mode supports exactly one accepted scenario")
 
     config_path = Path(config_path).expanduser()
     config = _load_json_config(config_path)
@@ -2074,7 +2217,7 @@ def prepare_acopf_replay_context(
     pf_verbose: bool = False,
     smoke_func: Callable[..., Mapping[str, Any]] = run_acopf_smoke,
 ) -> dict[str, Any]:
-    """Run Stage 2 smoke and reconstruct the accepted context for replay."""
+    """Run ACOPF smoke and reconstruct the accepted context for replay."""
     output_dir = Path(output_dir).expanduser()
     progress = dict(
         smoke_func(
@@ -2622,6 +2765,7 @@ def append_probml_outputs_from_row(
     fault_results: Sequence[Mapping[str, Any]],
     initialization_source: str,
     acopf_feasible: bool,
+    integration_contract: Mapping[str, Any] | None = None,
     refuse_existing: bool = False,
 ) -> dict[str, Any]:
     final_path, min_path = _probml_output_paths(output_dir, probml_basename)
@@ -2657,6 +2801,7 @@ def append_probml_outputs_from_row(
         tsi_mode="final",
         initialization_source=initialization_source,
         acopf_feasible=acopf_feasible,
+        integration_contract=integration_contract,
     )
     min_payload = append_probml_dataset_row(
         min_path,
@@ -2671,6 +2816,7 @@ def append_probml_outputs_from_row(
         tsi_mode="min",
         initialization_source=initialization_source,
         acopf_feasible=acopf_feasible,
+        integration_contract=integration_contract,
     )
     return {
         "final_path": str(final_path),
@@ -2683,6 +2829,11 @@ def append_probml_outputs_from_row(
         "n_load": n_load,
         "initialization_source": str(initialization_source),
         "acopf_feasible": bool(acopf_feasible),
+        "integration_contract": (
+            None
+            if integration_contract is None
+            else _normalize_integration_contract(integration_contract)
+        ),
     }
 
 
@@ -2696,6 +2847,7 @@ def append_acopf_probml_outputs(
     fault_locations: Sequence[int],
     fault_impedances: Sequence[float],
     fault_results: Sequence[Mapping[str, Any]],
+    integration_contract: Mapping[str, Any] | None = None,
     refuse_existing: bool = False,
 ) -> dict[str, Any]:
     X_row = build_acopf_probml_x(parsed_basecase, base_mva)
@@ -2711,6 +2863,7 @@ def append_acopf_probml_outputs(
         fault_results=fault_results,
         initialization_source="acopf",
         acopf_feasible=True,
+        integration_contract=integration_contract,
         refuse_existing=refuse_existing,
     )
 
@@ -2724,6 +2877,7 @@ def append_uqgrid_probml_outputs(
     fault_locations: Sequence[int],
     fault_impedances: Sequence[float],
     fault_results: Sequence[Mapping[str, Any]],
+    integration_contract: Mapping[str, Any] | None = None,
     refuse_existing: bool = False,
 ) -> dict[str, Any]:
     X_row = build_uqgrid_probml_x(operating_point)
@@ -2739,6 +2893,7 @@ def append_uqgrid_probml_outputs(
         fault_results=fault_results,
         initialization_source="uqgrid_pf",
         acopf_feasible=False,
+        integration_contract=integration_contract,
         refuse_existing=refuse_existing,
     )
 
@@ -2753,6 +2908,7 @@ def write_stage3_probml_outputs(
     fault_locations: Sequence[int],
     fault_impedances: Sequence[float],
     fault_results: Sequence[Mapping[str, Any]],
+    integration_contract: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return append_acopf_probml_outputs(
         output_dir=output_dir,
@@ -2763,6 +2919,7 @@ def write_stage3_probml_outputs(
         fault_locations=fault_locations,
         fault_impedances=fault_impedances,
         fault_results=fault_results,
+        integration_contract=integration_contract,
         refuse_existing=True,
     )
 
@@ -2812,9 +2969,9 @@ def run_acopf_replay_smoke(
     state_metadata_func: Callable[..., Mapping[str, Any]] = export_delta_state_metadata,
     fault_runner_func: Callable[..., Sequence[Mapping[str, Any]]] = run_fault_replay_tasks,
 ) -> dict[str, Any]:
-    """Run Stage 3: one ACOPF-initialized OP, tiny parallel replay set, one NPZ row."""
+    """Run one ACOPF-initialized OP, a small replay set, and one NPZ row."""
     if int(target_accepted_scenarios) != 1:
-        raise ValueError("Stage 3 smoke mode supports exactly one accepted scenario")
+        raise ValueError("Replay smoke mode supports exactly one accepted scenario")
     output_dir = Path(output_dir).expanduser()
     config = _load_json_config(config_path)
     fault_locations_list = parse_int_list(fault_locations, default=[142, 143])
@@ -2823,13 +2980,13 @@ def run_acopf_replay_smoke(
         default=(config.get("scenarios", {}) or {}).get("fault_impedances", [1e-4]),
     )
     if not fault_locations_list or not fault_impedances_list:
-        raise ValueError("Stage 3 smoke mode requires at least one fault location and impedance")
+        raise ValueError("Replay smoke mode requires at least one fault location and impedance")
 
     basename = probml_basename or _default_probml_basename(config, smoke=True)
     final_path, min_path = _probml_output_paths(output_dir, basename)
     if final_path.exists() or min_path.exists():
         raise FileExistsError(
-            f"Stage 3 smoke refuses to append to existing NPZ files: {final_path}, {min_path}"
+            f"Replay smoke refuses to append to existing NPZ files: {final_path}, {min_path}"
         )
 
     requested_n_jobs = (
@@ -2972,6 +3129,7 @@ def run_acopf_replay_smoke(
         fault_locations=fault_locations_list,
         fault_impedances=fault_impedances_list,
         fault_results=fault_results,
+        integration_contract=_integration_contract_from_config(config),
     )
     final_tsi_values = np.asarray([result["tsi_final"] for result in fault_results], dtype=float)
     min_tsi_values = np.asarray([result["tsi_min"] for result in fault_results], dtype=float)
@@ -3069,7 +3227,7 @@ def read_acopf_production_status(
     probml_basename: str | None = None,
     config: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Read Stage 4 output state without running candidate, ACOPF, or replay code."""
+    """Read production output state without running candidate, ACOPF, or replay code."""
     output_dir = Path(output_dir).expanduser()
     state_paths = _production_state_paths(output_dir)
     final_path, min_path = _infer_status_paths(
@@ -3112,6 +3270,10 @@ def read_acopf_production_status(
             "final": None if final_path is None else _npz_shapes(final_path),
             "min": None if min_path is None else _npz_shapes(min_path),
         },
+        "integration_contract": progress.get(
+            "integration_contract",
+            resume.get("integration_contract"),
+        ),
         "resume_error": resume_error,
         "progress_path": str(state_paths["progress"]),
         "diagnostics_path": str(state_paths["diagnostics"]),
@@ -3131,6 +3293,7 @@ def _production_progress(
     probml_outputs: Mapping[str, Any] | None = None,
     reject_reason: str | None = None,
     source_counts: Mapping[str, int] | None = None,
+    integration_contract: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     progress = {
         "stage": "stage_4_production",
@@ -3151,6 +3314,10 @@ def _production_progress(
     }
     if probml_outputs:
         progress["probml_outputs"] = dict(probml_outputs)
+    if integration_contract is not None:
+        progress["integration_contract"] = _normalize_integration_contract(
+            integration_contract
+        )
     return progress
 
 
@@ -3178,6 +3345,7 @@ def _load_production_resume_state(
     continue_run: bool,
     fault_locations: Sequence[int],
     fault_impedances: Sequence[float],
+    expected_integration_contract: Mapping[str, Any],
 ) -> dict[str, Any]:
     state_paths = _production_state_paths(output_dir)
     managed_paths = [final_path, min_path, *state_paths.values()]
@@ -3185,7 +3353,7 @@ def _load_production_resume_state(
         existing = [str(path) for path in managed_paths if path.exists()]
         if existing:
             raise FileExistsError(
-                "Stage 4 output files already exist. Use --continue after verifying "
+                "Production output files already exist. Use --continue after verifying "
                 "the run state, or choose a fresh --output-dir/--probml-basename. "
                 f"Existing paths: {existing}"
             )
@@ -3200,9 +3368,18 @@ def _load_production_resume_state(
             "source_counts": {},
         }
 
-    resume = validate_probml_resume_pair(final_path, min_path)
+    resume = validate_probml_resume_pair(
+        final_path,
+        min_path,
+        expected_integration_contract=expected_integration_contract,
+    )
     progress = _read_json_file(state_paths["progress"], {})
     if progress:
+        _assert_integration_contract_matches(
+            progress.get("integration_contract"),
+            expected_integration_contract,
+            source="acopf_init_progress.json",
+        )
         progress_accepted = int(progress.get("accepted_count", -1))
         progress_next_sample = int(progress.get("next_sample_idx", -1))
         if progress_accepted != int(resume["accepted_count"]):
@@ -3252,6 +3429,7 @@ def _load_production_resume_state(
         "simulation_log": dict(simulation_log),
         "progress": progress,
         "source_counts": _npz_source_counts(final_path),
+        "integration_contract": resume["integration_contract"],
     }
 
 
@@ -3375,11 +3553,12 @@ def run_acopf_production(
     acopf_runner_func: Callable[..., Mapping[str, Any]] = run_exajugo_acopf,
     pf_validator_func: Callable[..., Mapping[str, Any]] = validate_acopf_power_flow,
 ) -> dict[str, Any]:
-    """Run Stage 4 production ACOPF-initialized scenario generation."""
+    """Run production ACOPF/direct-UQGrid scenario generation."""
     output_dir = Path(output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     config_path = Path(config_path).expanduser()
     config = _load_json_config(config_path)
+    integration_contract = _integration_contract_from_config(config)
     model_cfg = config["model"]
     scenario_cfg = config.get("scenarios", {}) or {}
     exec_cfg = config.get("execution", {}) or {}
@@ -3441,6 +3620,7 @@ def run_acopf_production(
         continue_run=continue_run,
         fault_locations=fault_locations_list,
         fault_impedances=fault_impedances_list,
+        expected_integration_contract=integration_contract,
     )
     records = list(resume_state["records"])
     scenario_metadata = dict(resume_state["scenario_metadata"])
@@ -3481,6 +3661,7 @@ def run_acopf_production(
             fault_rows_completed=len(simulation_log),
             probml_outputs=latest_probml_outputs,
             source_counts=source_counts,
+            integration_contract=integration_contract,
         )
         _write_production_state(
             output_dir,
@@ -3579,6 +3760,7 @@ def run_acopf_production(
                 probml_outputs=latest_probml_outputs,
                 reject_reason=last_reject_reason,
                 source_counts=source_counts,
+                integration_contract=integration_contract,
             )
             _write_production_state(
                 output_dir,
@@ -3709,6 +3891,7 @@ def run_acopf_production(
                 probml_outputs=latest_probml_outputs,
                 reject_reason=last_reject_reason,
                 source_counts=source_counts,
+                integration_contract=integration_contract,
             )
             _write_production_state(
                 output_dir,
@@ -3734,6 +3917,7 @@ def run_acopf_production(
                 fault_locations=fault_locations_list,
                 fault_impedances=fault_impedances_list,
                 fault_results=fault_results,
+                integration_contract=integration_contract,
             )
         else:
             probml_outputs = append_uqgrid_probml_outputs(
@@ -3744,6 +3928,7 @@ def run_acopf_production(
                 fault_locations=fault_locations_list,
                 fault_impedances=fault_impedances_list,
                 fault_results=fault_results,
+                integration_contract=integration_contract,
             )
         final_tsi_values = np.asarray(
             [result["tsi_final"] for result in fault_results],
@@ -3801,6 +3986,7 @@ def run_acopf_production(
             fault_rows_completed=len(simulation_log),
             probml_outputs=latest_probml_outputs,
             source_counts=source_counts,
+            integration_contract=integration_contract,
         )
         _write_production_state(
             output_dir,
@@ -3833,6 +4019,7 @@ def run_acopf_production(
         probml_outputs=latest_probml_outputs,
         reject_reason=last_reject_reason,
         source_counts=source_counts,
+        integration_contract=integration_contract,
     )
     _write_production_state(
         output_dir,
@@ -3852,17 +4039,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--smoke-acopf",
         action="store_true",
-        help="Run Stage 2 ACOPF smoke integration only",
+        help="Run ACOPF handoff smoke integration only",
     )
     parser.add_argument(
         "--smoke-replay",
         action="store_true",
-        help="Run Stage 3 ACOPF plus tiny dynamic replay smoke integration",
+        help="Run ACOPF plus a small dynamic replay smoke integration",
     )
     parser.add_argument(
         "--status",
         action="store_true",
-        help="Read Stage 4 output status without running generation",
+        help="Read production output status without running generation",
     )
     parser.add_argument("--output-dir", default=None, help="Output directory")
     parser.add_argument("--julia", default=None, help="Julia executable")
@@ -3903,7 +4090,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--continue",
         dest="continue_run",
         action="store_true",
-        help="Resume a Stage 4 production output directory after validation",
+        help="Resume a production output directory after validation",
     )
     parser.add_argument("--sample-idx-start", type=int, default=0)
     parser.add_argument("--uqgrid-root", default=None, help="Root for relative model paths")
@@ -3969,7 +4156,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.continue_run and (args.smoke_acopf or args.smoke_replay):
-        parser.error("--continue is only supported in Stage 4 production mode")
+        parser.error("--continue is only supported in production mode")
     if not args.config:
         parser.error("generation modes require a config file")
 
