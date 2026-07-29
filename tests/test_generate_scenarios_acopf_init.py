@@ -290,7 +290,84 @@ def test_probml_writer_appends_and_validates_resume_pair(acopf, tmp_path):
         assert meta["tsi_mode"] == "final"
 
     resume = acopf.validate_probml_resume_pair(final_path, min_path)
-    assert resume == {"accepted_count": 2, "next_sample_idx": 2}
+    assert resume == {
+        "accepted_count": 2,
+        "next_sample_idx": 2,
+        "integration_contract": None,
+    }
+
+
+def test_probml_resume_enforces_normalized_integration_contract(acopf, tmp_path):
+    final_path = tmp_path / "tsi_final.npz"
+    min_path = tmp_path / "tsi_min.npz"
+    contract = acopf._integration_contract_from_config(
+        {
+            "integration": {
+                "method": "cn",
+                "petsc": True,
+                "arkimex": False,
+                "dt": 0.01,
+                "steps": 10,
+                "tend": 1.0,
+                "ton": 0.2,
+                "toff": 0.3,
+            }
+        }
+    )
+    kwargs = {
+        "X_row": np.asarray([[0.5, 0.1], [0.1, -0.03]]),
+        "Y_row": np.asarray([[1.0]]),
+        "sample_idx": 0,
+        "fault_locations": [1],
+        "fault_impedances": [1e-4],
+        "scenario_ids_row": np.asarray([["sid"]], dtype=object),
+        "n_gen": 1,
+        "n_load": 1,
+        "integration_contract": contract,
+    }
+    acopf.append_probml_dataset_row(final_path, tsi_mode="final", **kwargs)
+    acopf.append_probml_dataset_row(min_path, tsi_mode="min", **kwargs)
+
+    resume = acopf.validate_probml_resume_pair(
+        final_path,
+        min_path,
+        expected_integration_contract=contract,
+    )
+    assert resume["integration_contract"] == contract
+    with np.load(final_path, allow_pickle=True) as data:
+        assert data["meta"][0]["integration_contract"] == contract
+
+    changed = {**contract, "method": "beuler"}
+    with pytest.raises(ValueError, match="method=.*requested"):
+        acopf.validate_probml_resume_pair(
+            final_path,
+            min_path,
+            expected_integration_contract=changed,
+        )
+
+
+def test_probml_resume_rejects_legacy_time_grid_when_contract_required(acopf, tmp_path):
+    final_path = tmp_path / "tsi_final.npz"
+    min_path = tmp_path / "tsi_min.npz"
+    kwargs = {
+        "X_row": np.asarray([[0.5, 0.1], [0.1, -0.03]]),
+        "Y_row": np.asarray([[1.0]]),
+        "sample_idx": 0,
+        "fault_locations": [1],
+        "fault_impedances": [1e-4],
+        "scenario_ids_row": np.asarray([["sid"]], dtype=object),
+        "n_gen": 1,
+        "n_load": 1,
+    }
+    acopf.append_probml_dataset_row(final_path, tsi_mode="final", **kwargs)
+    acopf.append_probml_dataset_row(min_path, tsi_mode="min", **kwargs)
+
+    with pytest.raises(ValueError, match="new output directory or basename"):
+        acopf.validate_probml_resume_pair(
+            final_path,
+            min_path,
+            expected_integration_contract=acopf._integration_contract_from_config({}),
+        )
 
 
 def test_probml_resume_pair_rejects_row_count_mismatch(acopf, tmp_path):
@@ -806,7 +883,7 @@ def _production_config(tmp_path, *, n_bus=2, target=2, max_total_attempts=10):
     config_path.write_text(
         json.dumps(
             {
-                "model": {"name": "ACTIVSg500", "raw": str(raw), "dyr": str(dyr), "n_bus": n_bus},
+                "model": {"name": "TestGrid", "raw": str(raw), "dyr": str(dyr), "n_bus": n_bus},
                 "scenarios": {
                     "samples_per_fault_location": 1,
                     "fault_locations": "all",
@@ -1071,6 +1148,9 @@ def test_integration_config_adapter_preserves_pf_contract(acopf):
     adapted = acopf._integration_config_from_config(
         {
             "integration": {
+                "steps": 25,
+                "method": "cn",
+                "arkimex": False,
                 "enforce_q_limits": True,
                 "q_limit_tolerance": 6e-8,
                 "max_q_limit_iterations": 12,
@@ -1080,6 +1160,9 @@ def test_integration_config_adapter_preserves_pf_contract(acopf):
     )
 
     assert adapted["enforce_q_limits"] is True
+    assert adapted["steps"] == 25
+    assert adapted["method"] == "cn"
+    assert adapted["arkimex"] is False
     assert adapted["q_limit_tolerance"] == pytest.approx(6e-8)
     assert adapted["max_q_limit_iterations"] == 12
     assert adapted["power_flow_validation"] == validation
@@ -1087,6 +1170,9 @@ def test_integration_config_adapter_preserves_pf_contract(acopf):
 
     defaults = acopf._integration_config_from_config({})
     assert defaults["enforce_q_limits"] is True
+    assert defaults["steps"] == -1
+    assert defaults["method"] == "beuler"
+    assert defaults["arkimex"] is False
     assert defaults["q_limit_tolerance"] == pytest.approx(1e-8)
     assert defaults["max_q_limit_iterations"] is None
     assert defaults["power_flow_validation"] == {}
@@ -1183,6 +1269,9 @@ def test_replay_workers_share_pf_contract_and_success_diagnostics(acopf, tmp_pat
     integration_config = {
         "tend": 10.0,
         "dt": 1 / 120,
+        "steps": -1,
+        "method": "cn",
+        "arkimex": False,
         "power_injection": False,
         "ton": 0.25,
         "toff": 0.4,
@@ -1764,10 +1853,12 @@ def test_production_acopf_probability_zero_uses_uqgrid_direct_only(acopf, tmp_pa
 
     assert progress["accepted_count"] == 1
     assert progress["initialization_source_counts"] == {"uqgrid_pf": 1}
+    assert progress["integration_contract"]["method"] == "beuler"
     with np.load(tmp_path / "out" / "prod_final.npz", allow_pickle=True) as data:
         assert data["initialization_source"].tolist() == ["uqgrid_pf"]
         assert data["acopf_feasible"].tolist() == [False]
         assert data["X"].shape == (1, 2, 262)
+        assert data["meta"][0]["integration_contract"] == progress["integration_contract"]
 
     log = json.loads((tmp_path / "out" / "simulation_log.json").read_text())
     assert {row["initialization_source"] for row in log.values()} == {"uqgrid_pf"}
@@ -1849,6 +1940,34 @@ def test_production_resume_success_and_mismatch_rejection(acopf, tmp_path):
     progress["next_sample_idx"] = 7
     progress_path.write_text(json.dumps(progress), encoding="utf-8")
     with pytest.raises(ValueError, match="next_sample_idx"):
+        acopf.run_acopf_production(
+            config_path=config_path,
+            output_dir=output_dir,
+            acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+            target_accepted_scenarios=1,
+            continue_run=True,
+            probml_basename="prod",
+        )
+
+
+def test_production_resume_rejects_changed_integration_method(acopf, tmp_path):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, target=1)
+    parsed = _large_parsed_basecase(acopf)
+    output_dir = tmp_path / "out"
+    acopf.run_acopf_production(
+        config_path=config_path,
+        output_dir=output_dir,
+        acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+        probml_basename="prod",
+        acopf_context_func=_accepted_production_context(acopf, tmp_path, parsed),
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=_successful_fault_runner([]),
+    )
+
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["integration"]["method"] = "cn"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ValueError, match="method=.*requested"):
         acopf.run_acopf_production(
             config_path=config_path,
             output_dir=output_dir,
@@ -2057,6 +2176,7 @@ def test_status_reads_existing_state_without_acopf_config(acopf, tmp_path, capsy
     assert printed["fault_rows_completed"] == 2
     assert printed["initialization_source_counts"] == {"acopf": 1}
     assert printed["npz_shapes"]["final"]["Y"] == [1, 2, 1]
+    assert printed["integration_contract"]["method"] == "beuler"
 
 
 def test_main_preflight_prints_to_stderr_and_preserves_stdout_json(

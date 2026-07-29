@@ -85,10 +85,20 @@ def test_build_validation_integration_config_requires_strict_contract(validator)
     assert result.power_flow_validation == {"enabled": True, "voltage_min": 0.9}
     assert result.steps == 5
     assert result.tend == pytest.approx(5 / 120)
-    assert result.ton == pytest.approx(5 / 120)
-    assert result.toff == pytest.approx(6 / 120)
+    assert result.ton == pytest.approx(0.25)
+    assert result.toff == pytest.approx(0.4)
     assert result.method == "beuler"
     assert result.petsc is False
+
+    cn_result = validator.build_validation_integration_config(
+        base,
+        steps=5,
+        petsc=True,
+        method="cn",
+        integration_config_cls=FakeIntegrationConfig,
+    )
+    assert cn_result.method == "cn"
+    assert cn_result.petsc is True
 
     missing_q = {"integration": {**base["integration"], "enforce_q_limits": False}}
     with pytest.raises(ValueError, match="enforce_q_limits=true"):
@@ -108,6 +118,25 @@ def test_build_validation_integration_config_requires_strict_contract(validator)
             missing_validation,
             integration_config_cls=FakeIntegrationConfig,
         )
+
+
+def test_handoff_parser_accepts_explicit_method_override(validator, tmp_path):
+    args = validator._build_parser().parse_args(
+        [
+            "operating-point",
+            str(tmp_path / "config.json"),
+            "--source",
+            "uqgrid_pf",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--no-petsc",
+            "--method",
+            "herk2",
+        ]
+    )
+
+    assert args.petsc is False
+    assert args.method == "herk2"
 
 
 def test_apply_direct_initialization_context(validator):
@@ -287,7 +316,7 @@ def _write_dataset(tmp_path, *, sources=("acopf", "uqgrid_pf")):
             scenario_ids[row, fault, 0] = f"scenario_{row}_{fault}_0"
     feasible = np.asarray([source == "acopf" for source in sources], dtype=bool)
 
-    basename = "tsi_probml_fullinputs_ACTIVSg500_stage5"
+    basename = "tsi_probml_fullinputs_TestGrid"
     common = {
         "X": X,
         "X_flat": X.reshape(row_count, -1),
