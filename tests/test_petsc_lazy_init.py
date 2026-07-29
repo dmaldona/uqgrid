@@ -90,6 +90,8 @@ def test_dynamics_driver_preserves_sys_argv_and_stores_petsc_args(monkeypatch):
         "--dyr",
         "case.dyr",
         "--petsc",
+        "--method",
+        "cn",
         "--",
         "-ts_monitor",
         "-ksp_type",
@@ -103,6 +105,7 @@ def test_dynamics_driver_preserves_sys_argv_and_stores_petsc_args(monkeypatch):
     assert raw == "case.raw"
     assert dyr == "case.dyr"
     assert config.petsc is True
+    assert config.method == "cn"
     assert config.petsc_args == ["-ts_monitor", "-ksp_type", "gmres"]
 
 

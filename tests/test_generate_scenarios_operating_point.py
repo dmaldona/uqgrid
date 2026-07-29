@@ -52,6 +52,7 @@ def _dummy_export_psys():
 def test_integration_config_adapter_preserves_q_limit_controls(gs):
     cfg = gs._integration_config_from_dict({
         "petsc": True,
+        "method": "cn",
         "enforce_q_limits": True,
         "q_limit_tolerance": 2e-7,
         "max_q_limit_iterations": 11,
@@ -64,6 +65,7 @@ def test_integration_config_adapter_preserves_q_limit_controls(gs):
     })
 
     assert cfg.petsc is True
+    assert cfg.method == "cn"
     assert cfg.enforce_q_limits is True
     assert cfg.q_limit_tolerance == pytest.approx(2e-7)
     assert cfg.max_q_limit_iterations == 11
@@ -76,6 +78,7 @@ def test_integration_config_adapter_preserves_q_limit_controls(gs):
 def test_default_scenario_config_includes_q_limit_controls(gs):
     integration = gs.get_default_config("IEEE-9")["integration"]
 
+    assert integration["method"] == "cn"
     assert integration["enforce_q_limits"] is True
     assert integration["q_limit_tolerance"] == pytest.approx(1e-8)
     assert integration["max_q_limit_iterations"] is None
@@ -88,6 +91,7 @@ def test_default_scenario_config_includes_q_limit_controls(gs):
     assert validation["branch_loading_max"] == pytest.approx(1.0)
 
     adapted = gs._integration_config_from_dict({})
+    assert adapted.method == "beuler"
     assert adapted.enforce_q_limits is True
     assert adapted.power_flow_validation.enabled is False
 

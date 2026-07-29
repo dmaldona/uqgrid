@@ -243,6 +243,7 @@ baseline config may omit those optional fields and still run.
     "integration": {
         "tend": 10.0,
         "dt": 0.008333333333333333,
+        "method": "cn",
         "power_injection": false,
         "ton": 0.25,
         "toff": 0.4,
@@ -305,11 +306,34 @@ baseline config may omit those optional fields and still run.
 | | `diagnostics_summary_file` | JSON path for aggregate diagnostics summary |
 | **integration** | `tend` | Simulation end time [s] |
 | | `dt` | Integration time step [s] (default: 1/120) |
+| | `method` | `"beuler"`, `"cn"`, `"herk2"`, or `"herk4"`; omitted values default to backward Euler |
 | | `power_injection` | Use power injection model |
 | | `ton` | Fault onset time [s] |
 | | `toff` | Fault clearing time [s] |
 | | `verbose` | Enable verbose solver output |
 | | `petsc` | Use PETSc solver |
+
+### Time Grid and PETSc Method
+
+`steps=N` means N integration advances and N+1 base samples, including the
+initialized state at `t=0`. With `steps=-1`, the final sample is exactly at
+`tend`, including a shortened last interval when required. Exact off-grid fault
+application and clearing times are inserted into the stored grid. Event samples
+contain the post-switch algebraic state, and the fault is active on
+`[ton, toff)`.
+
+Set `method="cn"` explicitly for PETSc Crank-Nicolson (`TSCN`). Omitting
+`method` selects backward Euler, including when `petsc=true`. Native HERK2/HERK4
+require `petsc=false`; PETSc ARKIMEX is selected separately with
+`arkimex=true`. PETSc options cannot override the configured method or time
+grid. Histories generated before this normalized contract have different time
+axes and should not be appended to corrected dense-history datasets.
+
+Adjoint sensitivities (`comp_sens=true`) require `petsc=true` and
+`method="cn"`. Faulted adjoints use reverse topology segments and algebraic
+projection jump conditions. Forward PETSc backward Euler remains supported,
+but its integral adjoint is rejected because it does not pass finite-difference
+validation.
 
 ### Perturbation and Operating-Point Workflow
 

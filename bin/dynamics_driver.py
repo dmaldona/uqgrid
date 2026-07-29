@@ -27,6 +27,10 @@ def parse_args():
     parser.add_argument('--tend', type=float, default=10.0, help='Integration end time in seconds.')
     parser.add_argument('--dt', type=float, default=1.0/120.0, help='Time step in seconds.')
     parser.add_argument('--steps', type=int, default=-1, help='Number of integration steps.')
+    parser.add_argument(
+        '--method', choices=['beuler', 'cn', 'herk2', 'herk4'],
+        default='beuler', help='Integration method.'
+    )
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
     parser.add_argument('--comp_sens', action='store_true', help='Compute sensitivities.')
     parser.add_argument('--fsolve', action='store_true', help='Use fsolve for nonlinear equations.')
@@ -46,6 +50,7 @@ def parse_args():
             ton=args.ton,
             toff=args.toff,
             steps=args.steps,
+            method=args.method,
             power_injection=False,
             verbose=args.verbose,
             comp_sens=args.comp_sens,

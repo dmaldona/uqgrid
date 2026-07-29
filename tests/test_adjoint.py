@@ -62,7 +62,8 @@ def test_config():
         power_injection=False,
         verbose=False,
         comp_sens=True,
-        petsc=True
+        petsc=True,
+        method="cn",
     )
 
 

@@ -43,6 +43,10 @@ def parse_args(argv: List[str]):
     parser.add_argument('--tend', type=float, default=1.0, help='Simulation end time in seconds.')
     parser.add_argument('--dt', type=float, default=1.0 / 120.0, help='Time step in seconds.')
     parser.add_argument('--steps', type=int, default=-1, help='Number of fixed steps to run.')
+    parser.add_argument(
+        '--method', choices=['beuler', 'cn', 'herk2', 'herk4'],
+        default='beuler', help='Integration method.'
+    )
     parser.add_argument('--ton', type=float, default=0.1, help='Fault activation time.')
     parser.add_argument('--toff', type=float, default=0.2, help='Fault clearing time.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging.')
@@ -68,6 +72,7 @@ def parse_args(argv: List[str]):
             ton=args.ton,
             toff=args.toff,
             steps=args.steps,
+            method=args.method,
             power_injection=False,
             verbose=args.verbose,
             petsc=args.petsc,

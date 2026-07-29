@@ -49,6 +49,7 @@
     "integration": {
         "tend": 10.0,
         "dt": 0.008333333333333333,
+        "method": "cn",
         "power_injection": false,
         "ton": 0.25,
         "toff": 0.4,

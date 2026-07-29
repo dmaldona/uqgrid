@@ -11,6 +11,7 @@ from scipy.sparse.linalg import spsolve
 
 from uqgrid.simulation.residual import residual_function
 from uqgrid.simulation.jacobian import residual_jacobian
+from uqgrid.simulation.timing import build_integration_schedule
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +131,6 @@ def integrate_system_herk(psys, config, ctx=None):
     no-Jacobian-check path is supported. Fault on/off events are handled
     between steps via an algebraic resolve.
     """
-    import math
-
     from uqgrid.simulation.dynamics import (
         _initialize_system_from_config,
         preallocate_jacobian,
@@ -175,53 +174,59 @@ def integrate_system_herk(psys, config, ctx=None):
     J = preallocate_jacobian(psys)
     F = np.zeros(system_size)
 
-    h = config.dt
-    if config.steps > 0:
-        nsteps = config.steps
-    else:
-        nsteps = int(math.floor(config.tend / config.dt)) + 1
-
-    step_on = int(config.ton / h)
-    step_off = int(config.toff / h)
+    has_fault = bool(psys.fault_events)
+    schedule = build_integration_schedule(
+        dt=config.dt,
+        tend=config.tend,
+        steps=config.steps,
+        ton=config.ton,
+        toff=config.toff,
+        has_fault=has_fault,
+    )
+    tvec = schedule.times
+    fault = psys.fault_events[0] if has_fault else None
+    if fault is not None:
+        fault.remove()
 
     tol = config.herk_alg_tol
     max_iter = config.herk_alg_max_iter
 
-    tvec = np.linspace(0, nsteps * h, nsteps)
-    history = np.zeros((system_size, nsteps))
+    history = np.zeros((system_size, len(tvec)))
     z = z0
+    history[:, 0] = z
 
     NDIFFEQ = psys.num_dof_dif
     alg_size = psys.num_dof_alg
 
-    for i in range(nsteps):
+    for i in range(1, len(tvec)):
+        t_start = tvec[i - 1]
+        h_step = tvec[i] - t_start
         if psys.signal_injectors:
-            t_now = i * h
             for inj in psys.signal_injectors:
-                inj.update(t_now, theta, psys)
-        z = herk_step(z, theta, h, psys, A, b, c, F, J, tol, max_iter)
+                inj.update(t_start, theta, psys)
+        z = herk_step(z, theta, h_step, psys, A, b, c, F, J, tol, max_iter)
+
+        if i == schedule.fault_on_index:
+            fault.apply()
+            x = z[:NDIFFEQ]
+            y = z[NDIFFEQ:NDIFFEQ + alg_size]
+            v = z[NDIFFEQ + alg_size:]
+            y_new, v_new, _ = solve_stage_algebraic(
+                x, y, v, theta, psys, F, J, tol, max_iter)
+            z = np.concatenate([x, y_new, v_new])
+
+        if i == schedule.fault_off_index:
+            fault.remove()
+            x = z[:NDIFFEQ]
+            y = z[NDIFFEQ:NDIFFEQ + alg_size]
+            v = z[NDIFFEQ + alg_size:]
+            y_new, v_new, _ = solve_stage_algebraic(
+                x, y, v, theta, psys, F, J, tol, max_iter)
+            z = np.concatenate([x, y_new, v_new])
         history[:, i] = z
 
-        if i == step_on and len(psys.fault_events) > 0:
-            psys.fault_events[0].apply()
-            x = z[:NDIFFEQ]
-            y = z[NDIFFEQ:NDIFFEQ + alg_size]
-            v = z[NDIFFEQ + alg_size:]
-            y_new, v_new, _ = solve_stage_algebraic(
-                x, y, v, theta, psys, F, J, tol, max_iter)
-            z = np.concatenate([x, y_new, v_new])
-
-        if i == step_off and len(psys.fault_events) > 0:
-            psys.fault_events[0].remove()
-            x = z[:NDIFFEQ]
-            y = z[NDIFFEQ:NDIFFEQ + alg_size]
-            v = z[NDIFFEQ + alg_size:]
-            y_new, v_new, _ = solve_stage_algebraic(
-                x, y, v, theta, psys, F, J, tol, max_iter)
-            z = np.concatenate([x, y_new, v_new])
-
-    if nsteps - 1 < step_off and len(psys.fault_events) > 0:
-        psys.fault_events[0].remove()
+    if fault is not None:
+        fault.remove()
 
     results = {"tvec": tvec, "history": history}
     if pf_solution.validation is not None:

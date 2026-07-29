@@ -10,7 +10,7 @@ from uqgrid.simulation.jacobian_check import compare_jacobians
 from uqgrid.io.parse import load_psse, add_dyr
 from uqgrid.simulation.pflow import runpf
 from uqgrid.simulation.residual import residual_function
-from uqgrid.simulation.config import IntegrationConfig
+from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
 
 EPS = 1e-10  # Tolerance for floating-point comparisons
 
@@ -83,6 +83,19 @@ def test_two_bus_system(data_dir):
 
     # Extract simulation history
     history = res["history"]
+    np.testing.assert_allclose(res["tvec"][[0, -1]], [0.0, config.tend])
+
+    # The PSSE trace repeats the pre-switch state at each event time. UQGrid's
+    # normalized contract stores the post-switch algebraic state there, so
+    # compare every sample except the two topology boundaries.
+    comparison_mask = np.ones(history.shape[1], dtype=bool)
+    comparison_mask[np.isclose(res["tvec"], config.ton)] = False
+    comparison_mask[np.isclose(res["tvec"], config.toff)] = False
+    history = history[:, comparison_mask]
+    volt1_p = volt1_p[comparison_mask]
+    volt2_p = volt2_p[comparison_mask]
+    eq_p = eq_p[comparison_mask]
+    speed = speed[comparison_mask]
 
     gen = psys.gendyn[0]
     dif_ptr = gen.dif_ptr
@@ -248,7 +261,8 @@ def test_static_generator_initialization_and_jacobian(data_dir, tmp_path):
     assert mismatches == []
 
 
-def test_petsc_uses_q_limited_initial_power_flow(data_dir, monkeypatch):
+@pytest.mark.parametrize("method", ["beuler", "cn"])
+def test_petsc_uses_q_limited_initial_power_flow(data_dir, monkeypatch, method):
     pytest.importorskip("petsc4py")
     from uqgrid.simulation import dynamics
 
@@ -271,6 +285,7 @@ def test_petsc_uses_q_limited_initial_power_flow(data_dir, monkeypatch):
         dt=1.0 / 120.0,
         power_injection=False,
         petsc=True,
+        method=method,
         ton=10.0,
         toff=11.0,
         enforce_q_limits=True,
@@ -287,7 +302,154 @@ def test_petsc_uses_q_limited_initial_power_flow(data_dir, monkeypatch):
     assert captured[0].q_limit_events[0]["side"] == "upper"
     assert captured[0].gen_qsch[1] == pytest.approx(psys.gens[1].qgub)
     assert result["power_flow_diagnostics"] == captured[0].validation
-    assert result["history"].shape[1] == 2
+    assert result["history"].shape[1] == 3
+    np.testing.assert_allclose(result["tvec"], [0.0, config.dt, 2 * config.dt])
+
+
+def test_petsc_steps_truncate_fault_interval(data_dir, monkeypatch):
+    pytest.importorskip("petsc4py")
+
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    add_dyr(psys, os.path.join(data_dir, "ieee9bus.dyr"))
+    psys.add_busfault(4, 1e-4)
+    psys.createYbusComplex()
+    fault = psys.fault_events[0]
+    events = []
+    original_apply = fault.apply
+    original_remove = fault.remove
+
+    def recording_apply():
+        events.append("apply")
+        original_apply()
+
+    def recording_remove():
+        events.append("remove")
+        original_remove()
+
+    monkeypatch.setattr(fault, "apply", recording_apply)
+    monkeypatch.setattr(fault, "remove", recording_remove)
+    config = IntegrationConfig(
+        steps=3,
+        dt=1.0 / 120.0,
+        power_injection=False,
+        petsc=True,
+        ton=1.0 / 120.0,
+        toff=10.0,
+    )
+
+    result = integrate_system(psys, config)
+
+    assert result["tvec"][-1] == pytest.approx(3.0 / 120.0)
+    assert np.max(result["tvec"]) <= 3.0 / 120.0 + 1e-12
+    assert "apply" in events
+    assert events[-1] == "remove"
+    assert fault.active is False
+
+
+@pytest.mark.parametrize("method", ["beuler", "cn"])
+def test_petsc_uses_exact_off_grid_fault_transitions(data_dir, method):
+    pytest.importorskip("petsc4py")
+
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    add_dyr(psys, os.path.join(data_dir, "ieee9bus.dyr"))
+    psys.add_busfault(4, 1e-4)
+    psys.createYbusComplex()
+    pf_solution = runpf(psys, verbose=False, enforce_q_limits=True)
+    z0, theta = initialize_system(psys, pf_solution)
+    ctx = IntegrationCtx()
+    ctx.set_initial_conditions(z0.copy())
+    ctx.set_theta(theta.copy())
+    psys.fault_events[0].apply()
+    dt = 1.0 / 120.0
+    config = IntegrationConfig(
+        method=method,
+        steps=4,
+        dt=dt,
+        power_injection=False,
+        petsc=True,
+        ton=1.5 * dt,
+        toff=2.7 * dt,
+    )
+
+    result = integrate_system(psys, config, ctx)
+
+    expected_times = [0.0, dt, 1.5 * dt, 2 * dt, 2.7 * dt, 3 * dt, 4 * dt]
+    np.testing.assert_allclose(result["tvec"], expected_times)
+    np.testing.assert_allclose(result["history"][:, 0], z0)
+    assert np.all(np.diff(result["tvec"]) > 0.0)
+
+    residual = np.zeros_like(z0)
+    fault = psys.fault_events[0]
+    fault.remove()
+    residual_function(residual, result["history"][:, 1], theta, psys)
+    assert np.linalg.norm(residual[psys.num_dof_dif:], np.inf) < 1e-8
+    fault.apply()
+    residual_function(residual, result["history"][:, 2], theta, psys)
+    assert np.linalg.norm(residual[psys.num_dof_dif:], np.inf) < 1e-8
+    fault.remove()
+    residual_function(residual, result["history"][:, 4], theta, psys)
+    assert np.linalg.norm(residual[psys.num_dof_dif:], np.inf) < 1e-8
+    assert fault.active is False
+
+
+def test_petsc_arkimex_uses_common_grid_without_fault(data_dir):
+    pytest.importorskip("petsc4py")
+
+    psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
+    add_dyr(psys, os.path.join(data_dir, "GENROU.dyr"))
+    psys.createYbusComplex()
+    config = IntegrationConfig(
+        petsc=True,
+        arkimex=True,
+        steps=2,
+        dt=0.01,
+        ton=10.0,
+        toff=11.0,
+        power_injection=True,
+    )
+
+    result = integrate_system(psys, config)
+
+    np.testing.assert_allclose(result["tvec"], [0.0, 0.01, 0.02])
+    assert result["history"].shape[1] == 3
+
+
+def test_petsc_arkimex_uses_exact_off_grid_fault_transitions(data_dir):
+    pytest.importorskip("petsc4py")
+
+    psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
+    add_dyr(psys, os.path.join(data_dir, "GENROU.dyr"))
+    psys.add_busfault(1, 1.0)
+    psys.createYbusComplex()
+    pf_solution = runpf(psys, verbose=False)
+    z0, theta = initialize_system(psys, pf_solution)
+    ctx = IntegrationCtx()
+    ctx.set_initial_conditions(z0.copy())
+    ctx.set_theta(theta.copy())
+    config = IntegrationConfig(
+        petsc=True,
+        arkimex=True,
+        steps=4,
+        dt=0.01,
+        ton=0.015,
+        toff=0.027,
+        power_injection=True,
+    )
+
+    result = integrate_system(psys, config, ctx)
+
+    np.testing.assert_allclose(
+        result["tvec"], [0.0, 0.01, 0.015, 0.02, 0.027, 0.03, 0.04]
+    )
+    residual = np.zeros_like(z0)
+    fault = psys.fault_events[0]
+    fault.apply()
+    residual_function(residual, result["history"][:, 2], theta, psys)
+    assert np.linalg.norm(residual[psys.num_dof_dif:], np.inf) < 1e-8
+    fault.remove()
+    residual_function(residual, result["history"][:, 4], theta, psys)
+    assert np.linalg.norm(residual[psys.num_dof_dif:], np.inf) < 1e-8
+    assert fault.active is False
 
 
 def test_static_generators_reject_inconsistent_voltage_setpoints(data_dir, tmp_path):
