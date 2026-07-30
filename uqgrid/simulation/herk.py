@@ -1,7 +1,8 @@
 """Half-explicit Runge-Kutta integrator for UQGrid.
 
 Heun (HERK2) and classical RK4 (HERK4) are wired through
-``integrate_system``.
+``integrate_system``. Enabled hard state limits are projected at each stage
+and accepted endpoint while the raw device equations remain unchanged.
 """
 
 from __future__ import annotations
@@ -9,6 +10,15 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse.linalg import spsolve
 
+from uqgrid.simulation.dynamic_limits import (
+    DynamicLimitError,
+    _contextualize_dynamic_limit_runtime_error,
+    collect_limited_state_descriptors,
+    initialize_dynamic_limit_modes,
+    project_limited_derivatives,
+    project_limited_states,
+    update_explicit_dynamic_limit_modes,
+)
 from uqgrid.simulation.residual import residual_function
 from uqgrid.simulation.jacobian import residual_jacobian
 from uqgrid.simulation.timing import build_integration_schedule
@@ -80,11 +90,29 @@ def solve_stage_algebraic(X_i, y0, v0, theta, psys, F_full, J_full,
 # ---------------------------------------------------------------------------
 
 
-def herk_step(z_old, theta, h, psys, A, b, c, F, J, tol, max_iter):
-    """Advance one HERK step from ``z_old`` by ``h``.
+def _herk_step_with_limits(
+    z_old,
+    theta,
+    h,
+    psys,
+    A,
+    b,
+    c,
+    F,
+    J,
+    tol,
+    max_iter,
+    *,
+    limit_descriptors=(),
+    limit_tolerance=0.0,
+    limit_modes=None,
+    t_start=0.0,
+):
+    """Advance one HERK step and return limiter state and events."""
+    limit_descriptors = list(limit_descriptors)
+    if limit_modes is None:
+        limit_modes = initialize_dynamic_limit_modes(limit_descriptors)
 
-    Returns the new combined state vector ``z_new = [x_new; y_new; v_new]``.
-    """
     NDIFFEQ = psys.num_dof_dif
     alg_size = psys.num_dof_alg
     s = len(b)
@@ -95,6 +123,7 @@ def herk_step(z_old, theta, h, psys, A, b, c, F, J, tol, max_iter):
 
     K = np.zeros((s, NDIFFEQ))
     Y_last, V_last = y_prev, v_prev
+    events = []
 
     for i in range(s):
         X_i = x_n.copy()
@@ -103,20 +132,99 @@ def herk_step(z_old, theta, h, psys, A, b, c, F, J, tol, max_iter):
             if a_ij != 0.0:
                 X_i += h * a_ij * K[j]
 
+        stage_time = t_start + c[i] * h
+        stage_name = f"stage_{i + 1}"
+        if limit_descriptors:
+            X_i, projection_events = project_limited_states(
+                X_i,
+                limit_descriptors,
+                time=stage_time,
+                stage_or_endpoint=stage_name,
+            )
+            events.extend(projection_events)
+
         Y_i, V_i, _ = solve_stage_algebraic(
             X_i, Y_last, V_last, theta, psys, F, J, tol, max_iter)
         Y_last, V_last = Y_i, V_i
 
         z_stage = np.concatenate([X_i, Y_i, V_i])
         residual_function(F, z_stage, theta, psys)
-        K[i] = F[:NDIFFEQ].copy()
+        raw_derivative = F[:NDIFFEQ].copy()
+        if limit_descriptors:
+            K[i], _ = project_limited_derivatives(
+                X_i,
+                raw_derivative,
+                limit_descriptors,
+                tolerance=limit_tolerance,
+                time=stage_time,
+                stage_or_endpoint=stage_name,
+            )
+            limit_modes, _, transition_events = (
+                update_explicit_dynamic_limit_modes(
+                    X_i,
+                    raw_derivative,
+                    limit_descriptors,
+                    limit_modes,
+                    tolerance=limit_tolerance,
+                    time=stage_time,
+                    stage_or_endpoint=stage_name,
+                )
+            )
+            events.extend(transition_events)
+        else:
+            K[i] = raw_derivative
 
     x_new = x_n + h * (b @ K)
+    endpoint_time = t_start + h
+    if limit_descriptors:
+        x_new, projection_events = project_limited_states(
+            x_new,
+            limit_descriptors,
+            time=endpoint_time,
+            stage_or_endpoint="endpoint",
+        )
+        events.extend(projection_events)
 
     Y_new, V_new, _ = solve_stage_algebraic(
         x_new, Y_last, V_last, theta, psys, F, J, tol, max_iter)
+    z_new = np.concatenate([x_new, Y_new, V_new])
 
-    return np.concatenate([x_new, Y_new, V_new])
+    if limit_descriptors:
+        residual_function(F, z_new, theta, psys)
+        raw_derivative = F[:NDIFFEQ].copy()
+        limit_modes, _, transition_events = update_explicit_dynamic_limit_modes(
+            x_new,
+            raw_derivative,
+            limit_descriptors,
+            limit_modes,
+            tolerance=limit_tolerance,
+            time=endpoint_time,
+            stage_or_endpoint="endpoint",
+        )
+        events.extend(transition_events)
+
+    return z_new, limit_modes, events
+
+
+def herk_step(z_old, theta, h, psys, A, b, c, F, J, tol, max_iter):
+    """Advance one unconstrained HERK step from ``z_old`` by ``h``.
+
+    Returns the new combined state vector ``z_new = [x_new; y_new; v_new]``.
+    """
+    z_new, _, _ = _herk_step_with_limits(
+        z_old,
+        theta,
+        h,
+        psys,
+        A,
+        b,
+        c,
+        F,
+        J,
+        tol,
+        max_iter,
+    )
+    return z_new
 
 
 # ---------------------------------------------------------------------------
@@ -129,10 +237,11 @@ def integrate_system_herk(psys, config, ctx=None):
 
     Only the no-PETSc, no-sensitivity, no-fsolve, no-ARKIMEX,
     no-Jacobian-check path is supported. Fault on/off events are handled
-    between steps via an algebraic resolve.
+    between steps via an algebraic resolve. Enabled hard limits are enforced
+    at RK stages and weighted endpoints without changing the time grid.
     """
     from uqgrid.simulation.dynamics import (
-        _initialize_system_from_config,
+        _initialize_integration_state,
         preallocate_jacobian,
     )
 
@@ -157,18 +266,17 @@ def integrate_system_herk(psys, config, ctx=None):
 
     psys.power_injection = config.power_injection
 
-    pf_solution, z0, theta = _initialize_system_from_config(psys, config)
-
-    z0_user = ctx.z0_user if ctx is not None else getattr(config, "z0_user", None)
-    theta_user = ctx.theta_user if ctx is not None else getattr(config, "theta_user", None)
-    if z0_user is not None:
-        if z0_user.shape[0] != z0.shape[0]:
-            raise ValueError("Provided initial state does not match system size.")
-        z0 = z0_user
-    if theta_user is not None:
-        if theta_user.shape[0] != theta.shape[0]:
-            raise ValueError("Provided theta does not match system parameters.")
-        theta = theta_user
+    pf_solution, z0, theta, dynamic_limit_diagnostics = (
+        _initialize_integration_state(psys, config, ctx)
+    )
+    limit_descriptors = []
+    if config.enforce_dynamic_limits:
+        limit_descriptors = [
+            descriptor
+            for descriptor in collect_limited_state_descriptors(psys, theta)
+            if descriptor.enabled
+        ]
+    limit_modes = initialize_dynamic_limit_modes(limit_descriptors)
 
     system_size = z0.shape[0]
     J = preallocate_jacobian(psys)
@@ -198,37 +306,69 @@ def integrate_system_herk(psys, config, ctx=None):
     NDIFFEQ = psys.num_dof_dif
     alg_size = psys.num_dof_alg
 
-    for i in range(1, len(tvec)):
-        t_start = tvec[i - 1]
-        h_step = tvec[i] - t_start
-        if psys.signal_injectors:
-            for inj in psys.signal_injectors:
-                inj.update(t_start, theta, psys)
-        z = herk_step(z, theta, h_step, psys, A, b, c, F, J, tol, max_iter)
+    try:
+        for i in range(1, len(tvec)):
+            t_start = tvec[i - 1]
+            h_step = tvec[i] - t_start
+            if psys.signal_injectors:
+                for inj in psys.signal_injectors:
+                    inj.update(t_start, theta, psys)
+            try:
+                z, limit_modes, limit_events = _herk_step_with_limits(
+                    z,
+                    theta,
+                    h_step,
+                    psys,
+                    A,
+                    b,
+                    c,
+                    F,
+                    J,
+                    tol,
+                    max_iter,
+                    limit_descriptors=limit_descriptors,
+                    limit_tolerance=config.dynamic_limit_tolerance,
+                    limit_modes=limit_modes,
+                    t_start=t_start,
+                )
+            except DynamicLimitError as exc:
+                raise _contextualize_dynamic_limit_runtime_error(
+                    exc,
+                    method=method,
+                    backend="native",
+                    time=tvec[i],
+                    stage_or_endpoint="endpoint",
+                    prior_events=dynamic_limit_diagnostics["events"],
+                ) from exc
+            dynamic_limit_diagnostics["events"].extend(limit_events)
 
-        if i == schedule.fault_on_index:
-            fault.apply()
-            x = z[:NDIFFEQ]
-            y = z[NDIFFEQ:NDIFFEQ + alg_size]
-            v = z[NDIFFEQ + alg_size:]
-            y_new, v_new, _ = solve_stage_algebraic(
-                x, y, v, theta, psys, F, J, tol, max_iter)
-            z = np.concatenate([x, y_new, v_new])
+            if i == schedule.fault_on_index:
+                fault.apply()
+                x = z[:NDIFFEQ]
+                y = z[NDIFFEQ:NDIFFEQ + alg_size]
+                v = z[NDIFFEQ + alg_size:]
+                y_new, v_new, _ = solve_stage_algebraic(
+                    x, y, v, theta, psys, F, J, tol, max_iter)
+                z = np.concatenate([x, y_new, v_new])
 
-        if i == schedule.fault_off_index:
+            if i == schedule.fault_off_index:
+                fault.remove()
+                x = z[:NDIFFEQ]
+                y = z[NDIFFEQ:NDIFFEQ + alg_size]
+                v = z[NDIFFEQ + alg_size:]
+                y_new, v_new, _ = solve_stage_algebraic(
+                    x, y, v, theta, psys, F, J, tol, max_iter)
+                z = np.concatenate([x, y_new, v_new])
+            history[:, i] = z
+    finally:
+        if fault is not None:
             fault.remove()
-            x = z[:NDIFFEQ]
-            y = z[NDIFFEQ:NDIFFEQ + alg_size]
-            v = z[NDIFFEQ + alg_size:]
-            y_new, v_new, _ = solve_stage_algebraic(
-                x, y, v, theta, psys, F, J, tol, max_iter)
-            z = np.concatenate([x, y_new, v_new])
-        history[:, i] = z
 
-    if fault is not None:
-        fault.remove()
-
-    results = {"tvec": tvec, "history": history}
+    results = {
+        "tvec": tvec,
+        "history": history,
+        "dynamic_limit_diagnostics": dynamic_limit_diagnostics,
+    }
     if pf_solution.validation is not None:
         results["power_flow_diagnostics"] = pf_solution.validation
     return results

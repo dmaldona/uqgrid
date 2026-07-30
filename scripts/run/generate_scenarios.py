@@ -212,6 +212,7 @@ from joblib import Parallel, delayed
 
 from uqgrid.simulation.dynamics import integrate_system
 from uqgrid.simulation.config import IntegrationConfig
+from uqgrid.simulation.dynamic_limits import DynamicLimitError
 from uqgrid.simulation.pflow import PowerFlowValidationError, runpf
 from uqgrid.io.parse import load_psse, add_dyr
 from uqgrid.core.psydef import Bus
@@ -1574,7 +1575,21 @@ def _integration_config_from_dict(integration_config=None):
         q_limit_tolerance=int_cfg.get("q_limit_tolerance", 1e-8),
         max_q_limit_iterations=int_cfg.get("max_q_limit_iterations"),
         power_flow_validation=int_cfg.get("power_flow_validation", {}),
+        enforce_dynamic_limits=int_cfg.get("enforce_dynamic_limits", True),
+        dynamic_limit_tolerance=int_cfg.get("dynamic_limit_tolerance", 1e-8),
+        dynamic_limit_release_tolerance=int_cfg.get(
+            "dynamic_limit_release_tolerance", 1e-10
+        ),
+        max_dynamic_limit_iterations=int_cfg.get(
+            "max_dynamic_limit_iterations", 20
+        ),
     )
+
+
+def _dynamic_limit_reject_reason(error):
+    if error.diagnostics.get("phase") == "runtime":
+        return "dynamic_limit_runtime_failed"
+    return "dynamic_limit_initialization_failed"
 
 
 def _simulation_file_path(scenario_id):
@@ -1871,6 +1886,9 @@ def _run_fault_with_operating_point_worker(
             diagnostics["power_flow_validation"] = sim.get(
                 "power_flow_diagnostics"
             )
+            diagnostics["dynamic_limit_diagnostics"] = sim.get(
+                "dynamic_limit_diagnostics"
+            )
         except Exception as e:
             print(f"Simulation failed for scenario {scenario_id}: {str(e)}")
             sim = {"history": None, "tvec": None}
@@ -1879,6 +1897,9 @@ def _run_fault_with_operating_point_worker(
             if isinstance(e, PowerFlowValidationError):
                 diagnostics["reject_reason"] = "power_flow_validation_failed"
                 diagnostics["power_flow_validation"] = e.diagnostics
+            elif isinstance(e, DynamicLimitError):
+                diagnostics["reject_reason"] = _dynamic_limit_reject_reason(e)
+                diagnostics["dynamic_limit_diagnostics"] = e.diagnostics
 
         diagnostics["simulation_diverged"] = diverged
         diagnostics["file"] = None if diverged else _simulation_file_path(scenario_id)
@@ -2272,6 +2293,14 @@ def run_single_scenario_worker(
             q_limit_tolerance=int_cfg.get('q_limit_tolerance', 1e-8),
             max_q_limit_iterations=int_cfg.get('max_q_limit_iterations'),
             power_flow_validation=int_cfg.get('power_flow_validation', {}),
+            enforce_dynamic_limits=int_cfg.get('enforce_dynamic_limits', True),
+            dynamic_limit_tolerance=int_cfg.get('dynamic_limit_tolerance', 1e-8),
+            dynamic_limit_release_tolerance=int_cfg.get(
+                'dynamic_limit_release_tolerance', 1e-10
+            ),
+            max_dynamic_limit_iterations=int_cfg.get(
+                'max_dynamic_limit_iterations', 20
+            ),
         )
 
         try:
@@ -2279,6 +2308,9 @@ def run_single_scenario_worker(
             diverged = False
             diagnostics["power_flow_validation"] = sim.get(
                 "power_flow_diagnostics"
+            )
+            diagnostics["dynamic_limit_diagnostics"] = sim.get(
+                "dynamic_limit_diagnostics"
             )
         except Exception as e:
             print(f"Simulation failed for scenario {scenario_id}: {str(e)}")
@@ -2288,6 +2320,9 @@ def run_single_scenario_worker(
             if isinstance(e, PowerFlowValidationError):
                 diagnostics["reject_reason"] = "power_flow_validation_failed"
                 diagnostics["power_flow_validation"] = e.diagnostics
+            elif isinstance(e, DynamicLimitError):
+                diagnostics["reject_reason"] = _dynamic_limit_reject_reason(e)
+                diagnostics["dynamic_limit_diagnostics"] = e.diagnostics
 
         diagnostics["simulation_diverged"] = diverged
         diagnostics["file"] = None if diverged else f"simulation_data/scenario_{scenario_id}.npz"
@@ -3458,6 +3493,10 @@ def get_default_config(model_name: str) -> dict:
             "enforce_q_limits": True,
             "q_limit_tolerance": 1e-8,
             "max_q_limit_iterations": None,
+            "enforce_dynamic_limits": True,
+            "dynamic_limit_tolerance": 1e-8,
+            "dynamic_limit_release_tolerance": 1e-10,
+            "max_dynamic_limit_iterations": 20,
             "power_flow_validation": {
                 "enabled": False,
                 "residual_tolerance": 1e-8,
@@ -3881,6 +3920,18 @@ Examples:
         "enforce_q_limits": integration_cfg.get("enforce_q_limits", True),
         "q_limit_tolerance": integration_cfg.get("q_limit_tolerance", 1e-8),
         "max_q_limit_iterations": integration_cfg.get("max_q_limit_iterations"),
+        "enforce_dynamic_limits": integration_cfg.get(
+            "enforce_dynamic_limits", True
+        ),
+        "dynamic_limit_tolerance": integration_cfg.get(
+            "dynamic_limit_tolerance", 1e-8
+        ),
+        "dynamic_limit_release_tolerance": integration_cfg.get(
+            "dynamic_limit_release_tolerance", 1e-10
+        ),
+        "max_dynamic_limit_iterations": integration_cfg.get(
+            "max_dynamic_limit_iterations", 20
+        ),
         "power_flow_validation": {
             "enabled": validation_cfg.get("enabled", False),
             "residual_tolerance": validation_cfg.get(
@@ -3997,6 +4048,22 @@ Examples:
     print(
         "  - PF Q-limit max solves: "
         f"{integration_config['max_q_limit_iterations']}"
+    )
+    print(
+        "  - Enforce dynamic limits: "
+        f"{integration_config['enforce_dynamic_limits']}"
+    )
+    print(
+        "  - Dynamic state tolerance: "
+        f"{integration_config['dynamic_limit_tolerance']}"
+    )
+    print(
+        "  - Dynamic release tolerance: "
+        f"{integration_config['dynamic_limit_release_tolerance']}"
+    )
+    print(
+        "  - Dynamic limit max iterations: "
+        f"{integration_config['max_dynamic_limit_iterations']}"
     )
     validation_summary = integration_config["power_flow_validation"]
     print(f"  - Validate final PF: {validation_summary['enabled']}")

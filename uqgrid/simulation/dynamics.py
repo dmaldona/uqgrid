@@ -96,6 +96,16 @@ from uqgrid.simulation.pflow import (
 from uqgrid.simulation.gradients import gradient_p, gradient_xp, gradient_pp
 from uqgrid.simulation.residual import residual_function
 from uqgrid.simulation.herk import integrate_system_herk
+from uqgrid.simulation.dynamic_limits import (
+    DynamicLimitError,
+    DynamicLimitMode,
+    _contextualize_dynamic_limit_runtime_error,
+    collect_limited_state_descriptors,
+    initialize_dynamic_limit_modes,
+    project_limited_derivatives,
+    update_dynamic_limit_active_set,
+    validate_initial_dynamic_limits,
+)
 from uqgrid.simulation.jacobian import residual_jacobian
 from uqgrid.simulation.timing import build_integration_schedule
 from uqgrid.utils.tools import (
@@ -748,6 +758,1085 @@ def function_beuler_wrapper(z, zold, h, psys, theta):
     return F
 
 
+def _assemble_beuler_residual(F, z, zold, h, psys, theta):
+    """Assemble the ordinary backward-Euler endpoint residual in place."""
+    residual_function(F, z, theta, psys)
+    ndiff = psys.num_dof_dif
+    F[:ndiff] = z[:ndiff] - zold[:ndiff] - h * F[:ndiff]
+
+
+def _assemble_cn_residual(
+    F, z, zold, h, start_derivative, psys, theta
+):
+    """Assemble the ordinary Crank-Nicolson endpoint residual in place."""
+    residual_function(F, z, theta, psys)
+    ndiff = psys.num_dof_dif
+    F[:ndiff] = (
+        z[:ndiff]
+        - zold[:ndiff]
+        - 0.5 * h * (start_derivative[:ndiff] + F[:ndiff])
+    )
+
+
+def _effective_cn_start_derivative(
+    zold,
+    theta,
+    psys,
+    descriptors,
+    modes,
+    *,
+    tolerance,
+    time=None,
+):
+    """Return the raw start derivative with inherited outward modes blocked."""
+    raw_derivative = np.empty_like(zold)
+    residual_function(raw_derivative, zold, theta, psys)
+    active_descriptors = [
+        descriptor
+        for descriptor in descriptors
+        if DynamicLimitMode(modes[descriptor.state_index])
+        != DynamicLimitMode.FREE
+    ]
+    effective, _ = project_limited_derivatives(
+        zold,
+        raw_derivative,
+        active_descriptors,
+        tolerance=tolerance,
+        time=time,
+        stage_or_endpoint="start",
+    )
+    return effective
+
+
+def _active_limit_bound(descriptor, mode):
+    mode = DynamicLimitMode(mode)
+    if mode == DynamicLimitMode.UPPER_ACTIVE:
+        return descriptor.upper_bound
+    if mode == DynamicLimitMode.LOWER_ACTIVE:
+        return descriptor.lower_bound
+    return None
+
+
+def _apply_beuler_active_rows(F, J, z, descriptors, modes):
+    """Replace active BE equations with bound equations and identity rows."""
+    diagonal_column = np.zeros(1, dtype=np.int64)
+    diagonal_value = np.ones(1, dtype=np.float64)
+    for descriptor in descriptors:
+        bound = _active_limit_bound(
+            descriptor, modes[descriptor.state_index]
+        )
+        if bound is None:
+            continue
+        state_index = descriptor.state_index
+        F[state_index] = z[state_index] - bound
+        if J is not None:
+            csr_mult_row(J.data, J.indptr, J.indices, state_index, 0.0)
+            diagonal_column[0] = state_index
+            csr_set_row(
+                J.data,
+                J.indptr,
+                J.indices,
+                1,
+                state_index,
+                diagonal_column,
+                diagonal_value,
+            )
+
+
+def _limit_mode_signature(descriptors, modes):
+    return tuple(
+        DynamicLimitMode(modes[item.state_index]).value
+        for item in descriptors
+    )
+
+
+def _json_finite(value):
+    value = float(value)
+    return value if np.isfinite(value) else None
+
+
+def _dynamic_limit_runtime_error(
+    reason,
+    *,
+    method,
+    operation,
+    message,
+    backend,
+    nonlinear_solver,
+    endpoint_time,
+    step_size,
+    active_set_iterations,
+    newton_iterations,
+    residual_norm,
+    descriptors,
+    modes,
+    visited_signatures,
+    complementarity,
+    events,
+    solver_diagnostics=None,
+):
+    solver_diagnostics = dict(solver_diagnostics or {})
+    solver_diagnostics.pop("failure_reason", None)
+    return DynamicLimitError(
+        {
+            "enabled": True,
+            "phase": "runtime",
+            "method": method,
+            "backend": backend,
+            "nonlinear_solver": nonlinear_solver,
+            "operation": operation,
+            "message": message,
+            "failure_reasons": [reason],
+            "time": _json_finite(endpoint_time),
+            "step_size": _json_finite(step_size),
+            "active_set_iterations": int(active_set_iterations),
+            "newton_iterations": int(newton_iterations),
+            "residual_norm": _json_finite(residual_norm),
+            "modes": [
+                {
+                    "state_index": item.state_index,
+                    "mode": DynamicLimitMode(modes[item.state_index]).value,
+                }
+                for item in descriptors
+            ],
+            "visited_mode_signatures": [
+                list(signature) for signature in visited_signatures
+            ],
+            "complementarity": complementarity,
+            "events": list(events),
+            **solver_diagnostics,
+        }
+    )
+
+
+def _solve_beuler_fixed_active_set(
+    zold,
+    theta,
+    h,
+    psys,
+    F,
+    J,
+    *,
+    descriptors,
+    modes,
+    newton_tol,
+    newton_max_iter,
+    verbose=False,
+):
+    """Solve one smooth BE system for a fixed dynamic-limit active set."""
+    z = np.array(zold, dtype=float, copy=True)
+    for descriptor in descriptors:
+        bound = _active_limit_bound(
+            descriptor, modes[descriptor.state_index]
+        )
+        if bound is not None:
+            z[descriptor.state_index] = bound
+
+    _assemble_beuler_residual(F, z, zold, h, psys, theta)
+    _apply_beuler_active_rows(F, None, z, descriptors, modes)
+    residual_norm = np.linalg.norm(F)
+    iteration = 0
+    if verbose:
+        logger.info("Iteration %d. Residual norm: %g", iteration, residual_norm)
+
+    while residual_norm > newton_tol and iteration < newton_max_iter:
+        iteration += 1
+        residual_jacobian(J, z, theta, psys)
+        jacobian_beuler(J, psys.num_dof_dif, h)
+        _apply_beuler_active_rows(F, J, z, descriptors, modes)
+        delta = spsolve(J, F)
+        if not np.all(np.isfinite(delta)):
+            return z, iteration, np.inf, False
+        z = z - delta
+        _assemble_beuler_residual(F, z, zold, h, psys, theta)
+        _apply_beuler_active_rows(F, None, z, descriptors, modes)
+        residual_norm = np.linalg.norm(F)
+        if not np.isfinite(residual_norm):
+            return z, iteration, residual_norm, False
+        if verbose:
+            logger.info(
+                "Iteration %d. Residual norm: %g", iteration, residual_norm
+            )
+
+    return z, iteration, residual_norm, residual_norm <= newton_tol
+
+
+def _integrate_implicit_active_set(
+    zold,
+    theta,
+    h,
+    psys,
+    F,
+    *,
+    descriptors,
+    modes,
+    state_tolerance,
+    release_tolerance,
+    max_active_set_iterations,
+    endpoint_time,
+    fixed_set_solver,
+    assemble_free_residual,
+    method,
+    operation,
+    failure_message,
+    backend,
+    nonlinear_solver,
+    prior_events=(),
+):
+    """Advance one implicit interval with a backend-supplied fixed-set solve."""
+    descriptors = list(descriptors)
+    modes = dict(modes)
+    interval_events = []
+    signature = _limit_mode_signature(descriptors, modes)
+    visited_signatures = [signature]
+    seen_signatures = {signature}
+    complementarity = None
+    residual_norm = np.inf
+    newton_iterations = 0
+    solver_diagnostics = {}
+
+    for active_set_iteration in range(1, max_active_set_iterations + 1):
+        solve_result = fixed_set_solver(modes)
+        if len(solve_result) == 4:
+            z, newton_iterations, residual_norm, converged = solve_result
+            solver_diagnostics = {}
+        else:
+            (
+                z,
+                newton_iterations,
+                residual_norm,
+                converged,
+                solver_diagnostics,
+            ) = solve_result
+        if not converged:
+            raise _dynamic_limit_runtime_error(
+                solver_diagnostics.get(
+                    "failure_reason", "newton_nonconvergence"
+                ),
+                method=method,
+                operation=operation,
+                message=failure_message,
+                backend=backend,
+                nonlinear_solver=nonlinear_solver,
+                endpoint_time=endpoint_time,
+                step_size=h,
+                active_set_iterations=active_set_iteration,
+                newton_iterations=newton_iterations,
+                residual_norm=residual_norm,
+                descriptors=descriptors,
+                modes=modes,
+                visited_signatures=visited_signatures,
+                complementarity=complementarity,
+                events=[*prior_events, *interval_events],
+                solver_diagnostics=solver_diagnostics,
+            )
+
+        free_residual = np.empty_like(F)
+        assemble_free_residual(free_residual, z)
+        try:
+            updated_modes, changed, complementarity, transition_events = (
+                update_dynamic_limit_active_set(
+                    z,
+                    free_residual,
+                    descriptors,
+                    modes,
+                    state_tolerance=state_tolerance,
+                    release_tolerance=release_tolerance,
+                    time=endpoint_time,
+                    stage_or_endpoint="endpoint",
+                    active_set_iterations=active_set_iteration,
+                )
+            )
+        except DynamicLimitError as exc:
+            reasons = exc.diagnostics.get("failure_reasons", [])
+            reason = reasons[0] if reasons else "active_set_evaluation_failed"
+            raise _dynamic_limit_runtime_error(
+                reason,
+                method=method,
+                operation=operation,
+                message=failure_message,
+                backend=backend,
+                nonlinear_solver=nonlinear_solver,
+                endpoint_time=endpoint_time,
+                step_size=h,
+                active_set_iterations=active_set_iteration,
+                newton_iterations=newton_iterations,
+                residual_norm=residual_norm,
+                descriptors=descriptors,
+                modes=modes,
+                visited_signatures=visited_signatures,
+                complementarity=exc.diagnostics,
+                events=[*prior_events, *interval_events],
+                solver_diagnostics=solver_diagnostics,
+            ) from exc
+        for event in transition_events:
+            if event["action"] == "activate":
+                event["state_after"] = event["bound"]
+        interval_events.extend(transition_events)
+
+        if not changed:
+            if complementarity["consistent"]:
+                return z, updated_modes, interval_events
+            raise _dynamic_limit_runtime_error(
+                "inconsistent_active_set",
+                method=method,
+                operation=operation,
+                message=failure_message,
+                backend=backend,
+                nonlinear_solver=nonlinear_solver,
+                endpoint_time=endpoint_time,
+                step_size=h,
+                active_set_iterations=active_set_iteration,
+                newton_iterations=newton_iterations,
+                residual_norm=residual_norm,
+                descriptors=descriptors,
+                modes=updated_modes,
+                visited_signatures=visited_signatures,
+                complementarity=complementarity,
+                events=[*prior_events, *interval_events],
+                solver_diagnostics=solver_diagnostics,
+            )
+
+        signature = _limit_mode_signature(descriptors, updated_modes)
+        if signature in seen_signatures:
+            raise _dynamic_limit_runtime_error(
+                "active_set_cycle",
+                method=method,
+                operation=operation,
+                message=failure_message,
+                backend=backend,
+                nonlinear_solver=nonlinear_solver,
+                endpoint_time=endpoint_time,
+                step_size=h,
+                active_set_iterations=active_set_iteration,
+                newton_iterations=newton_iterations,
+                residual_norm=residual_norm,
+                descriptors=descriptors,
+                modes=updated_modes,
+                visited_signatures=[*visited_signatures, signature],
+                complementarity=complementarity,
+                events=[*prior_events, *interval_events],
+                solver_diagnostics=solver_diagnostics,
+            )
+        seen_signatures.add(signature)
+        visited_signatures.append(signature)
+        modes = updated_modes
+
+    raise _dynamic_limit_runtime_error(
+        "active_set_iteration_limit",
+        method=method,
+        operation=operation,
+        message=failure_message,
+        backend=backend,
+        nonlinear_solver=nonlinear_solver,
+        endpoint_time=endpoint_time,
+        step_size=h,
+        active_set_iterations=max_active_set_iterations,
+        newton_iterations=newton_iterations,
+        residual_norm=residual_norm,
+        descriptors=descriptors,
+        modes=modes,
+        visited_signatures=visited_signatures,
+        complementarity=complementarity,
+        events=[*prior_events, *interval_events],
+        solver_diagnostics=solver_diagnostics,
+    )
+
+
+def _integrate_beuler_with_dynamic_limits(
+    zold,
+    theta,
+    h,
+    psys,
+    F,
+    J,
+    *,
+    descriptors,
+    modes,
+    state_tolerance,
+    release_tolerance,
+    max_active_set_iterations,
+    endpoint_time,
+    newton_tol,
+    newton_max_iter,
+    prior_events=(),
+    verbose=False,
+):
+    """Advance one native BE interval with a directional active set."""
+
+    def solve_fixed_set(current_modes):
+        return _solve_beuler_fixed_active_set(
+            zold,
+            theta,
+            h,
+            psys,
+            F,
+            J,
+            descriptors=descriptors,
+            modes=current_modes,
+            newton_tol=newton_tol,
+            newton_max_iter=newton_max_iter,
+            verbose=verbose,
+        )
+
+    def assemble_free_residual(free_residual, endpoint):
+        _assemble_beuler_residual(
+            free_residual, endpoint, zold, h, psys, theta
+        )
+
+    return _integrate_implicit_active_set(
+        zold,
+        theta,
+        h,
+        psys,
+        F,
+        descriptors=descriptors,
+        modes=modes,
+        state_tolerance=state_tolerance,
+        release_tolerance=release_tolerance,
+        max_active_set_iterations=max_active_set_iterations,
+        endpoint_time=endpoint_time,
+        fixed_set_solver=solve_fixed_set,
+        assemble_free_residual=assemble_free_residual,
+        method="beuler",
+        operation="beuler_active_set",
+        failure_message="Backward-Euler dynamic-limit solve failed",
+        backend="native",
+        nonlinear_solver="scipy_sparse_newton",
+        prior_events=prior_events,
+    )
+
+
+def _petsc_snes_reason_name(PETSc, reason):
+    reason_value = int(reason)
+    for name in dir(PETSc.SNES.ConvergedReason):
+        if not name.isupper():
+            continue
+        if int(getattr(PETSc.SNES.ConvergedReason, name)) == reason_value:
+            return name.lower()
+    return f"unknown_{reason_value}"
+
+
+class _PETScBEActiveSetProblem:
+    """Explicit BE residual and Jacobian callbacks for one SNES workspace."""
+
+    def __init__(self, psys, theta, residual, jacobian):
+        self.psys = psys
+        self.theta = theta
+        self.residual = residual
+        self.jacobian = jacobian
+        self.zold = None
+        self.h = None
+        self.descriptors = ()
+        self.modes = {}
+
+    def set_interval(self, zold, h, descriptors, modes):
+        self.zold = zold
+        self.h = h
+        self.descriptors = descriptors
+        self.modes = modes
+
+    def function(self, snes, x, f):
+        z = np.array(x[:], dtype=float, copy=True)
+        _assemble_beuler_residual(
+            self.residual,
+            z,
+            self.zold,
+            self.h,
+            self.psys,
+            self.theta,
+        )
+        _apply_beuler_active_rows(
+            self.residual,
+            None,
+            z,
+            self.descriptors,
+            self.modes,
+        )
+        f.setArray(np.array(self.residual, copy=True))
+        f.assemble()
+
+    def jacobian_function(self, snes, x, J, P):
+        z = np.array(x[:], dtype=float, copy=True)
+        residual_jacobian(self.jacobian, z, self.theta, self.psys)
+        jacobian_beuler(self.jacobian, self.psys.num_dof_dif, self.h)
+        _apply_beuler_active_rows(
+            self.residual,
+            self.jacobian,
+            z,
+            self.descriptors,
+            self.modes,
+        )
+        P.setValuesCSR(
+            self.jacobian.indptr,
+            self.jacobian.indices,
+            self.jacobian.data,
+        )
+        P.assemble()
+        if J != P:
+            J.setValuesCSR(
+                self.jacobian.indptr,
+                self.jacobian.indices,
+                self.jacobian.data,
+            )
+            J.assemble()
+        return True
+
+
+class _PETScCNActiveSetProblem:
+    """Explicit CN residual and Jacobian callbacks for one SNES workspace."""
+
+    def __init__(self, psys, theta, residual, jacobian):
+        self.psys = psys
+        self.theta = theta
+        self.residual = residual
+        self.jacobian = jacobian
+        self.zold = None
+        self.h = None
+        self.start_derivative = None
+        self.descriptors = ()
+        self.modes = {}
+
+    def set_interval(
+        self, zold, h, descriptors, modes, *, start_derivative
+    ):
+        self.zold = zold
+        self.h = h
+        self.start_derivative = np.array(
+            start_derivative, dtype=float, copy=True
+        )
+        self.start_derivative.setflags(write=False)
+        self.descriptors = descriptors
+        self.modes = modes
+
+    def function(self, snes, x, f):
+        z = np.array(x[:], dtype=float, copy=True)
+        _assemble_cn_residual(
+            self.residual,
+            z,
+            self.zold,
+            self.h,
+            self.start_derivative,
+            self.psys,
+            self.theta,
+        )
+        _apply_beuler_active_rows(
+            self.residual,
+            None,
+            z,
+            self.descriptors,
+            self.modes,
+        )
+        f.setArray(np.array(self.residual, copy=True))
+        f.assemble()
+
+    def jacobian_function(self, snes, x, J, P):
+        z = np.array(x[:], dtype=float, copy=True)
+        residual_jacobian(self.jacobian, z, self.theta, self.psys)
+        jacobian_beuler(
+            self.jacobian, self.psys.num_dof_dif, 0.5 * self.h
+        )
+        _apply_beuler_active_rows(
+            self.residual,
+            self.jacobian,
+            z,
+            self.descriptors,
+            self.modes,
+        )
+        P.setValuesCSR(
+            self.jacobian.indptr,
+            self.jacobian.indices,
+            self.jacobian.data,
+        )
+        P.assemble()
+        if J != P:
+            J.setValuesCSR(
+                self.jacobian.indptr,
+                self.jacobian.indices,
+                self.jacobian.data,
+            )
+            J.assemble()
+        return True
+
+
+_PETSC_VI_SNES_TYPES = {"vinewtonrsls", "vinewtonssls"}
+
+
+class _PETScActiveSetWorkspace:
+    """Reusable ordinary-SNES objects for one limited implicit method."""
+
+    _problem_class = None
+
+    def __init__(
+        self,
+        PETSc,
+        psys,
+        theta,
+        residual,
+        jacobian,
+        *,
+        newton_tol,
+        newton_max_iter,
+    ):
+        self.PETSc = PETSc
+        self.problem = self._problem_class(
+            psys, theta, residual, jacobian
+        )
+        system_size = jacobian.shape[0]
+        communicator = PETSc.COMM_SELF
+
+        self.solution = PETSc.Vec().createSeq(
+            system_size, comm=communicator
+        )
+        self.function_vector = self.solution.duplicate()
+
+        self.matrix = PETSc.Mat()
+        self.matrix.create(comm=communicator)
+        self.matrix.setSizes([system_size, system_size])
+        self.matrix.setType("seqaij")
+        self.matrix.setPreallocationCSR(
+            [jacobian.indptr, jacobian.indices, jacobian.data]
+        )
+        self.matrix.assemblyBegin()
+        self.matrix.assemblyEnd()
+
+        self.snes = PETSc.SNES().create(comm=communicator)
+        self.snes.setType(PETSc.SNES.Type.NEWTONLS)
+        self.snes.setFunction(self.problem.function, self.function_vector)
+        self.snes.setJacobian(
+            self.problem.jacobian_function, self.matrix, self.matrix
+        )
+        self.snes.setTolerances(
+            rtol=0.0,
+            atol=newton_tol,
+            stol=0.0,
+            max_it=newton_max_iter,
+        )
+        self.snes.setFromOptions()
+        self.snes_type = str(self.snes.getType()).lower()
+        try:
+            _validate_petsc_snes_type(self.snes_type)
+        except ValueError:
+            self.destroy()
+            raise
+
+    def solve_fixed_active_set(
+        self, zold, h, descriptors, modes, **interval_data
+    ):
+        guess = np.array(zold, dtype=float, copy=True)
+        for descriptor in descriptors:
+            bound = _active_limit_bound(
+                descriptor, modes[descriptor.state_index]
+            )
+            if bound is not None:
+                guess[descriptor.state_index] = bound
+
+        self.problem.set_interval(
+            zold, h, descriptors, modes, **interval_data
+        )
+        self.solution.setArray(guess)
+        self.solution.assemble()
+        try:
+            self.snes.solve(None, self.solution)
+            reason = int(self.snes.getConvergedReason())
+            iterations = int(self.snes.getIterationNumber())
+            residual_norm = float(self.snes.getFunctionNorm())
+            endpoint = np.array(self.solution[:], dtype=float, copy=True)
+            diagnostics = {
+                "snes_type": self.snes_type,
+                "snes_converged_reason": reason,
+                "snes_converged_reason_name": _petsc_snes_reason_name(
+                    self.PETSc, reason
+                ),
+                "snes_iterations": iterations,
+                "snes_function_norm": _json_finite(residual_norm),
+            }
+            if hasattr(self.snes, "getLinearSolveIterations"):
+                diagnostics["snes_linear_iterations"] = int(
+                    self.snes.getLinearSolveIterations()
+                )
+            if reason <= 0:
+                diagnostics["failure_reason"] = "snes_nonconvergence"
+            return (
+                endpoint,
+                iterations,
+                residual_norm,
+                reason > 0,
+                diagnostics,
+            )
+        except self.PETSc.Error as exc:
+            return (
+                guess,
+                0,
+                np.inf,
+                False,
+                {
+                    "failure_reason": "snes_nonconvergence",
+                    "snes_type": self.snes_type,
+                    "snes_converged_reason": None,
+                    "snes_converged_reason_name": "petsc_error",
+                    "snes_iterations": 0,
+                    "snes_function_norm": None,
+                    "snes_error": str(exc),
+                },
+            )
+
+    def destroy(self):
+        for obj in (
+            getattr(self, "snes", None),
+            getattr(self, "matrix", None),
+            getattr(self, "function_vector", None),
+            getattr(self, "solution", None),
+        ):
+            if obj is not None:
+                obj.destroy()
+
+
+class _PETScBEActiveSetWorkspace(_PETScActiveSetWorkspace):
+    """Reusable ordinary-SNES objects for limited PETSc backward Euler."""
+
+    _problem_class = _PETScBEActiveSetProblem
+
+
+class _PETScCNActiveSetWorkspace(_PETScActiveSetWorkspace):
+    """Reusable ordinary-SNES objects for limited PETSc Crank-Nicolson."""
+
+    _problem_class = _PETScCNActiveSetProblem
+
+
+def _validate_petsc_snes_type(snes_type):
+    snes_type = str(snes_type).lower()
+    if snes_type in _PETSC_VI_SNES_TYPES:
+        raise ValueError(
+            "PETSc variational-inequality SNES types are unsupported for "
+            "hard dynamic limits. Use ordinary SNES/Newton options; UQGrid "
+            "manages the active set explicitly."
+        )
+    return snes_type
+
+
+def _integrate_petsc_beuler_with_dynamic_limits(
+    zold,
+    theta,
+    h,
+    psys,
+    F,
+    J,
+    *,
+    workspace,
+    descriptors,
+    modes,
+    state_tolerance,
+    release_tolerance,
+    max_active_set_iterations,
+    endpoint_time,
+    newton_tol,
+    newton_max_iter,
+    prior_events=(),
+    verbose=False,
+):
+    """Advance one PETSc SNES BE interval with a directional active set."""
+
+    def solve_fixed_set(current_modes):
+        return workspace.solve_fixed_active_set(
+            zold, h, descriptors, current_modes
+        )
+
+    def assemble_free_residual(free_residual, endpoint):
+        _assemble_beuler_residual(
+            free_residual, endpoint, zold, h, psys, theta
+        )
+
+    return _integrate_implicit_active_set(
+        zold,
+        theta,
+        h,
+        psys,
+        F,
+        descriptors=descriptors,
+        modes=modes,
+        state_tolerance=state_tolerance,
+        release_tolerance=release_tolerance,
+        max_active_set_iterations=max_active_set_iterations,
+        endpoint_time=endpoint_time,
+        fixed_set_solver=solve_fixed_set,
+        assemble_free_residual=assemble_free_residual,
+        method="beuler",
+        operation="beuler_active_set",
+        failure_message="Backward-Euler dynamic-limit solve failed",
+        backend="petsc",
+        nonlinear_solver="petsc_snes",
+        prior_events=prior_events,
+    )
+
+
+def _integrate_petsc_cn_with_dynamic_limits(
+    zold,
+    theta,
+    h,
+    psys,
+    F,
+    J,
+    *,
+    workspace,
+    descriptors,
+    modes,
+    state_tolerance,
+    release_tolerance,
+    max_active_set_iterations,
+    endpoint_time,
+    newton_tol,
+    newton_max_iter,
+    prior_events=(),
+    verbose=False,
+):
+    """Advance one PETSc SNES CN interval with a directional active set."""
+    start_time = endpoint_time - h
+    try:
+        start_derivative = _effective_cn_start_derivative(
+            zold,
+            theta,
+            psys,
+            descriptors,
+            modes,
+            tolerance=state_tolerance,
+            time=start_time,
+        )
+    except DynamicLimitError as exc:
+        raise _contextualize_dynamic_limit_runtime_error(
+            exc,
+            method="cn",
+            backend="petsc",
+            time=start_time,
+            stage_or_endpoint="start",
+            prior_events=prior_events,
+        ) from exc
+    start_derivative.setflags(write=False)
+
+    def solve_fixed_set(current_modes):
+        return workspace.solve_fixed_active_set(
+            zold,
+            h,
+            descriptors,
+            current_modes,
+            start_derivative=start_derivative,
+        )
+
+    def assemble_free_residual(free_residual, endpoint):
+        _assemble_cn_residual(
+            free_residual,
+            endpoint,
+            zold,
+            h,
+            start_derivative,
+            psys,
+            theta,
+        )
+
+    return _integrate_implicit_active_set(
+        zold,
+        theta,
+        h,
+        psys,
+        F,
+        descriptors=descriptors,
+        modes=modes,
+        state_tolerance=state_tolerance,
+        release_tolerance=release_tolerance,
+        max_active_set_iterations=max_active_set_iterations,
+        endpoint_time=endpoint_time,
+        fixed_set_solver=solve_fixed_set,
+        assemble_free_residual=assemble_free_residual,
+        method="cn",
+        operation="cn_active_set",
+        failure_message="Crank-Nicolson dynamic-limit solve failed",
+        backend="petsc",
+        nonlinear_solver="petsc_snes",
+        prior_events=prior_events,
+    )
+
+
+def _integrate_system_petsc_implicit_limits(
+    PETSc,
+    psys,
+    config,
+    theta,
+    z0,
+    tvec,
+    schedule,
+    fault,
+    residual,
+    jacobian,
+    descriptors,
+    dynamic_limit_diagnostics,
+    *,
+    workspace_class,
+    interval_stepper,
+    method,
+):
+    """Run one limited PETSc implicit method over the shared schedule."""
+    workspace = workspace_class(
+        PETSc,
+        psys,
+        theta,
+        residual,
+        jacobian,
+        newton_tol=config.newton_tol,
+        newton_max_iter=config.newton_max_iter,
+    )
+    modes = initialize_dynamic_limit_modes(descriptors)
+    history = np.zeros((z0.size, len(tvec)))
+    z = np.array(z0, dtype=float, copy=True)
+    history[:, 0] = z
+
+    try:
+        for i in range(1, len(tvec)):
+            h_step = tvec[i] - tvec[i - 1]
+            if config.verbose:
+                logger.info(
+                    "PETSc SNES %s step: %i. Time: %g (sec)",
+                    method,
+                    i,
+                    tvec[i],
+                )
+            z, modes, events = interval_stepper(
+                z,
+                theta,
+                h_step,
+                psys,
+                residual,
+                jacobian,
+                workspace=workspace,
+                descriptors=descriptors,
+                modes=modes,
+                state_tolerance=config.dynamic_limit_tolerance,
+                release_tolerance=config.dynamic_limit_release_tolerance,
+                max_active_set_iterations=config.max_dynamic_limit_iterations,
+                endpoint_time=tvec[i],
+                newton_tol=config.newton_tol,
+                newton_max_iter=config.newton_max_iter,
+                prior_events=dynamic_limit_diagnostics["events"],
+                verbose=config.verbose,
+            )
+            dynamic_limit_diagnostics["events"].extend(events)
+
+            if i == schedule.fault_on_index:
+                if config.verbose:
+                    logger.info("Apply fault")
+                fault.apply()
+                z, _, _, _ = integrate(
+                    z,
+                    theta,
+                    0.0,
+                    psys,
+                    residual,
+                    jacobian,
+                    None,
+                    verbose=config.verbose,
+                    fsolve=False,
+                    newton_tol=config.newton_tol,
+                    newton_max_iter=config.newton_max_iter,
+                    uold=None,
+                    vold=None,
+                    mold=None,
+                )
+            if i == schedule.fault_off_index:
+                if config.verbose:
+                    logger.info("Remove fault")
+                fault.remove()
+                z, _, _, _ = integrate(
+                    z,
+                    theta,
+                    0.0,
+                    psys,
+                    residual,
+                    jacobian,
+                    None,
+                    verbose=config.verbose,
+                    fsolve=False,
+                    newton_tol=config.newton_tol,
+                    newton_max_iter=config.newton_max_iter,
+                    uold=None,
+                    vold=None,
+                    mold=None,
+                )
+            history[:, i] = z
+    finally:
+        if fault is not None:
+            fault.remove()
+        workspace.destroy()
+
+    return history
+
+
+def _integrate_system_petsc_beuler_limits(
+    PETSc,
+    psys,
+    config,
+    theta,
+    z0,
+    tvec,
+    schedule,
+    fault,
+    residual,
+    jacobian,
+    descriptors,
+    dynamic_limit_diagnostics,
+):
+    """Run limited PETSc BE directly over the normalized shared schedule."""
+    return _integrate_system_petsc_implicit_limits(
+        PETSc,
+        psys,
+        config,
+        theta,
+        z0,
+        tvec,
+        schedule,
+        fault,
+        residual,
+        jacobian,
+        descriptors,
+        dynamic_limit_diagnostics,
+        workspace_class=_PETScBEActiveSetWorkspace,
+        interval_stepper=_integrate_petsc_beuler_with_dynamic_limits,
+        method="beuler",
+    )
+
+
+def _integrate_system_petsc_cn_limits(
+    PETSc,
+    psys,
+    config,
+    theta,
+    z0,
+    tvec,
+    schedule,
+    fault,
+    residual,
+    jacobian,
+    descriptors,
+    dynamic_limit_diagnostics,
+):
+    """Run limited PETSc CN directly over the normalized shared schedule."""
+    return _integrate_system_petsc_implicit_limits(
+        PETSc,
+        psys,
+        config,
+        theta,
+        z0,
+        tvec,
+        schedule,
+        fault,
+        residual,
+        jacobian,
+        descriptors,
+        dynamic_limit_diagnostics,
+        workspace_class=_PETScCNActiveSetWorkspace,
+        interval_stepper=_integrate_petsc_cn_with_dynamic_limits,
+        method="cn",
+    )
+
+
 def function_beuler_latin_wrapper(z, zold, h, psys, theta):
     NDIFFEQ = psys.num_dof_dif
     F = np.zeros(len(z))
@@ -1008,6 +2097,41 @@ def _initialize_system_from_config(psys: Psystem, config: IntegrationConfig):
             raise PowerFlowValidationError(pf_solution.validation)
     z0, theta = initialize_system(psys, pf_solution)
     return pf_solution, z0, theta
+
+
+def _initialize_integration_state(
+    psys: Psystem,
+    config: IntegrationConfig,
+    ctx: Optional[IntegrationCtx] = None,
+):
+    """Initialize, apply caller overrides, and validate hard state limits."""
+    pf_solution, z0, theta = _initialize_system_from_config(psys, config)
+
+    z0_user = ctx.z0_user if ctx is not None else getattr(config, "z0_user", None)
+    theta_user = (
+        ctx.theta_user if ctx is not None else getattr(config, "theta_user", None)
+    )
+    if z0_user is not None:
+        if z0_user.shape[0] != z0.shape[0]:
+            raise ValueError("Provided initial state does not match system size.")
+        z0 = z0_user
+    if theta_user is not None:
+        if theta_user.shape[0] != theta.shape[0]:
+            raise ValueError("Provided theta does not match system parameters.")
+        theta = theta_user
+
+    descriptors = collect_limited_state_descriptors(psys, theta)
+    dynamic_limit_diagnostics = validate_initial_dynamic_limits(
+        z0,
+        descriptors,
+        enforce_dynamic_limits=config.enforce_dynamic_limits,
+        dynamic_limit_tolerance=config.dynamic_limit_tolerance,
+        dynamic_limit_release_tolerance=(
+            config.dynamic_limit_release_tolerance
+        ),
+        max_dynamic_limit_iterations=config.max_dynamic_limit_iterations,
+    )
+    return pf_solution, z0, theta, dynamic_limit_diagnostics
 
 
 def initialize_sensitivities(volt, p_inj, psys, z, u, v):
@@ -1668,23 +2792,21 @@ def integrate_system(
     psys.power_injection=power_injection
 
     # retrieve parameters
-    pf_solution, z0, theta = _initialize_system_from_config(psys, config)
+    pf_solution, z0, theta, dynamic_limit_diagnostics = (
+        _initialize_integration_state(psys, config, ctx)
+    )
+    results["dynamic_limit_diagnostics"] = dynamic_limit_diagnostics
     if pf_solution.validation is not None:
         results["power_flow_diagnostics"] = pf_solution.validation
 
-    # Use context if provided, otherwise fallback to config attributes
-    z0_user = ctx.z0_user if ctx is not None else getattr(config, 'z0_user', None)
-    theta_user = ctx.theta_user if ctx is not None else getattr(config, 'theta_user', None)
-
-    if z0_user is not None:
-        if z0_user.shape[0] != z0.shape[0]:
-            raise ValueError("Provided initial state does not match system size.")
-        z0 = z0_user
-
-    if theta_user is not None:
-        if theta_user.shape[0] != theta.shape[0]:
-            raise ValueError("Provided theta does not match system parameters.")
-        theta = theta_user
+    limit_descriptors = []
+    if config.enforce_dynamic_limits:
+        limit_descriptors = [
+            descriptor
+            for descriptor in collect_limited_state_descriptors(psys, theta)
+            if descriptor.enabled
+        ]
+    limit_modes = initialize_dynamic_limit_modes(limit_descriptors)
 
     system_size = z0.shape[0]
     jacobian = preallocate_jacobian(psys)
@@ -1756,7 +2878,37 @@ def integrate_system(
 
     PETSc = _get_petsc_for_config(config)
 
-    if PETSc is not None:
+    if PETSc is not None and method == "beuler" and limit_descriptors:
+        history = _integrate_system_petsc_beuler_limits(
+            PETSc,
+            psys,
+            config,
+            theta,
+            z0,
+            tvec,
+            schedule,
+            fault,
+            residual,
+            jacobian,
+            limit_descriptors,
+            dynamic_limit_diagnostics,
+        )
+    elif PETSc is not None and method == "cn" and limit_descriptors:
+        history = _integrate_system_petsc_cn_limits(
+            PETSc,
+            psys,
+            config,
+            theta,
+            z0,
+            tvec,
+            schedule,
+            fault,
+            residual,
+            jacobian,
+            limit_descriptors,
+            dynamic_limit_diagnostics,
+        )
+    elif PETSc is not None:
         if verbose:
             logger.info("Convert objects to PETSc format")
         nsize = jacobian.shape[0]
@@ -2016,53 +3168,83 @@ def integrate_system(
     else:
         history = np.zeros((system_size, len(tvec)))
         history[:, 0] = np.copy(z)
-        for i in range(1, len(tvec)):
-            t_start = tvec[i - 1]
-            h_step = tvec[i] - t_start
-            if verbose:
-                logger.info("Step: %i. Time: %g (sec)", i, tvec[i])
-            if psys.signal_injectors:
-                for inj in psys.signal_injectors:
-                    inj.update(t_start, theta, psys)
-            z, u, v, m = integrate(z,
-                                theta,
-                                h_step,
-                                psys,
-                                residual,
-                                jacobian,
-                                None,
-                                verbose=verbose,
-                                fsolve=fsolve,
-                                newton_tol=newton_tol,
-                                newton_max_iter=newton_max_iter,
-                                uold=None,
-                                vold=None,
-                                mold=None)
+        try:
+            for i in range(1, len(tvec)):
+                t_start = tvec[i - 1]
+                h_step = tvec[i] - t_start
+                if verbose:
+                    logger.info("Step: %i. Time: %g (sec)", i, tvec[i])
+                if psys.signal_injectors:
+                    for inj in psys.signal_injectors:
+                        inj.update(t_start, theta, psys)
+                if limit_descriptors:
+                    z, limit_modes, limit_events = (
+                        _integrate_beuler_with_dynamic_limits(
+                            z,
+                            theta,
+                            h_step,
+                            psys,
+                            residual,
+                            jacobian,
+                            descriptors=limit_descriptors,
+                            modes=limit_modes,
+                            state_tolerance=config.dynamic_limit_tolerance,
+                            release_tolerance=(
+                                config.dynamic_limit_release_tolerance
+                            ),
+                            max_active_set_iterations=(
+                                config.max_dynamic_limit_iterations
+                            ),
+                            endpoint_time=tvec[i],
+                            newton_tol=newton_tol,
+                            newton_max_iter=newton_max_iter,
+                            prior_events=dynamic_limit_diagnostics["events"],
+                            verbose=verbose,
+                        )
+                    )
+                    dynamic_limit_diagnostics["events"].extend(limit_events)
+                else:
+                    z, u, v, m = integrate(
+                        z,
+                        theta,
+                        h_step,
+                        psys,
+                        residual,
+                        jacobian,
+                        None,
+                        verbose=verbose,
+                        fsolve=fsolve,
+                        newton_tol=newton_tol,
+                        newton_max_iter=newton_max_iter,
+                        uold=None,
+                        vold=None,
+                        mold=None,
+                    )
 
-            if i == schedule.fault_on_index:
-                if verbose:
-                    logger.info("Apply fault")
-                fault.apply()
-                z, _, _, _ = integrate(
-                    z, theta, 0.0, psys, residual, jacobian, None,
-                    verbose=verbose, fsolve=False,
-                    newton_tol=newton_tol, newton_max_iter=newton_max_iter,
-                    uold=None, vold=None, mold=None,
-                )
-            if i == schedule.fault_off_index:
-                if verbose:
-                    logger.info("Remove fault")
+                if i == schedule.fault_on_index:
+                    if verbose:
+                        logger.info("Apply fault")
+                    fault.apply()
+                    z, _, _, _ = integrate(
+                        z, theta, 0.0, psys, residual, jacobian, None,
+                        verbose=verbose, fsolve=False,
+                        newton_tol=newton_tol, newton_max_iter=newton_max_iter,
+                        uold=None, vold=None, mold=None,
+                    )
+                if i == schedule.fault_off_index:
+                    if verbose:
+                        logger.info("Remove fault")
+                    fault.remove()
+                    z, _, _, _ = integrate(
+                        z, theta, 0.0, psys, residual, jacobian, None,
+                        verbose=verbose, fsolve=False,
+                        newton_tol=newton_tol, newton_max_iter=newton_max_iter,
+                        uold=None, vold=None, mold=None,
+                    )
+                history[:, i] = np.copy(z)
+        finally:
+            if fault is not None:
                 fault.remove()
-                z, _, _, _ = integrate(
-                    z, theta, 0.0, psys, residual, jacobian, None,
-                    verbose=verbose, fsolve=False,
-                    newton_tol=newton_tol, newton_max_iter=newton_max_iter,
-                    uold=None, vold=None, mold=None,
-                )
-            history[:, i] = np.copy(z)
-
-        if fault is not None:
-            fault.remove()
 
     # pack results into dict
     results["tvec"] = tvec

@@ -123,6 +123,7 @@ def test_partition_driver_preserves_sys_argv_and_stores_petsc_args(monkeypatch):
         "case.dyr",
         "--petsc",
         "--arkimex",
+        "--no-enforce-dynamic-limits",
         "--",
         "-log_view",
         ":petsc.log",
@@ -136,4 +137,5 @@ def test_partition_driver_preserves_sys_argv_and_stores_petsc_args(monkeypatch):
     assert args.raw == "case.raw"
     assert args.dyr == "case.dyr"
     assert config.petsc is True
+    assert config.enforce_dynamic_limits is False
     assert config.petsc_args == ["-log_view", ":petsc.log"]

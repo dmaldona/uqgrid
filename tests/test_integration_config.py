@@ -9,6 +9,7 @@ def test_integration_config_accepts_slow_partition():
     cfg = IntegrationConfig(
         petsc=True,
         arkimex=True,
+        enforce_dynamic_limits=False,
         arkimex_slow_differential=[0, 2, 4],
     )
     assert cfg.arkimex_slow_differential == [0, 2, 4]
@@ -19,6 +20,7 @@ def test_integration_config_accepts_fast_partition():
     cfg = IntegrationConfig(
         petsc=True,
         arkimex=True,
+        enforce_dynamic_limits=False,
         arkimex_fast_differential=[1, 3],
     )
     assert cfg.arkimex_fast_differential == [1, 3]
@@ -30,6 +32,7 @@ def test_integration_config_rejects_both_fast_and_slow_lists():
         IntegrationConfig(
             petsc=True,
             arkimex=True,
+            enforce_dynamic_limits=False,
             arkimex_fast_differential=[1, 3],
             arkimex_slow_differential=[0, 2],
         )
@@ -57,11 +60,25 @@ def test_integration_config_q_limit_defaults():
         ({"method": "bogus"}, "method"),
         ({"method": "cn"}, "requires `petsc=True`"),
         ({"method": "herk2", "petsc": True}, "requires `petsc=False`"),
-        ({"comp_sens": True, "petsc": True}, "method='cn'"),
-        ({"comp_sens": True, "petsc": False}, "petsc=True"),
-        ({"arkimex": True}, "requires `petsc=True`"),
         (
-            {"arkimex": True, "petsc": True, "method": "cn"},
+            {"comp_sens": True, "petsc": True, "enforce_dynamic_limits": False},
+            "method='cn'",
+        ),
+        (
+            {"comp_sens": True, "petsc": False, "enforce_dynamic_limits": False},
+            "petsc=True",
+        ),
+        (
+            {"arkimex": True, "enforce_dynamic_limits": False},
+            "requires `petsc=True`",
+        ),
+        (
+            {
+                "arkimex": True,
+                "petsc": True,
+                "method": "cn",
+                "enforce_dynamic_limits": False,
+            },
             "cannot be combined",
         ),
         (
@@ -83,8 +100,47 @@ def test_integration_config_accepts_explicit_petsc_methods():
     assert IntegrationConfig(petsc=True, method="beuler").method == "beuler"
     assert IntegrationConfig(petsc=True, method="cn").method == "cn"
     assert IntegrationConfig(
-        petsc=True, method="cn", comp_sens=True
+        petsc=True,
+        method="cn",
+        comp_sens=True,
+        enforce_dynamic_limits=False,
     ).comp_sens is True
+
+
+def test_integration_config_dynamic_limit_defaults_and_opt_out():
+    cfg = IntegrationConfig()
+
+    assert cfg.enforce_dynamic_limits is True
+    assert cfg.dynamic_limit_tolerance == pytest.approx(1e-8)
+    assert cfg.dynamic_limit_release_tolerance == pytest.approx(1e-10)
+    assert cfg.max_dynamic_limit_iterations == 20
+    assert IntegrationConfig(
+        enforce_dynamic_limits=False,
+        fsolve=True,
+    ).fsolve is True
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"dynamic_limit_tolerance": -1e-8},
+        {"dynamic_limit_release_tolerance": -1e-10},
+        {"max_dynamic_limit_iterations": 0},
+        {"max_dynamic_limit_iterations": -1},
+    ],
+)
+def test_integration_config_rejects_invalid_dynamic_limit_controls(kwargs):
+    with pytest.raises(ValueError):
+        IntegrationConfig(**kwargs)
+
+
+@pytest.mark.parametrize("option", ["arkimex", "comp_sens", "fsolve"])
+def test_dynamic_limits_reject_unsupported_legacy_paths(option):
+    with pytest.raises(
+        ValueError,
+        match=rf"`{option}=True`.*`enforce_dynamic_limits=False`",
+    ):
+        IntegrationConfig(**{option: True})
 
 
 def test_petsc_method_mapping_is_explicit():

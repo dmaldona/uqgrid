@@ -21,6 +21,13 @@ from uqgrid.simulation.config import (
     IntegrationCtx,
     PowerFlowValidationConfig,
 )
+from uqgrid.simulation.dynamic_limits import (
+    DYNAMIC_LIMIT_EVENT_ACTIONS,
+    DYNAMIC_LIMIT_EVENT_FIELDS,
+    DynamicLimitError,
+    DynamicLimitMode,
+    LimitedStateDescriptor,
+)
 ```
 
 - `IntegrationConfig`: Validated settings for time integration.
@@ -28,6 +35,17 @@ from uqgrid.simulation.config import (
   before dynamic initialization.
 - `IntegrationCtx`: Optional container for custom initial conditions and
   parameter overrides.
+- `LimitedStateDescriptor`: JSON-safe identity and bounds for a limited state.
+- `DynamicLimitMode`: Free, lower-active, or upper-active limiter mode.
+- `DynamicLimitError`: Structured dynamic-limit failure with a `.diagnostics`
+  dictionary.
+- `DYNAMIC_LIMIT_EVENT_FIELDS`: Required keys returned by every limiter event.
+- `DYNAMIC_LIMIT_EVENT_ACTIONS`: Supported projection and mode-transition
+  action names.
+
+The dynamic-limit module also provides pure state projection, directional
+derivative projection, complementarity evaluation, and active-set update
+helpers for the supported integrators.
 
 `IntegrationConfig` also includes optional Jacobian diagnostics for non-PETSc
 runs:

@@ -312,6 +312,10 @@ baseline config may omit those optional fields and still run.
 | | `toff` | Fault clearing time [s] |
 | | `verbose` | Enable verbose solver output |
 | | `petsc` | Use PETSc solver |
+| | `enforce_dynamic_limits` | Enable hard dynamic-state limit handling |
+| | `dynamic_limit_tolerance` | State-bound tolerance for hard dynamic limits |
+| | `dynamic_limit_release_tolerance` | Complementarity release tolerance |
+| | `max_dynamic_limit_iterations` | Maximum hard-limit active-set iterations |
 
 ### Time Grid and PETSc Method
 
@@ -322,18 +326,21 @@ application and clearing times are inserted into the stored grid. Event samples
 contain the post-switch algebraic state, and the fault is active on
 `[ton, toff)`.
 
-Set `method="cn"` explicitly for PETSc Crank-Nicolson (`TSCN`). Omitting
-`method` selects backward Euler, including when `petsc=true`. Native HERK2/HERK4
-require `petsc=false`; PETSc ARKIMEX is selected separately with
-`arkimex=true`. PETSc options cannot override the configured method or time
-grid. Histories generated before this normalized contract have different time
-axes and should not be appended to corrected dense-history datasets.
+Set `method="cn"` explicitly for PETSc Crank-Nicolson. It uses `TSCN` when hard
+limits are disabled or no enabled limited states exist, and an explicit
+per-interval ordinary-SNES trapezoidal solve otherwise. Omitting `method`
+selects backward Euler, including when `petsc=true`. Native HERK2/HERK4 require
+`petsc=false`; PETSc ARKIMEX is selected separately with
+`arkimex=true` and requires `enforce_dynamic_limits=false`. PETSc options
+cannot override the configured method or time grid. Histories generated before
+this normalized contract have different time axes and should not be appended
+to corrected dense-history datasets.
 
-Adjoint sensitivities (`comp_sens=true`) require `petsc=true` and
-`method="cn"`. Faulted adjoints use reverse topology segments and algebraic
-projection jump conditions. Forward PETSc backward Euler remains supported,
-but its integral adjoint is rejected because it does not pass finite-difference
-validation.
+Adjoint sensitivities (`comp_sens=true`) require `petsc=true`, `method="cn"`,
+and `enforce_dynamic_limits=false`. Faulted adjoints use reverse topology
+segments and algebraic projection jump conditions. Forward PETSc backward
+Euler remains supported, but its integral adjoint is rejected because it does
+not pass finite-difference validation.
 
 ### Perturbation and Operating-Point Workflow
 
@@ -500,6 +507,10 @@ configured separately under `integration`:
     "enforce_q_limits": true,
     "q_limit_tolerance": 1e-8,
     "max_q_limit_iterations": null,
+    "enforce_dynamic_limits": true,
+    "dynamic_limit_tolerance": 1e-8,
+    "dynamic_limit_release_tolerance": 1e-10,
+    "max_dynamic_limit_iterations": 20,
     "power_flow_validation": {
         "enabled": true,
         "residual_tolerance": 1e-8,
@@ -517,8 +528,50 @@ configured separately under `integration`:
 screening. `integration.enforce_q_limits` controls the final initialization PF
 used by backward Euler, PETSc, HERK2, or HERK4 and defaults to `true`. Set it to
 `false` only when an unconstrained legacy operating point is required. These
-limits apply only to the initial operating point; dynamic exciter and
-field-voltage limits are separate models. Final validation remains opt-in.
+limits apply only to the initial operating point. Hard dynamic limits are a
+separate contract. Finite, strictly ordered SEXS Efd limits parsed from DYR are
+device-enabled; malformed bounds fail loading with the device identity. Native
+HERK2/HERK4 project enabled limits at every stage and endpoint, resolve the
+algebraic equations after projection, and release immediately for inward raw
+derivatives. Native backward Euler uses repeated fixed-active-set Newton solves:
+active Efd rows are bound equations, and discarded free BE residuals control
+directional release. All algebraic equations remain in the coupled endpoint
+solve. PETSc BE uses the same equations and active-set controller through an
+ordinary per-interval SNES solve. PETSc CN explicitly assembles trapezoidal
+endpoint equations and fixes the directionally blocked starting derivative for
+all active-set retries within that interval. Neither limited PETSc path uses TS
+or SNESVI. PETSc VI SNES types are rejected, while ordinary KSP, preconditioner,
+monitor, tolerance, and line-search options remain available. Limiter crossings
+are not localized and add no timestamps, so BE has expected O(dt) switching-time
+error. CN remains second order on smooth intervals but is locally first order
+around endpoint-only activation or release. PETSc CN with limits disabled or no
+enabled states continues to use TSCN. Set `enforce_dynamic_limits=false` for
+legacy unconstrained behavior.
+
+Every limiter event uses the same required keys: `device_type`, `device_id`,
+`bus`, `state_index`, `side`, `action`, `time`, `stage_or_endpoint`,
+`raw_derivative`, `state_before`, `state_after`, `bound`, and
+`active_set_iterations`. HERK uses `stage_N` or `endpoint`; implicit BE/CN uses
+`endpoint`. Method-inapplicable values are null, while existing bounds,
+`enabled`, and implicit `free_residual` fields remain available. Supported
+actions are `project`, `block_outward_derivative`, `activate`, and `release`.
+The event records are JSON-safe and are retained in
+`dynamic_limit_diagnostics["events"]`.
+
+Validation distinguishes physical derivatives from solver mismatches: a raw
+differential residual during a fault is generally nonzero, while initial
+equilibrium, endpoint algebraic equations, and method-specific discrete rows
+must satisfy their configured tolerances. Cross-method differences close to a
+limit transition are expected no-localization error; activation and release can
+occur at different stages or endpoints within one time step and add no new
+timestamps.
+Initialization failures use
+`reject_reason="dynamic_limit_initialization_failed"` and retain the structured
+diagnostics in the scenario record. Runtime limiter failures from every
+supported backend use `reject_reason="dynamic_limit_runtime_failed"`. Implicit
+failures additionally report Newton, active-set, complementarity, transition,
+backend, and PETSc SNES details when applicable. Final validation remains
+opt-in.
 When enabled, a validation failure rejects the fault replay before dynamic
 initialization. The fault diagnostic record includes the structured
 `power_flow_validation` result.

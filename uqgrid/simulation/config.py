@@ -66,6 +66,25 @@ class IntegrationConfig(BaseModel):
         default_factory=PowerFlowValidationConfig,
         description="Optional final operating-point checks before dynamic initialization.",
     )
+    enforce_dynamic_limits: bool = Field(
+        True,
+        description="Enable hard dynamic-state limits for models that expose them.",
+    )
+    dynamic_limit_tolerance: float = Field(
+        1e-8,
+        ge=0.0,
+        description="State-bound tolerance for hard dynamic limits.",
+    )
+    dynamic_limit_release_tolerance: float = Field(
+        1e-10,
+        ge=0.0,
+        description="Complementarity tolerance for releasing hard dynamic limits.",
+    )
+    max_dynamic_limit_iterations: int = Field(
+        20,
+        gt=0,
+        description="Maximum active-set iterations for hard dynamic limits.",
+    )
     solve_powerflow_dynamics: bool = Field(True, description="Solve power flow before dynamics.")
     arkimex: bool = Field(False, description="Use ARKIMEX integrator.")
     check_jacobian: bool = Field(False, description="Run FD Jacobian check (non-PETSc only).")
@@ -111,6 +130,23 @@ class IntegrationConfig(BaseModel):
     def validate_integration_contract(self):
         slow = self.arkimex_slow_differential
         fast = self.arkimex_fast_differential
+        if self.enforce_dynamic_limits:
+            conflicts = [
+                name
+                for name, enabled in (
+                    ("arkimex", self.arkimex),
+                    ("comp_sens", self.comp_sens),
+                    ("fsolve", self.fsolve),
+                )
+                if enabled
+            ]
+            if conflicts:
+                formatted = ", ".join(f"`{name}=True`" for name in conflicts)
+                raise ValueError(
+                    "Hard dynamic limits are incompatible with "
+                    f"{formatted}. Set `enforce_dynamic_limits=False` to use "
+                    "these legacy integration paths."
+                )
         if slow is not None and fast is not None:
             raise ValueError(
                 "Specify only one of `arkimex_slow_differential` or `arkimex_fast_differential`."

@@ -1,6 +1,6 @@
 import numpy as np
 from numba import jit
-from uqgrid.core.base_models import Exciter
+from uqgrid.core.base_models import BoundedStateMetadata, Exciter
 from uqgrid.utils.tools import csr_set_row
 
 
@@ -72,8 +72,20 @@ class ExcSEXS(Exciter):
     Simplified Excitation System (SEXS).
 
     Parameters are:
-    TA_TB, TB, K, TE, Emin, Emax. Limits are parsed but ignored.
+    TA_TB, TB, K, TE, Emin, Emax. The raw model equations remain
+    unconstrained; the integration layer applies enabled Efd limits.
     """
+
+    bounded_state_metadata = (
+        BoundedStateMetadata(
+            state_name="Efd",
+            state_offset=1,
+            lower_parameter_offset=4,
+            upper_parameter_offset=5,
+            enabled_parameter_offset=6,
+            device_type="SEXS",
+        ),
+    )
 
     def __init__(self, id_tag, TA_TB, TB, K, TE, Emin, Emax, enable_limits=False):
         self.TA_TB = TA_TB

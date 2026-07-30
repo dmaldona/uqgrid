@@ -1,9 +1,23 @@
 import numpy as np
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from uqgrid.utils.tools import csr_add_row, csr_set_row
 
 # constants
 ws = 2*np.pi*60
+
+
+@dataclass(frozen=True)
+class BoundedStateMetadata:
+    """Model-relative locations for one bounded differential state."""
+
+    state_name: str
+    state_offset: int
+    lower_parameter_offset: int
+    upper_parameter_offset: int
+    enabled_parameter_offset: int
+    device_type: str
+
 
 class DeviceModel(ABC):
     """ Base class for device model object.
@@ -21,6 +35,8 @@ class DeviceModel(ABC):
             ndev (int): device number (local to bus)
 
     """
+
+    bounded_state_metadata = ()
 
     def __init__(self, ddim, adim, pdim, id_tag, model_type):
         self.dif_dim = ddim
