@@ -405,6 +405,18 @@ def _normalize_integration_contract(contract: Mapping[str, Any]) -> dict[str, An
         "tend": float(contract["tend"]),
         "ton": float(contract["ton"]),
         "toff": float(contract["toff"]),
+        "enforce_dynamic_limits": bool(
+            contract.get("enforce_dynamic_limits", False)
+        ),
+        "dynamic_limit_tolerance": float(
+            contract.get("dynamic_limit_tolerance", 1e-8)
+        ),
+        "dynamic_limit_release_tolerance": float(
+            contract.get("dynamic_limit_release_tolerance", 1e-10)
+        ),
+        "max_dynamic_limit_iterations": int(
+            contract.get("max_dynamic_limit_iterations", 20)
+        ),
     }
 
 
@@ -1364,6 +1376,18 @@ def _integration_config_from_config(config: Mapping[str, Any]) -> dict[str, Any]
         "q_limit_tolerance": integration_cfg.get("q_limit_tolerance", 1e-8),
         "max_q_limit_iterations": integration_cfg.get("max_q_limit_iterations"),
         "power_flow_validation": dict(validation_cfg),
+        "enforce_dynamic_limits": integration_cfg.get(
+            "enforce_dynamic_limits", True
+        ),
+        "dynamic_limit_tolerance": integration_cfg.get(
+            "dynamic_limit_tolerance", 1e-8
+        ),
+        "dynamic_limit_release_tolerance": integration_cfg.get(
+            "dynamic_limit_release_tolerance", 1e-10
+        ),
+        "max_dynamic_limit_iterations": integration_cfg.get(
+            "max_dynamic_limit_iterations", 20
+        ),
     }
 
 
@@ -1380,6 +1404,14 @@ def _integration_contract_from_config(config: Mapping[str, Any]) -> dict[str, An
             "tend": values["tend"],
             "ton": values["ton"],
             "toff": values["toff"],
+            "enforce_dynamic_limits": values["enforce_dynamic_limits"],
+            "dynamic_limit_tolerance": values["dynamic_limit_tolerance"],
+            "dynamic_limit_release_tolerance": values[
+                "dynamic_limit_release_tolerance"
+            ],
+            "max_dynamic_limit_iterations": values[
+                "max_dynamic_limit_iterations"
+            ],
         }
     )
 
@@ -1388,6 +1420,15 @@ def _power_flow_validation_from_sim(sim: Any) -> Any:
     if not isinstance(sim, Mapping):
         return None
     diagnostics = sim.get("power_flow_diagnostics")
+    if diagnostics is None:
+        return None
+    return _json_safe(diagnostics)
+
+
+def _dynamic_limit_diagnostics_from_sim(sim: Any) -> Any:
+    if not isinstance(sim, Mapping):
+        return None
+    diagnostics = sim.get("dynamic_limit_diagnostics")
     if diagnostics is None:
         return None
     return _json_safe(diagnostics)
@@ -1414,6 +1455,27 @@ def _fault_failure_details(exc: Exception) -> dict[str, Any]:
                 "reject_stage": "power_flow_validation",
                 "power_flow_validation": _json_safe(diagnostics),
                 "simulation_diverged": False,
+            }
+        )
+    is_dynamic_limit_error = any(
+        cls.__name__ == "DynamicLimitError" for cls in type(exc).__mro__
+    )
+    if is_dynamic_limit_error and isinstance(diagnostics, Mapping):
+        is_runtime = diagnostics.get("phase") == "runtime"
+        details.update(
+            {
+                "reject_reason": (
+                    "dynamic_limit_runtime_failed"
+                    if is_runtime
+                    else "dynamic_limit_initialization_failed"
+                ),
+                "reject_stage": (
+                    "dynamic_limit_runtime"
+                    if is_runtime
+                    else "dynamic_limit_initialization"
+                ),
+                "dynamic_limit_diagnostics": _json_safe(diagnostics),
+                "simulation_diverged": bool(is_runtime),
             }
         )
     return details
@@ -1566,6 +1628,9 @@ def replay_acopf_fault_task(
         validation = _power_flow_validation_from_sim(sim)
         if validation is not None:
             record["power_flow_validation"] = validation
+        dynamic_limits = _dynamic_limit_diagnostics_from_sim(sim)
+        if dynamic_limits is not None:
+            record["dynamic_limit_diagnostics"] = dynamic_limits
         history = sim.get("history") if isinstance(sim, Mapping) else None
         tvec = sim.get("tvec") if isinstance(sim, Mapping) else None
         if history is None:
@@ -1694,6 +1759,9 @@ def replay_uqgrid_fault_task(
         validation = _power_flow_validation_from_sim(sim)
         if validation is not None:
             record["power_flow_validation"] = validation
+        dynamic_limits = _dynamic_limit_diagnostics_from_sim(sim)
+        if dynamic_limits is not None:
+            record["dynamic_limit_diagnostics"] = dynamic_limits
         history = sim.get("history") if isinstance(sim, Mapping) else None
         tvec = sim.get("tvec") if isinstance(sim, Mapping) else None
         if history is None:
@@ -3469,6 +3537,10 @@ def _fault_result_entries(
         if result.get("power_flow_validation") is not None:
             simulation_log[sid]["power_flow_validation"] = _json_safe(
                 result["power_flow_validation"]
+            )
+        if result.get("dynamic_limit_diagnostics") is not None:
+            simulation_log[sid]["dynamic_limit_diagnostics"] = _json_safe(
+                result["dynamic_limit_diagnostics"]
             )
     return metadata, simulation_log
 

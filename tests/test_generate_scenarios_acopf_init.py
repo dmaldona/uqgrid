@@ -346,6 +346,64 @@ def test_probml_resume_enforces_normalized_integration_contract(acopf, tmp_path)
         )
 
 
+def test_probml_resume_treats_legacy_dynamic_limit_contract_as_disabled(
+    acopf,
+    tmp_path,
+):
+    enabled_contract = acopf._integration_contract_from_config({})
+    dynamic_keys = {
+        "enforce_dynamic_limits",
+        "dynamic_limit_tolerance",
+        "dynamic_limit_release_tolerance",
+        "max_dynamic_limit_iterations",
+    }
+    legacy_contract = {
+        key: value
+        for key, value in enabled_contract.items()
+        if key not in dynamic_keys
+    }
+    normalized_legacy = acopf._normalize_integration_contract(legacy_contract)
+    assert normalized_legacy["enforce_dynamic_limits"] is False
+    assert normalized_legacy["dynamic_limit_tolerance"] == pytest.approx(1e-8)
+    assert normalized_legacy["dynamic_limit_release_tolerance"] == pytest.approx(
+        1e-10
+    )
+    assert normalized_legacy["max_dynamic_limit_iterations"] == 20
+
+    final_path = tmp_path / "tsi_final.npz"
+    min_path = tmp_path / "tsi_min.npz"
+    kwargs = {
+        "X_row": np.asarray([[0.5, 0.1], [0.1, -0.03]]),
+        "Y_row": np.asarray([[1.0]]),
+        "sample_idx": 0,
+        "fault_locations": [1],
+        "fault_impedances": [1e-4],
+        "scenario_ids_row": np.asarray([["sid"]], dtype=object),
+        "n_gen": 1,
+        "n_load": 1,
+        "integration_contract": legacy_contract,
+    }
+    acopf.append_probml_dataset_row(final_path, tsi_mode="final", **kwargs)
+    acopf.append_probml_dataset_row(min_path, tsi_mode="min", **kwargs)
+
+    disabled_contract = acopf._integration_contract_from_config(
+        {"integration": {"enforce_dynamic_limits": False}}
+    )
+    resume = acopf.validate_probml_resume_pair(
+        final_path,
+        min_path,
+        expected_integration_contract=disabled_contract,
+    )
+    assert resume["integration_contract"] == disabled_contract
+
+    with pytest.raises(ValueError, match="enforce_dynamic_limits"):
+        acopf.validate_probml_resume_pair(
+            final_path,
+            min_path,
+            expected_integration_contract=enabled_contract,
+        )
+
+
 def test_probml_resume_rejects_legacy_time_grid_when_contract_required(acopf, tmp_path):
     final_path = tmp_path / "tsi_final.npz"
     min_path = tmp_path / "tsi_min.npz"
@@ -1134,7 +1192,7 @@ class _FakeIntegrationConfig:
         self.kwargs = kwargs
 
 
-def test_integration_config_adapter_preserves_pf_contract(acopf):
+def test_integration_config_adapter_preserves_pf_and_dynamic_limit_contract(acopf):
     validation = {
         "enabled": True,
         "residual_tolerance": 2e-9,
@@ -1155,6 +1213,10 @@ def test_integration_config_adapter_preserves_pf_contract(acopf):
                 "q_limit_tolerance": 6e-8,
                 "max_q_limit_iterations": 12,
                 "power_flow_validation": validation,
+                "enforce_dynamic_limits": False,
+                "dynamic_limit_tolerance": 7e-8,
+                "dynamic_limit_release_tolerance": 8e-10,
+                "max_dynamic_limit_iterations": 13,
             }
         }
     )
@@ -1167,6 +1229,10 @@ def test_integration_config_adapter_preserves_pf_contract(acopf):
     assert adapted["max_q_limit_iterations"] == 12
     assert adapted["power_flow_validation"] == validation
     assert adapted["power_flow_validation"] is not validation
+    assert adapted["enforce_dynamic_limits"] is False
+    assert adapted["dynamic_limit_tolerance"] == pytest.approx(7e-8)
+    assert adapted["dynamic_limit_release_tolerance"] == pytest.approx(8e-10)
+    assert adapted["max_dynamic_limit_iterations"] == 13
 
     defaults = acopf._integration_config_from_config({})
     assert defaults["enforce_q_limits"] is True
@@ -1176,11 +1242,21 @@ def test_integration_config_adapter_preserves_pf_contract(acopf):
     assert defaults["q_limit_tolerance"] == pytest.approx(1e-8)
     assert defaults["max_q_limit_iterations"] is None
     assert defaults["power_flow_validation"] == {}
+    assert defaults["enforce_dynamic_limits"] is True
+    assert defaults["dynamic_limit_tolerance"] == pytest.approx(1e-8)
+    assert defaults["dynamic_limit_release_tolerance"] == pytest.approx(1e-10)
+    assert defaults["max_dynamic_limit_iterations"] == 20
 
     disabled = acopf._integration_config_from_config(
-        {"integration": {"enforce_q_limits": False}}
+        {
+            "integration": {
+                "enforce_q_limits": False,
+                "enforce_dynamic_limits": False,
+            }
+        }
     )
     assert disabled["enforce_q_limits"] is False
+    assert disabled["enforce_dynamic_limits"] is False
 
 
 def _replay_context(tmp_path, keep_fault_histories=False):
@@ -1266,6 +1342,12 @@ def test_replay_workers_share_pf_contract_and_success_diagnostics(acopf, tmp_pat
         "failure_reasons": [],
         "residual_norm": 1e-12,
     }
+    dynamic_limits = {
+        "enabled": True,
+        "enabled_state_count": 3,
+        "initialization": {"valid": True, "failure_reasons": []},
+        "events": [{"action": "activate", "side": "upper"}],
+    }
     integration_config = {
         "tend": 10.0,
         "dt": 1 / 120,
@@ -1281,6 +1363,10 @@ def test_replay_workers_share_pf_contract_and_success_diagnostics(acopf, tmp_pat
         "q_limit_tolerance": 2e-8,
         "max_q_limit_iterations": 9,
         "power_flow_validation": {"enabled": True},
+        "enforce_dynamic_limits": True,
+        "dynamic_limit_tolerance": 3e-8,
+        "dynamic_limit_release_tolerance": 4e-10,
+        "max_dynamic_limit_iterations": 11,
     }
     worker_contexts = [
         (
@@ -1305,6 +1391,7 @@ def test_replay_workers_share_pf_contract_and_success_diagnostics(acopf, tmp_pat
                 ),
                 "tvec": np.asarray([0.0, 1.0]),
                 "power_flow_diagnostics": validation,
+                "dynamic_limit_diagnostics": dynamic_limits,
             }
 
         result = worker(
@@ -1318,6 +1405,7 @@ def test_replay_workers_share_pf_contract_and_success_diagnostics(acopf, tmp_pat
 
         assert result["accepted"] is True
         assert result["power_flow_validation"] == validation
+        assert result["dynamic_limit_diagnostics"] == dynamic_limits
         assert captured == [integration_config]
 
 
@@ -1365,8 +1453,81 @@ def test_replay_workers_preserve_power_flow_validation_failure(acopf, tmp_path):
         assert not os.path.exists(context["history_dir"])
 
 
+@pytest.mark.parametrize(
+    ("phase", "reject_reason", "reject_stage", "simulation_diverged"),
+    [
+        (
+            None,
+            "dynamic_limit_initialization_failed",
+            "dynamic_limit_initialization",
+            False,
+        ),
+        (
+            "runtime",
+            "dynamic_limit_runtime_failed",
+            "dynamic_limit_runtime",
+            True,
+        ),
+    ],
+)
+def test_replay_workers_preserve_dynamic_limit_failures(
+    acopf,
+    tmp_path,
+    phase,
+    reject_reason,
+    reject_stage,
+    simulation_diverged,
+):
+    class DynamicLimitError(RuntimeError):
+        def __init__(self, diagnostics):
+            self.diagnostics = diagnostics
+            super().__init__("Dynamic-limit failure")
+
+    diagnostics = {
+        "enabled": True,
+        "failure_reasons": ["active_set_cycle"],
+        "events": [],
+    }
+    if phase is not None:
+        diagnostics["phase"] = phase
+
+    def fail_dynamic_limits(psys, cfg):
+        raise DynamicLimitError(diagnostics)
+
+    workers = [
+        (acopf.replay_acopf_fault_task, _replay_context(tmp_path / "acopf")),
+        (
+            acopf.replay_uqgrid_fault_task,
+            _direct_replay_context(tmp_path / "direct"),
+        ),
+    ]
+    for index, (worker, context) in enumerate(workers):
+        result = worker(
+            _fault_task(acopf, scenario_id=f"dynamic-limit-{index}"),
+            context,
+            load_psse_func=lambda path: _DummyPsys(),
+            add_dyr_func=lambda psys, path: None,
+            integration_config_cls=_FakeIntegrationConfig,
+            integrate_system_func=fail_dynamic_limits,
+        )
+
+        assert result["accepted"] is False
+        assert result["reject_reason"] == reject_reason
+        assert result["reject_stage"] == reject_stage
+        assert result["dynamic_limit_diagnostics"] == diagnostics
+        assert result["simulation_diverged"] is simulation_diverged
+        assert "tsi_final" not in result
+        assert not os.path.exists(context["history_dir"])
+
+
 def test_fault_result_log_preserves_successful_power_flow_validation(acopf):
     validation = {"valid": True, "failure_reasons": [], "residual_norm": 1e-12}
+    dynamic_limits = {
+        "enabled": True,
+        "enabled_state_count": 3,
+        "initialization": {"valid": True},
+        "events": [],
+    }
     fault_result = {
         "scenario_id": "sid",
         "fault_location": 142,
@@ -1378,6 +1539,7 @@ def test_fault_result_log_preserves_successful_power_flow_validation(acopf):
         "history_file": None,
         "final_simulation_time_s": 10.0,
         "power_flow_validation": validation,
+        "dynamic_limit_diagnostics": dynamic_limits,
     }
 
     metadata, simulation_log = acopf._fault_result_entries(
@@ -1388,7 +1550,9 @@ def test_fault_result_log_preserves_successful_power_flow_validation(acopf):
     )
 
     assert "power_flow_validation" not in metadata["sid"]
+    assert "dynamic_limit_diagnostics" not in metadata["sid"]
     assert simulation_log["sid"]["power_flow_validation"] == validation
+    assert simulation_log["sid"]["dynamic_limit_diagnostics"] == dynamic_limits
 
 
 def test_replay_acopf_fault_task_success_and_history_default(acopf, tmp_path):
@@ -1665,6 +1829,77 @@ def test_replay_smoke_preserves_power_flow_validation_rejection(acopf, tmp_path)
     assert group["reject_reason"] == "power_flow_validation_failed"
     assert group["fault_failure_reasons"] == {
         "power_flow_validation_failed": 2
+    }
+
+
+def test_replay_smoke_preserves_dynamic_limit_rejection(acopf, tmp_path):
+    config_path, raw, dyr, base_raw, base_rop, _ = _smoke_config(tmp_path)
+    parsed = _large_parsed_basecase(acopf)
+
+    def context_func(**kwargs):
+        return {
+            "accepted": True,
+            "records": [{"record_type": "acopf_smoke", "accepted": True}],
+            "raw_path": raw,
+            "dyr_path": dyr,
+            "case_raw_path": tmp_path / "case.raw",
+            "basecase_path": tmp_path / "Basecase_solution.txt",
+            "parsed_basecase": parsed,
+            "sample_idx": 0,
+            "operating_point_id": "op",
+            "accepted_operating_point_index": 0,
+            "base_mva": 100.0,
+        }
+
+    diagnostics = {
+        "phase": "runtime",
+        "failure_reasons": ["active_set_cycle"],
+        "events": [],
+    }
+
+    def failed_fault_runner(tasks, context, n_jobs, parallel_timeout_s):
+        return [
+            {
+                "record_type": "fault_scenario",
+                "accepted": False,
+                "reject_reason": "dynamic_limit_runtime_failed",
+                "reject_stage": "dynamic_limit_runtime",
+                "dynamic_limit_diagnostics": diagnostics,
+                "scenario_id": task.scenario_id,
+                "fault_location_index": task.fault_location_index,
+                "fault_impedance_index": task.fault_impedance_index,
+                "fault_location": task.fault_location,
+                "fault_impedance": task.fault_impedance,
+            }
+            for task in tasks
+        ]
+
+    output_dir = tmp_path / "out"
+    progress = acopf.run_acopf_replay_smoke(
+        config_path=config_path,
+        output_dir=output_dir,
+        acopf_config=acopf.AcopfInitializationConfig(
+            julia="julia",
+            exajugo_root=tmp_path / "exajugo",
+            base_raw=base_raw,
+            base_rop=base_rop,
+        ),
+        fault_locations="142,143",
+        fault_impedances="1e-4",
+        probml_basename="stage3_probml",
+        acopf_context_func=context_func,
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=failed_fault_runner,
+    )
+
+    assert progress["accepted"] is False
+    assert progress["reject_reason"] == "dynamic_limit_runtime_failed"
+    assert not (output_dir / "stage3_probml_final.npz").exists()
+    records = acopf._read_jsonl(output_dir / "acopf_init_diagnostics.jsonl")
+    group = records[-1]
+    assert group["reject_reason"] == "dynamic_limit_runtime_failed"
+    assert group["fault_failure_reasons"] == {
+        "dynamic_limit_runtime_failed": 2
     }
 
 
@@ -2055,18 +2290,24 @@ def test_production_dynamic_fault_rejection_does_not_append_npz(acopf, tmp_path)
     parsed = _large_parsed_basecase(acopf)
 
     def failed_fault_runner(tasks, context, n_jobs, parallel_timeout_s):
-        task = tasks[0]
         return [
             {
                 "record_type": "fault_scenario",
                 "accepted": False,
-                "reject_reason": "dynamic_fault_failed",
+                "reject_reason": "dynamic_limit_runtime_failed",
+                "reject_stage": "dynamic_limit_runtime",
+                "dynamic_limit_diagnostics": {
+                    "phase": "runtime",
+                    "failure_reasons": ["active_set_cycle"],
+                    "events": [],
+                },
                 "scenario_id": task.scenario_id,
                 "fault_location_index": task.fault_location_index,
                 "fault_impedance_index": task.fault_impedance_index,
                 "fault_location": task.fault_location,
                 "fault_impedance": task.fault_impedance,
             }
+            for task in tasks
         ]
 
     progress = acopf.run_acopf_production(
@@ -2080,8 +2321,15 @@ def test_production_dynamic_fault_rejection_does_not_append_npz(acopf, tmp_path)
     )
 
     assert progress["accepted_count"] == 0
-    assert progress["reject_reason"] == "dynamic_fault_failed"
+    assert progress["reject_reason"] == "dynamic_limit_runtime_failed"
     assert not (tmp_path / "out" / "prod_final.npz").exists()
+    records = acopf._read_jsonl(
+        tmp_path / "out" / "acopf_init_diagnostics.jsonl"
+    )
+    assert records[-1]["reject_reason"] == "dynamic_limit_runtime_failed"
+    assert records[-1]["fault_failure_reasons"] == {
+        "dynamic_limit_runtime_failed": 2
+    }
 
 
 @pytest.mark.parametrize(

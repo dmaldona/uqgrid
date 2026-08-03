@@ -67,6 +67,10 @@ def test_build_validation_integration_config_requires_strict_contract(validator)
             "q_limit_tolerance": 1e-8,
             "max_q_limit_iterations": None,
             "power_flow_validation": {"enabled": True, "voltage_min": 0.9},
+            "enforce_dynamic_limits": True,
+            "dynamic_limit_tolerance": 2e-8,
+            "dynamic_limit_release_tolerance": 3e-10,
+            "max_dynamic_limit_iterations": 17,
         }
     }
 
@@ -83,6 +87,10 @@ def test_build_validation_integration_config_requires_strict_contract(validator)
 
     assert result.enforce_q_limits is True
     assert result.power_flow_validation == {"enabled": True, "voltage_min": 0.9}
+    assert result.enforce_dynamic_limits is True
+    assert result.dynamic_limit_tolerance == pytest.approx(2e-8)
+    assert result.dynamic_limit_release_tolerance == pytest.approx(3e-10)
+    assert result.max_dynamic_limit_iterations == 17
     assert result.steps == 5
     assert result.tend == pytest.approx(5 / 120)
     assert result.ton == pytest.approx(0.25)

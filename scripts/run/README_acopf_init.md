@@ -48,6 +48,10 @@ before dynamic device initialization. Configure it under `integration`:
   "enforce_q_limits": true,
   "q_limit_tolerance": 1e-8,
   "max_q_limit_iterations": null,
+  "enforce_dynamic_limits": true,
+  "dynamic_limit_tolerance": 1e-8,
+  "dynamic_limit_release_tolerance": 1e-10,
+  "max_dynamic_limit_iterations": 20,
   "power_flow_validation": {
     "enabled": true,
     "residual_tolerance": 1e-8,
@@ -73,7 +77,16 @@ defaults to `-1`. Set `method="cn"` explicitly for PETSc
 Crank-Nicolson. Both initialization sources use the same resolved method and
 normalized time grid, including the initialized sample at `t=0` and exact
 off-grid fault transitions. `integration.arkimex=true` selects PETSc ARKIMEX
-and is retained as a distinct integration contract.
+and requires `enforce_dynamic_limits=false`.
+
+Hard dynamic limits default to enabled. Valid parsed SEXS `EMIN`/`EMAX` bounds
+are enforced by native or PETSc backward Euler, PETSc Crank-Nicolson, HERK2,
+and HERK4. `dynamic_limit_tolerance` defaults to `1e-8`,
+`dynamic_limit_release_tolerance` defaults to `1e-10`, and
+`max_dynamic_limit_iterations` defaults to `20`. Set
+`enforce_dynamic_limits=false` to recover legacy unconstrained behavior.
+Models without enabled bounded states continue through the legacy backend path
+and report zero enabled limiter states.
 
 This final contract applies identically to ExaJuGO-initialized and direct
 UQGrid-PF rows. It is separate from:
@@ -89,11 +102,18 @@ result is stored as `power_flow_validation` in
 `acopf_init_diagnostics.jsonl`; successful accepted-fault diagnostics are also
 retained in `simulation_log.json`.
 
+Dynamic-limit failures use
+`reject_reason="dynamic_limit_initialization_failed"` when the initialized
+state is invalid and `reject_reason="dynamic_limit_runtime_failed"` for
+active-set or projection failures during replay. Their structured
+`dynamic_limit_diagnostics` are retained in the diagnostics JSONL, and
+successful limiter diagnostics are retained in `simulation_log.json`.
+
 ## PF-To-Replay Handoff Validation
 
-`validate_acopf_init_handoff.py` is a validation utility for checking the two
-initialization paths before changing dynamic limiter behavior. It does not
-modify the scenario generator or enable SEXS limits.
+`validate_acopf_init_handoff.py` is a validation utility for checking both
+initialization paths with the configured PF and dynamic-limit contract. It does
+not modify the scenario generator.
 
 The ACTIVSg500 C8 commands and array dimensions below are concrete examples,
 not model requirements. The generator and validator resolve model files,
@@ -112,6 +132,10 @@ The utility requires a config with the final PF contract enabled:
     "enforce_q_limits": true,
     "q_limit_tolerance": 1e-8,
     "max_q_limit_iterations": null,
+    "enforce_dynamic_limits": true,
+    "dynamic_limit_tolerance": 1e-8,
+    "dynamic_limit_release_tolerance": 1e-10,
+    "max_dynamic_limit_iterations": 20,
     "power_flow_validation": {
       "enabled": true,
       "residual_tolerance": 1e-8,
@@ -406,8 +430,12 @@ simulation logs, fault axes, and the resolved integration contract agree before
 appending rows. The contract includes the normalized time-grid version, method,
 backend, ARKIMEX selector, `dt`, `steps`/`tend`, `ton`, and `toff`. Outputs created before
 the normalized time-grid contract cannot be continued with this version; use a
-new output directory or basename. Existing ML readers remain compatible because
-the established NPZ arrays and shapes are unchanged.
+new output directory or basename. It also includes all four dynamic-limit
+settings, so changing limiter enforcement or tolerances requires a new output
+or matching legacy-disabled settings. Contracts without limiter fields are
+interpreted as `enforce_dynamic_limits=false` with default tolerances. Existing
+ML readers remain compatible because the established NPZ arrays and shapes are
+unchanged.
 
 Read status without running ACOPF, candidate generation, or replay:
 
@@ -515,6 +543,8 @@ Useful flags:
 - Load or generator ordering does not match between ExaJuGO output and UQGrid.
 - Load Q sign conventions are inconsistent.
 - Shunt compensation or bus voltage initialization is missing.
+- Dynamic-limit initialization or runtime active-set enforcement fails; inspect
+  `dynamic_limit_diagnostics` for device, bound, event, and solver context.
 - A dynamic fault replay fails; in production, any failed fault rejects the
   whole operating point and no NPZ row is appended.
 
