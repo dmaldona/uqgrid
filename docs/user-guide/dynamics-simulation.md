@@ -63,6 +63,10 @@ config = IntegrationConfig(
     enforce_q_limits=True,
     q_limit_tolerance=1e-8,
     max_q_limit_iterations=None,
+    enforce_dynamic_limits=True,
+    dynamic_limit_tolerance=1e-8,
+    dynamic_limit_release_tolerance=1e-10,
+    max_dynamic_limit_iterations=20,
     power_flow_validation={
         "enabled": False,
         "residual_tolerance": 1e-8,
@@ -99,6 +103,13 @@ Key fields:
 - **max_q_limit_iterations**: Optional cap on active-set power-flow solves.
 - **power_flow_validation**: Optional final operating-point checks performed
   after PF convergence and before dynamic device initialization.
+- **enforce_dynamic_limits**: Validate enabled hard dynamic-state limits at
+  initialization and enforce them in supported integration methods.
+- **dynamic_limit_tolerance**: State-bound tolerance used by hard limits.
+- **dynamic_limit_release_tolerance**: Complementarity tolerance reserved for
+  directional release from an active bound.
+- **max_dynamic_limit_iterations**: Maximum active-set iterations reserved for
+  implicit hard-limit solves.
 - **check_jacobian**: Run a finite-difference Jacobian check (non-PETSc only).
 - **jacobian_check_tol**: Absolute tolerance for reporting FD mismatches.
 - **jacobian_check_top_k**: Number of mismatches to report.
@@ -109,19 +120,22 @@ Key fields:
 | Configuration | Backend |
 |---|---|
 | `method="beuler", petsc=False` | Native backward Euler |
-| `method="beuler", petsc=True` | PETSc `TSBEULER` |
-| `method="cn", petsc=True` | PETSc `TSCN` |
+| `method="beuler", petsc=True` | PETSc `TSBEULER`, or ordinary SNES when hard limits are active |
+| `method="cn", petsc=True` | PETSc `TSCN`, or ordinary SNES when hard limits are active |
 | `method="herk2", petsc=False` | HERK2 |
 | `method="herk4", petsc=False` | HERK4 |
-| `arkimex=True, petsc=True` | PETSc ARKIMEX |
+| `arkimex=True, petsc=True, enforce_dynamic_limits=False` | PETSc ARKIMEX |
 
-`cn` is explicitly mapped to PETSc `TSCN`. This is not the same as selecting
-the midpoint form of `TSTHETA`; PETSc distinguishes endpoint Crank-Nicolson
-from its theta-method midpoint formulation for DAEs. See the
+Without enabled hard-limit states, `cn` is explicitly mapped to PETSc `TSCN`.
+This is not the same as selecting the midpoint form of `TSTHETA`; PETSc
+distinguishes endpoint Crank-Nicolson from its theta-method midpoint
+formulation for DAEs. See the
 [PETSc TSTHETA documentation](https://petsc.org/release/manualpages/TS/TSTHETA/).
 
 `cn` requires PETSc, HERK requires the native backend, and ARKIMEX cannot be
-combined with `cn` or HERK. The library default remains `method="beuler"`.
+combined with `cn` or HERK. Hard dynamic limits do not support ARKIMEX,
+sensitivities, or the legacy fsolve path; set `enforce_dynamic_limits=False`
+explicitly to use those paths. The library default remains `method="beuler"`.
 Configurations that previously omitted `method` therefore select backward
 Euler. PETSc command-line options may tune solver internals, but options that
 override the configured TS type, time step, horizon, exact-final-time policy,
@@ -137,8 +151,100 @@ aggregate generator Q capability, the power flow switches that bus to PQ and
 solves again. The same initialization is used for PETSc, backward Euler,
 HERK2, and HERK4.
 
-This constrains the operating point only. It does not impose generator
-reactive-power or exciter field-voltage limits during the dynamic trajectory.
+This constrains the operating point only. Exciter field-voltage limits use the
+separate dynamic-limit configuration below.
+
+### Hard dynamic-state limits
+
+Hard dynamic limits default to enabled. Valid finite SEXS limits parsed from a
+DYR file are enabled when `EMIN < EMAX`; malformed or non-increasing limits
+fail DYR loading with the bus and generator identity. Manually constructed
+SEXS models retain their explicit `enable_limits` setting. UQGrid validates
+enabled Efd states after `IntegrationCtx` state and parameter overrides. Values
+outside EMIN/EMAX beyond `dynamic_limit_tolerance` raise `DynamicLimitError`
+before Jacobian allocation, PETSc setup, fault scheduling, or time stepping.
+Initial values are never silently clamped.
+
+Every successful result contains a JSON-safe `dynamic_limit_diagnostics`
+summary, including disabled and zero-state cases. Native HERK2 and HERK4 enforce
+SEXS Efd limits at every RK stage and weighted endpoint. A tentative stage is
+projected before its algebraic solve, only outward derivatives are blocked, and
+the final weighted state is projected before its endpoint algebraic solve.
+Inward derivatives release immediately, while the upstream SEXS state keeps
+evolving when Efd is pinned.
+
+HERK limiter activation is evaluated only at RK stages and endpoints. It does
+not localize the exact crossing, backtrack, or add timestamps. Accuracy is
+locally first order around a limit transition even though HERK2/HERK4 retain
+their nominal order on smooth intervals. Diagnostics record actual clamps and
+compact `activate`/`release` transitions, not every repeatedly blocked stage.
+
+Native and PETSc backward Euler use a fixed-active-set nonlinear solve at every
+endpoint. Free states retain the ordinary BE equation. An active Efd row is
+replaced by `Efd_next - bound = 0` with an identity Jacobian row, while all
+algebraic equations remain in the coupled solve. After convergence, the
+discarded free BE residual determines whether an active state remains pinned or
+releases inward. The solve repeats until the active set is
+complementarity-consistent. Cycling, nonlinear-solver failure, or exceeding
+`max_dynamic_limit_iterations` raises a structured `DynamicLimitError`.
+
+When PETSc BE has at least one enabled limited state, UQGrid advances the shared
+time grid one interval at a time with ordinary PETSc SNES rather than TS. The
+default SNES type is `newtonls`; KSP, preconditioner, monitor, tolerance, and
+line-search options may still be supplied through `petsc_args`. PETSc
+variational-inequality types `vinewtonrsls` and `vinewtonssls` are rejected:
+UQGrid owns the active set and never calls SNESVI or configures variable bounds.
+PETSc BE with limits disabled or no enabled states continues to use TSBEULER.
+
+Backward Euler transitions are represented at the interval endpoint; they do
+not localize the crossing, backtrack, or add timestamps. Stored endpoints are
+bound-feasible and algebraically consistent, but activation or release may be
+delayed by one step and contributes an expected O(dt) switching-time error.
+PETSc CN uses the same endpoint active-set contract when enabled limited states
+exist, but assembles the trapezoidal equations explicitly and solves them with
+ordinary SNES instead of delegating to TSCN. At each accepted interval start,
+an outward raw derivative is zeroed only for an inherited active bound; inward
+derivatives pass through immediately. That effective starting derivative stays
+fixed while UQGrid repeats endpoint SNES solves until the active set is
+complementarity-consistent. Free differential rows use the average of the fixed
+starting derivative and the raw endpoint derivative. Active rows remain exact
+bound equations, and algebraic rows remain endpoint equations.
+
+This limited CN path uses neither TS limiter state nor SNESVI. It retains
+second-order accuracy on smooth intervals, but endpoint-only activation and
+release are locally first order and may shift by one step. Crossings are not
+localized and add no timestamps. PETSc CN with limits disabled or no enabled
+limited states continues to use TSCN. Set `enforce_dynamic_limits=False` for
+legacy unconstrained behavior.
+
+All supported integrators return limiter events with the same required fields:
+
+```text
+device_type, device_id, bus, state_index,
+side, action, time, stage_or_endpoint,
+raw_derivative, state_before, state_after, bound,
+active_set_iterations
+```
+
+Supported actions are `project`, `block_outward_derivative`, `activate`, and
+`release`. Runtime event times are finite. HERK events identify `stage_N` or
+`endpoint`; implicit BE/CN events identify `endpoint`. `raw_derivative` is null
+when it is not applicable to a projection or implicit complementarity event,
+and `active_set_iterations` is null for explicit methods. Existing descriptor
+bounds, enabled status, and implicit `free_residual` fields remain available.
+The schema constants are exported as `DYNAMIC_LIMIT_EVENT_FIELDS` and
+`DYNAMIC_LIMIT_EVENT_ACTIONS`.
+
+Cross-integrator validation requires stored and HERK stage Efd values to remain
+inside their configured bounds, algebraic endpoint residuals to remain below
+solver tolerance, and implicit free or active integration rows to satisfy their
+method equations and complementarity conditions. A raw differential residual
+during a disturbance is the physical state derivative and is not expected to
+be zero. No-fault initialized trajectories remain flat. Native and PETSc BE use
+the same equations and agree to nonlinear-solver tolerance. All methods
+converge toward the same trajectory as the step is reduced, while stage- or
+endpoint-only limiter transitions can differ by up to one step because UQGrid
+does not localize crossings.
 
 ### Final operating-point validation
 
@@ -176,8 +282,9 @@ results = integrate_system(psys, config)
 ```
 
 The solver returns a dictionary with time stamps (`tvec`), state trajectory
-(`history`), and optional adjoint outputs when sensitivities are enabled. The
-first column of `history` is the initialized state at `t=0`.
+(`history`), `dynamic_limit_diagnostics`, and optional adjoint outputs when
+sensitivities are enabled. The first column of `history` is the initialized
+state at `t=0`.
 
 ## Interpret the trajectory
 

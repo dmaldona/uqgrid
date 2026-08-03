@@ -56,6 +56,10 @@ def test_integration_config_adapter_preserves_q_limit_controls(gs):
         "enforce_q_limits": True,
         "q_limit_tolerance": 2e-7,
         "max_q_limit_iterations": 11,
+        "enforce_dynamic_limits": True,
+        "dynamic_limit_tolerance": 3e-7,
+        "dynamic_limit_release_tolerance": 4e-9,
+        "max_dynamic_limit_iterations": 17,
         "power_flow_validation": {
             "enabled": True,
             "voltage_min": 0.9,
@@ -69,6 +73,10 @@ def test_integration_config_adapter_preserves_q_limit_controls(gs):
     assert cfg.enforce_q_limits is True
     assert cfg.q_limit_tolerance == pytest.approx(2e-7)
     assert cfg.max_q_limit_iterations == 11
+    assert cfg.enforce_dynamic_limits is True
+    assert cfg.dynamic_limit_tolerance == pytest.approx(3e-7)
+    assert cfg.dynamic_limit_release_tolerance == pytest.approx(4e-9)
+    assert cfg.max_dynamic_limit_iterations == 17
     assert cfg.power_flow_validation.enabled is True
     assert cfg.power_flow_validation.voltage_min == pytest.approx(0.9)
     assert cfg.power_flow_validation.voltage_max == pytest.approx(1.1)
@@ -82,6 +90,10 @@ def test_default_scenario_config_includes_q_limit_controls(gs):
     assert integration["enforce_q_limits"] is True
     assert integration["q_limit_tolerance"] == pytest.approx(1e-8)
     assert integration["max_q_limit_iterations"] is None
+    assert integration["enforce_dynamic_limits"] is True
+    assert integration["dynamic_limit_tolerance"] == pytest.approx(1e-8)
+    assert integration["dynamic_limit_release_tolerance"] == pytest.approx(1e-10)
+    assert integration["max_dynamic_limit_iterations"] == 20
     validation = integration["power_flow_validation"]
     assert validation["enabled"] is False
     assert validation["residual_tolerance"] == pytest.approx(1e-8)
@@ -93,6 +105,7 @@ def test_default_scenario_config_includes_q_limit_controls(gs):
     adapted = gs._integration_config_from_dict({})
     assert adapted.method == "beuler"
     assert adapted.enforce_q_limits is True
+    assert adapted.enforce_dynamic_limits is True
     assert adapted.power_flow_validation.enabled is False
 
     legacy = gs._integration_config_from_dict({"enforce_q_limits": False})
@@ -144,6 +157,7 @@ def test_fault_worker_preserves_successful_pf_validation(
         gs, tmp_path, monkeypatch):
     scenario, operating_point = _fault_worker_inputs()
     validation = {"valid": True, "failure_reasons": []}
+    dynamic_limits = {"enabled": True, "initialization": {"valid": True}}
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(gs, "_load_power_system", lambda *args: _fake_fault_psys())
     monkeypatch.setattr(
@@ -153,6 +167,7 @@ def test_fault_worker_preserves_successful_pf_validation(
             "history": np.zeros((2, 2)),
             "tvec": np.array([0.0, 0.1]),
             "power_flow_diagnostics": validation,
+            "dynamic_limit_diagnostics": dynamic_limits,
         },
     )
 
@@ -167,6 +182,7 @@ def test_fault_worker_preserves_successful_pf_validation(
 
     assert result["diverged"] is False
     assert result["diagnostics"]["power_flow_validation"] == validation
+    assert result["diagnostics"]["dynamic_limit_diagnostics"] == dynamic_limits
 
 
 def test_fault_worker_preserves_failed_pf_validation(
@@ -193,6 +209,75 @@ def test_fault_worker_preserves_failed_pf_validation(
     assert result["diverged"] is True
     assert result["diagnostics"]["reject_reason"] == "power_flow_validation_failed"
     assert result["diagnostics"]["power_flow_validation"] == validation
+
+
+def test_fault_worker_preserves_failed_dynamic_limit_validation(
+        gs, tmp_path, monkeypatch):
+    scenario, operating_point = _fault_worker_inputs()
+    diagnostics = {
+        "enabled": True,
+        "initialization": {
+            "valid": False,
+            "failure_reasons": ["initial_state_above_upper_bound"],
+        },
+    }
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gs, "_load_power_system", lambda *args: _fake_fault_psys())
+
+    def fail_validation(*args):
+        raise gs.DynamicLimitError(diagnostics)
+
+    monkeypatch.setattr(gs, "integrate_system", fail_validation)
+
+    result = gs._run_fault_with_operating_point_worker(
+        "case.raw",
+        "case.dyr",
+        scenario,
+        "scenario-0",
+        operating_point,
+        {"enforce_dynamic_limits": True},
+    )
+
+    assert result["diverged"] is True
+    assert (
+        result["diagnostics"]["reject_reason"]
+        == "dynamic_limit_initialization_failed"
+    )
+    assert result["diagnostics"]["dynamic_limit_diagnostics"] == diagnostics
+
+
+def test_fault_worker_classifies_dynamic_limit_runtime_failure(
+        gs, tmp_path, monkeypatch):
+    scenario, operating_point = _fault_worker_inputs()
+    diagnostics = {
+        "enabled": True,
+        "phase": "runtime",
+        "method": "beuler",
+        "failure_reasons": ["active_set_cycle"],
+        "events": [],
+    }
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gs, "_load_power_system", lambda *args: _fake_fault_psys())
+
+    def fail_runtime(*args):
+        raise gs.DynamicLimitError(diagnostics)
+
+    monkeypatch.setattr(gs, "integrate_system", fail_runtime)
+
+    result = gs._run_fault_with_operating_point_worker(
+        "case.raw",
+        "case.dyr",
+        scenario,
+        "scenario-0",
+        operating_point,
+        {"enforce_dynamic_limits": True},
+    )
+
+    assert result["diverged"] is True
+    assert result["diagnostics"]["reject_reason"] == (
+        "dynamic_limit_runtime_failed"
+    )
+    assert result["diagnostics"]["dynamic_limit_diagnostics"] == diagnostics
 
 
 def test_stress_load_preserves_load_power_factor_with_no_noise(gs):

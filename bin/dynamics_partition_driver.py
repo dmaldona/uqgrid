@@ -52,6 +52,15 @@ def parse_args(argv: List[str]):
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging.')
     parser.add_argument('--petsc', action='store_true', help='Enable PETSc integrator backend.')
     parser.add_argument('--arkimex', action='store_true', help='Use ARKIMEX time integrator.')
+    parser.add_argument(
+        '--enforce-dynamic-limits',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Enable hard dynamic-state limits.',
+    )
+    parser.add_argument('--dynamic-limit-tolerance', type=float, default=1e-8)
+    parser.add_argument('--dynamic-limit-release-tolerance', type=float, default=1e-10)
+    parser.add_argument('--max-dynamic-limit-iterations', type=int, default=20)
     parser.add_argument('--slow-diff', default=None, help='Comma or space separated list of slow differential indices.')
     parser.add_argument('--fast-diff', default=None, help='Comma or space separated list of fast differential indices.')
     parser.add_argument('--plot', action='store_true', help='Plot generator speed traces after simulation.')
@@ -78,6 +87,12 @@ def parse_args(argv: List[str]):
             petsc=args.petsc,
             petsc_args=petsc_args,
             arkimex=args.arkimex,
+            enforce_dynamic_limits=args.enforce_dynamic_limits,
+            dynamic_limit_tolerance=args.dynamic_limit_tolerance,
+            dynamic_limit_release_tolerance=(
+                args.dynamic_limit_release_tolerance
+            ),
+            max_dynamic_limit_iterations=args.max_dynamic_limit_iterations,
             arkimex_slow_differential=slow_list,
             arkimex_fast_differential=fast_list,
         )

@@ -6,6 +6,7 @@ import numpy as np
 import warnings
 import re
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -650,10 +651,35 @@ def add_dyr(psys, dyr_filename, verbose=False):
             EMIN = float(device[7])
             EMAX = float(device[8])
 
+            if not math.isfinite(EMIN) or not math.isfinite(EMAX):
+                raise ValueError(
+                    "Invalid SEXS limits at bus "
+                    f"{int(device[0])}, generator {gen_id}: "
+                    "EMIN and EMAX must be finite."
+                )
+            if EMIN >= EMAX:
+                raise ValueError(
+                    "Invalid SEXS limits at bus "
+                    f"{int(device[0])}, generator {gen_id}: "
+                    f"EMIN ({EMIN}) must be less than EMAX ({EMAX})."
+                )
+
             found_match = False
             for gen in psys.gendyn:
                 if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
-                    psys.add_exc(gen, ExcSEXS(gen_id, TA_TB, TB, K, TE, EMIN, EMAX))
+                    psys.add_exc(
+                        gen,
+                        ExcSEXS(
+                            gen_id,
+                            TA_TB,
+                            TB,
+                            K,
+                            TE,
+                            EMIN,
+                            EMAX,
+                            enable_limits=True,
+                        ),
+                    )
                     found_match = True
                     break
 

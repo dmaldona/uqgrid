@@ -38,6 +38,15 @@ def parse_args():
     parser.add_argument('--toff', type=float, default=0.4, help='Fault deactivation time.')
     parser.add_argument('--petsc', action='store_true', help='Enable PETSc integration.')
     parser.add_argument('--arkimex', action='store_true', help='Use ARKIMEX integrator.')
+    parser.add_argument(
+        '--enforce-dynamic-limits',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Enable hard dynamic-state limits.',
+    )
+    parser.add_argument('--dynamic-limit-tolerance', type=float, default=1e-8)
+    parser.add_argument('--dynamic-limit-release-tolerance', type=float, default=1e-10)
+    parser.add_argument('--max-dynamic-limit-iterations', type=int, default=20)
     parser.add_argument('--plot', action='store_true', help='Plot results after simulation.')
 
     # Parse only the script arguments
@@ -57,7 +66,13 @@ def parse_args():
             fsolve=args.fsolve,
             petsc=args.petsc,
             petsc_args=petsc_args,
-            arkimex=args.arkimex
+            arkimex=args.arkimex,
+            enforce_dynamic_limits=args.enforce_dynamic_limits,
+            dynamic_limit_tolerance=args.dynamic_limit_tolerance,
+            dynamic_limit_release_tolerance=(
+                args.dynamic_limit_release_tolerance
+            ),
+            max_dynamic_limit_iterations=args.max_dynamic_limit_iterations,
         )
     except ValueError as e:
         print(f"Configuration Error: {e}")

@@ -302,6 +302,7 @@ def test_petsc_uses_q_limited_initial_power_flow(data_dir, monkeypatch, method):
     assert captured[0].q_limit_events[0]["side"] == "upper"
     assert captured[0].gen_qsch[1] == pytest.approx(psys.gens[1].qgub)
     assert result["power_flow_diagnostics"] == captured[0].validation
+    assert result["dynamic_limit_diagnostics"]["initialization"]["valid"] is True
     assert result["history"].shape[1] == 3
     np.testing.assert_allclose(result["tvec"], [0.0, config.dt, 2 * config.dt])
 
@@ -401,6 +402,7 @@ def test_petsc_arkimex_uses_common_grid_without_fault(data_dir):
     config = IntegrationConfig(
         petsc=True,
         arkimex=True,
+        enforce_dynamic_limits=False,
         steps=2,
         dt=0.01,
         ton=10.0,
@@ -429,6 +431,7 @@ def test_petsc_arkimex_uses_exact_off_grid_fault_transitions(data_dir):
     config = IntegrationConfig(
         petsc=True,
         arkimex=True,
+        enforce_dynamic_limits=False,
         steps=4,
         dt=0.01,
         ton=0.015,
@@ -513,9 +516,37 @@ def test_valid_tgov1_and_sexs_records_attach_without_warning(data_dir, tmp_path,
     captured = capsys.readouterr()
     assert len(psys.gov) == 1
     assert len(psys.exc) == 1
+    assert psys.exc[0].enable_limits is True
     assert "Cannot pair TGOV1" not in caplog.text
     assert "Cannot pair SEXS" not in caplog.text
     assert captured.out == ""
+
+
+@pytest.mark.parametrize(
+    "emin, emax, message",
+    [
+        ("nan", "1.0", "EMIN and EMAX must be finite"),
+        ("0.5", "0.5", "EMIN (0.5) must be less than EMAX (0.5)"),
+        ("1.0", "0.5", "EMIN (1.0) must be less than EMAX (0.5)"),
+    ],
+)
+def test_invalid_parsed_sexs_limits_fail_with_device_identity(
+    data_dir, tmp_path, emin, emax, message
+):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
+    dyr_path = tmp_path / "invalid_sexs_limits.dyr"
+    dyr_path.write_text(
+        f"""
+1 'GENROU' 1 6.1 0.05 1.0 0.15 3.38 0.0 1.575 1.512 0.291 0.39 0.1733 0.0787 0.0 0.0 /
+1 'SEXS' 1 0.1 0.2 100.0 0.05 {emin} {emax} /
+""".lstrip()
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        add_dyr(psys, str(dyr_path))
+
+    assert "bus 1, generator 1" in str(exc_info.value)
+    assert message in str(exc_info.value)
 
 
 def test_add_dyr_verbose_uses_info_logging_not_stdout(data_dir, tmp_path, caplog, capsys):
