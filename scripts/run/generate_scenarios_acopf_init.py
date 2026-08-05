@@ -38,6 +38,16 @@ from joblib import Parallel, delayed
 
 
 _TIME_GRID_CONTRACT = "initialized_t0_exact_events_v1"
+_POWER_FLOW_VALIDATION_CONTRACT_DEFAULTS = {
+    "enabled": False,
+    "residual_tolerance": 1e-8,
+    "generator_limit_tolerance": 1e-6,
+    "voltage_min": None,
+    "voltage_max": None,
+    "branch_loading_max": None,
+    "branch_limit_tolerance": 1e-5,
+    "active_set_voltage_tolerance": 1e-6,
+}
 
 
 @dataclass(frozen=True)
@@ -380,6 +390,32 @@ def build_uqgrid_probml_x(operating_point: Mapping[str, Any]) -> np.ndarray:
     return np.stack([np.concatenate([pg, pl]), np.concatenate([qg, ql])], axis=0)
 
 
+def _normalize_power_flow_validation_contract(
+    config: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    values = {} if config is None else config
+    if not isinstance(values, Mapping):
+        raise ValueError("power_flow_validation contract must be a mapping")
+
+    normalized = dict(_POWER_FLOW_VALIDATION_CONTRACT_DEFAULTS)
+    normalized.update(values)
+    for key in (
+        "residual_tolerance",
+        "generator_limit_tolerance",
+        "branch_limit_tolerance",
+        "active_set_voltage_tolerance",
+    ):
+        normalized[key] = float(normalized[key])
+    for key in ("voltage_min", "voltage_max", "branch_loading_max"):
+        value = normalized[key]
+        normalized[key] = None if value is None else float(value)
+    normalized["enabled"] = bool(normalized["enabled"])
+    return {
+        key: normalized[key]
+        for key in _POWER_FLOW_VALIDATION_CONTRACT_DEFAULTS
+    }
+
+
 def _normalize_integration_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     required = {
         "time_grid_contract",
@@ -395,6 +431,7 @@ def _normalize_integration_contract(contract: Mapping[str, Any]) -> dict[str, An
     missing = sorted(required.difference(contract))
     if missing:
         raise ValueError(f"Integration contract is missing keys: {missing}")
+    max_q_limit_iterations = contract.get("max_q_limit_iterations")
     return {
         "time_grid_contract": str(contract["time_grid_contract"]),
         "method": str(contract["method"]),
@@ -405,6 +442,16 @@ def _normalize_integration_contract(contract: Mapping[str, Any]) -> dict[str, An
         "tend": float(contract["tend"]),
         "ton": float(contract["ton"]),
         "toff": float(contract["toff"]),
+        "enforce_q_limits": bool(contract.get("enforce_q_limits", True)),
+        "q_limit_tolerance": float(contract.get("q_limit_tolerance", 1e-8)),
+        "max_q_limit_iterations": (
+            None
+            if max_q_limit_iterations is None
+            else int(max_q_limit_iterations)
+        ),
+        "power_flow_validation": _normalize_power_flow_validation_contract(
+            contract.get("power_flow_validation")
+        ),
         "enforce_dynamic_limits": bool(
             contract.get("enforce_dynamic_limits", False)
         ),
@@ -446,14 +493,30 @@ def _assert_integration_contract_matches(
         )
     normalized_actual = _normalize_integration_contract(actual)
     mismatches = []
-    for key, expected_value in normalized_expected.items():
-        actual_value = normalized_actual[key]
-        if isinstance(expected_value, float):
-            matches = bool(np.isclose(actual_value, expected_value, rtol=0.0, atol=1e-15))
+
+    def compare_values(actual_value, expected_value, path):
+        if isinstance(expected_value, Mapping):
+            for key, nested_expected in expected_value.items():
+                compare_values(
+                    actual_value[key],
+                    nested_expected,
+                    f"{path}.{key}" if path else key,
+                )
+            return
+        if actual_value is None or expected_value is None:
+            matches = actual_value is expected_value
+        elif isinstance(expected_value, float):
+            matches = bool(
+                np.isclose(actual_value, expected_value, rtol=0.0, atol=1e-15)
+            )
         else:
             matches = actual_value == expected_value
         if not matches:
-            mismatches.append(f"{key}={actual_value!r} (requested {expected_value!r})")
+            mismatches.append(
+                f"{path}={actual_value!r} (requested {expected_value!r})"
+            )
+
+    compare_values(normalized_actual, normalized_expected, "")
     if mismatches:
         raise ValueError(
             f"{source} integration contract does not match this run: "
@@ -1404,6 +1467,10 @@ def _integration_contract_from_config(config: Mapping[str, Any]) -> dict[str, An
             "tend": values["tend"],
             "ton": values["ton"],
             "toff": values["toff"],
+            "enforce_q_limits": values["enforce_q_limits"],
+            "q_limit_tolerance": values["q_limit_tolerance"],
+            "max_q_limit_iterations": values["max_q_limit_iterations"],
+            "power_flow_validation": values["power_flow_validation"],
             "enforce_dynamic_limits": values["enforce_dynamic_limits"],
             "dynamic_limit_tolerance": values["dynamic_limit_tolerance"],
             "dynamic_limit_release_tolerance": values[

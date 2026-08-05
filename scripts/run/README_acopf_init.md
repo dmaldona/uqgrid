@@ -202,9 +202,11 @@ The operating-point and dataset commands write JSON reports in their output
 directories, print checkmarks to stderr, print the complete JSON report to
 stdout, and exit nonzero when any gate fails. Dense histories are not written.
 
-These settings constrain the initialization operating point only. They do not
-enforce generator reactive-power or SEXS field-voltage limits during the
-post-fault trajectory.
+The Q-limit and `power_flow_validation` settings constrain the initialization
+operating point only; they do not impose post-fault generator reactive-power
+capability limits. Hard dynamic-state settings are separate: when
+`enforce_dynamic_limits=true`, enabled SEXS `EMIN`/`EMAX` limits remain active
+throughout the post-fault trajectory.
 
 ## Required Inputs
 
@@ -430,12 +432,14 @@ simulation logs, fault axes, and the resolved integration contract agree before
 appending rows. The contract includes the normalized time-grid version, method,
 backend, ARKIMEX selector, `dt`, `steps`/`tend`, `ton`, and `toff`. Outputs created before
 the normalized time-grid contract cannot be continued with this version; use a
-new output directory or basename. It also includes all four dynamic-limit
-settings, so changing limiter enforcement or tolerances requires a new output
-or matching legacy-disabled settings. Contracts without limiter fields are
-interpreted as `enforce_dynamic_limits=false` with default tolerances. Existing
-ML readers remain compatible because the established NPZ arrays and shapes are
-unchanged.
+new output directory or basename. It also includes Q-limit enforcement,
+Q-limit tolerances, the complete final PF-validation policy, and all four
+dynamic-limit settings. Changing any of these requires a new output or an
+exactly matching resume configuration. Contracts without PF fields are
+interpreted as Q-limit enforcement enabled with final validation disabled.
+Contracts without dynamic-limit fields are interpreted as
+`enforce_dynamic_limits=false` with default tolerances. Existing ML readers
+remain compatible because the established NPZ arrays and shapes are unchanged.
 
 Read status without running ACOPF, candidate generation, or replay:
 

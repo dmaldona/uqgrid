@@ -346,6 +346,165 @@ def test_probml_resume_enforces_normalized_integration_contract(acopf, tmp_path)
         )
 
 
+def test_integration_contract_canonicalizes_pf_settings(acopf):
+    defaults = acopf._integration_contract_from_config({})
+    assert defaults["enforce_q_limits"] is True
+    assert defaults["q_limit_tolerance"] == pytest.approx(1e-8)
+    assert defaults["max_q_limit_iterations"] is None
+    assert defaults["power_flow_validation"] == {
+        "enabled": False,
+        "residual_tolerance": pytest.approx(1e-8),
+        "generator_limit_tolerance": pytest.approx(1e-6),
+        "voltage_min": None,
+        "voltage_max": None,
+        "branch_loading_max": None,
+        "branch_limit_tolerance": pytest.approx(1e-5),
+        "active_set_voltage_tolerance": pytest.approx(1e-6),
+    }
+
+    explicit = acopf._integration_contract_from_config(
+        {
+            "integration": {
+                "enforce_q_limits": False,
+                "q_limit_tolerance": 2e-8,
+                "max_q_limit_iterations": 7,
+                "power_flow_validation": {
+                    "enabled": True,
+                    "residual_tolerance": 3e-8,
+                    "generator_limit_tolerance": 4e-6,
+                    "voltage_min": 0.9,
+                    "voltage_max": 1.1,
+                    "branch_loading_max": 1.0,
+                    "branch_limit_tolerance": 5e-5,
+                    "active_set_voltage_tolerance": 6e-6,
+                },
+            }
+        }
+    )
+    assert explicit["enforce_q_limits"] is False
+    assert explicit["q_limit_tolerance"] == pytest.approx(2e-8)
+    assert explicit["max_q_limit_iterations"] == 7
+    assert explicit["power_flow_validation"]["enabled"] is True
+    assert explicit["power_flow_validation"]["voltage_min"] == pytest.approx(0.9)
+    assert explicit["power_flow_validation"]["branch_loading_max"] == pytest.approx(
+        1.0
+    )
+
+
+def test_probml_resume_treats_legacy_pf_contract_as_q_limited_unvalidated(
+    acopf,
+    tmp_path,
+):
+    current_contract = acopf._integration_contract_from_config({})
+    pf_keys = {
+        "enforce_q_limits",
+        "q_limit_tolerance",
+        "max_q_limit_iterations",
+        "power_flow_validation",
+    }
+    legacy_contract = {
+        key: value
+        for key, value in current_contract.items()
+        if key not in pf_keys
+    }
+    normalized_legacy = acopf._normalize_integration_contract(legacy_contract)
+    assert normalized_legacy["enforce_q_limits"] is True
+    assert normalized_legacy["q_limit_tolerance"] == pytest.approx(1e-8)
+    assert normalized_legacy["max_q_limit_iterations"] is None
+    assert normalized_legacy["power_flow_validation"]["enabled"] is False
+
+    final_path = tmp_path / "tsi_final.npz"
+    min_path = tmp_path / "tsi_min.npz"
+    kwargs = {
+        "X_row": np.asarray([[0.5, 0.1], [0.1, -0.03]]),
+        "Y_row": np.asarray([[1.0]]),
+        "sample_idx": 0,
+        "fault_locations": [1],
+        "fault_impedances": [1e-4],
+        "scenario_ids_row": np.asarray([["sid"]], dtype=object),
+        "n_gen": 1,
+        "n_load": 1,
+        "integration_contract": legacy_contract,
+    }
+    acopf.append_probml_dataset_row(final_path, tsi_mode="final", **kwargs)
+    acopf.append_probml_dataset_row(min_path, tsi_mode="min", **kwargs)
+
+    resume = acopf.validate_probml_resume_pair(
+        final_path,
+        min_path,
+        expected_integration_contract=current_contract,
+    )
+    assert resume["integration_contract"] == current_contract
+
+    strict_contract = acopf._integration_contract_from_config(
+        {
+            "integration": {
+                "power_flow_validation": {"enabled": True},
+            }
+        }
+    )
+    with pytest.raises(ValueError, match="power_flow_validation.enabled"):
+        acopf.validate_probml_resume_pair(
+            final_path,
+            min_path,
+            expected_integration_contract=strict_contract,
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "requested"),
+    [
+        ("enforce_q_limits", False),
+        ("q_limit_tolerance", 2e-8),
+        ("max_q_limit_iterations", 7),
+        ("power_flow_validation.enabled", True),
+        ("power_flow_validation.residual_tolerance", 2e-8),
+        ("power_flow_validation.generator_limit_tolerance", 2e-6),
+        ("power_flow_validation.voltage_min", 0.9),
+        ("power_flow_validation.voltage_max", 1.1),
+        ("power_flow_validation.branch_loading_max", 1.0),
+        ("power_flow_validation.branch_limit_tolerance", 2e-5),
+        ("power_flow_validation.active_set_voltage_tolerance", 2e-6),
+    ],
+)
+def test_probml_resume_rejects_changed_pf_contract(
+    acopf,
+    tmp_path,
+    path,
+    requested,
+):
+    contract = acopf._integration_contract_from_config({})
+    final_path = tmp_path / "tsi_final.npz"
+    min_path = tmp_path / "tsi_min.npz"
+    kwargs = {
+        "X_row": np.asarray([[0.5, 0.1], [0.1, -0.03]]),
+        "Y_row": np.asarray([[1.0]]),
+        "sample_idx": 0,
+        "fault_locations": [1],
+        "fault_impedances": [1e-4],
+        "scenario_ids_row": np.asarray([["sid"]], dtype=object),
+        "n_gen": 1,
+        "n_load": 1,
+        "integration_contract": contract,
+    }
+    acopf.append_probml_dataset_row(final_path, tsi_mode="final", **kwargs)
+    acopf.append_probml_dataset_row(min_path, tsi_mode="min", **kwargs)
+
+    changed = json.loads(json.dumps(contract))
+    target = changed
+    parts = path.split(".")
+    for part in parts[:-1]:
+        target = target[part]
+    target[parts[-1]] = requested
+
+    with pytest.raises(ValueError, match=path):
+        acopf.validate_probml_resume_pair(
+            final_path,
+            min_path,
+            expected_integration_contract=changed,
+        )
+
+
 def test_probml_resume_treats_legacy_dynamic_limit_contract_as_disabled(
     acopf,
     tmp_path,
@@ -2089,11 +2248,19 @@ def test_production_acopf_probability_zero_uses_uqgrid_direct_only(acopf, tmp_pa
     assert progress["accepted_count"] == 1
     assert progress["initialization_source_counts"] == {"uqgrid_pf": 1}
     assert progress["integration_contract"]["method"] == "beuler"
-    with np.load(tmp_path / "out" / "prod_final.npz", allow_pickle=True) as data:
-        assert data["initialization_source"].tolist() == ["uqgrid_pf"]
-        assert data["acopf_feasible"].tolist() == [False]
-        assert data["X"].shape == (1, 2, 262)
-        assert data["meta"][0]["integration_contract"] == progress["integration_contract"]
+    assert progress["integration_contract"]["enforce_q_limits"] is True
+    assert progress["integration_contract"]["power_flow_validation"]["enabled"] is False
+    for mode in ("final", "min"):
+        with np.load(
+            tmp_path / "out" / f"prod_{mode}.npz", allow_pickle=True
+        ) as data:
+            assert data["initialization_source"].tolist() == ["uqgrid_pf"]
+            assert data["acopf_feasible"].tolist() == [False]
+            assert data["X"].shape == (1, 2, 262)
+            assert (
+                data["meta"][0]["integration_contract"]
+                == progress["integration_contract"]
+            )
 
     log = json.loads((tmp_path / "out" / "simulation_log.json").read_text())
     assert {row["initialization_source"] for row in log.values()} == {"uqgrid_pf"}
@@ -2404,6 +2571,25 @@ def test_production_preserves_power_flow_validation_rejection(
 
 def test_status_reads_existing_state_without_acopf_config(acopf, tmp_path, capsys):
     config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, target=1)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["integration"].update(
+        {
+            "enforce_q_limits": False,
+            "q_limit_tolerance": 2e-8,
+            "max_q_limit_iterations": 7,
+            "power_flow_validation": {
+                "enabled": True,
+                "residual_tolerance": 3e-8,
+                "generator_limit_tolerance": 4e-6,
+                "voltage_min": 0.9,
+                "voltage_max": 1.1,
+                "branch_loading_max": 1.2,
+                "branch_limit_tolerance": 5e-5,
+                "active_set_voltage_tolerance": 6e-6,
+            },
+        }
+    )
+    config_path.write_text(json.dumps(config), encoding="utf-8")
     parsed = _large_parsed_basecase(acopf)
     output_dir = tmp_path / "out"
     acopf.run_acopf_production(
@@ -2425,6 +2611,21 @@ def test_status_reads_existing_state_without_acopf_config(acopf, tmp_path, capsy
     assert printed["initialization_source_counts"] == {"acopf": 1}
     assert printed["npz_shapes"]["final"]["Y"] == [1, 2, 1]
     assert printed["integration_contract"]["method"] == "beuler"
+    assert printed["integration_contract"]["enforce_q_limits"] is False
+    assert printed["integration_contract"]["q_limit_tolerance"] == pytest.approx(
+        2e-8
+    )
+    assert printed["integration_contract"]["max_q_limit_iterations"] == 7
+    assert printed["integration_contract"]["power_flow_validation"] == {
+        "enabled": True,
+        "residual_tolerance": pytest.approx(3e-8),
+        "generator_limit_tolerance": pytest.approx(4e-6),
+        "voltage_min": pytest.approx(0.9),
+        "voltage_max": pytest.approx(1.1),
+        "branch_loading_max": pytest.approx(1.2),
+        "branch_limit_tolerance": pytest.approx(5e-5),
+        "active_set_voltage_tolerance": pytest.approx(6e-6),
+    }
 
 
 def test_main_preflight_prints_to_stderr_and_preserves_stdout_json(
