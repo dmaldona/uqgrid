@@ -108,6 +108,7 @@ class DynamicGenerator(DeviceModel):
         # attached devices
         self.exciter = False
         self.governor = False
+        self.stabilizer = False
         # indexes for control devices (-1 if not present)
         self.pm_idx = -1
         self.efd_idx = -1
@@ -143,6 +144,9 @@ class DynamicGenerator(DeviceModel):
 
     def attach_governor(self, governor):
         self.governor = governor
+
+    def attach_stabilizer(self, stabilizer):
+        self.stabilizer = stabilizer
     
     def __str__(self):
         st = "\nInitialized: {0}".format(self.initialized)
@@ -155,8 +159,24 @@ class Governor(DeviceModel):
         self.state_list = state_list
         DeviceModel.__init__(self, ddim, adim, pdim, id_tag, 'governor')
         self.p_m0 = None  # this will be initialized by the generator
+        self.p_m0_secondary = None
         self.w_idx = -1  # location of generator's frequency
         self.pref = None
+        self.primary_generator = None
+        self.secondary_generator = None
+        self.initialized = False
+
+
+class Stabilizer(DeviceModel):
+    output_offset = 0
+
+    def __init__(self, id_tag, initdim, ddim, adim, pdim, state_list):
+        self.initdim = initdim
+        self.state_list = state_list
+        DeviceModel.__init__(self, ddim, adim, pdim, id_tag, 'stabilizer')
+        self.generator = None
+        self.exciter = None
+        self.w_idx = -1
         self.initialized = False
 
 class Exciter(DeviceModel):
@@ -166,6 +186,7 @@ class Exciter(DeviceModel):
         DeviceModel.__init__(self, ddim, adim, pdim, id_tag, 'exciter')
         self.e_fd0 = None  # this will be initialized by the generator
         self.vref = None
+        self.pss_input_idx = -1
         self.initialized = False
 
 class Motor(DeviceModel):

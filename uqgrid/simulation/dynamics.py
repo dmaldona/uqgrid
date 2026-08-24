@@ -2017,7 +2017,13 @@ def initialize_system(psys: Psystem, pf_solution: PowerFlowSolution):
         v[2*i] = pf_solution.v_magnitudes[i]
         v[2*i + 1] = pf_solution.v_angles[i]
 
-    for device in psys.devices:
+    initialization_order = [
+        device for device in psys.devices if device.model_type == "generator"
+    ]
+    initialization_order.extend(
+        device for device in psys.devices if device.model_type != "generator"
+    )
+    for device in initialization_order:
         vm = pf_solution.v_magnitudes[device.bus]
         va = pf_solution.v_angles[device.bus]
 
@@ -2033,7 +2039,7 @@ def initialize_system(psys: Psystem, pf_solution: PowerFlowSolution):
         elif device.model_type == "ZIPLoad":
             pi = -device.pload
             qi = device.qload
-        elif device.model_type in ["governor", "exciter"]:
+        elif device.model_type in ["governor", "exciter", "stabilizer"]:
             # here we dont need pi and qi we just need to pass something
             # because we have the same signature for all the initialization
             pi = 0.0

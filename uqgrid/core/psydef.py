@@ -8,7 +8,14 @@ import json
 logger = logging.getLogger(__name__)
 
 # Import base classes from the new file
-from uqgrid.core.base_models import DeviceModel, DynamicGenerator, Exciter, Governor, Motor
+from uqgrid.core.base_models import (
+    DeviceModel,
+    DynamicGenerator,
+    Exciter,
+    Governor,
+    Motor,
+    Stabilizer,
+)
 
 # IMPORT DEVICE IMPLEMENTATIONS
 from uqgrid.models.load_imp import cinj_load, jac_load
@@ -408,6 +415,7 @@ class Psystem:
         self.static_gens = []
         self.exc = []
         self.gov = []
+        self.pss = []
         self.mot = []
 
         # Devices are those elements external
@@ -635,12 +643,44 @@ class Psystem:
         self.add_device(self.exc[-1])
         exc.set_bus(gen.bus)
 
-    def add_gov(self, gen, gov):
+    def add_gov(self, gen, gov, secondary_gen=None):
         assert isinstance(gen, DynamicGenerator)
+        if gen.governor:
+            raise ValueError("Generator already has a governor.")
+        if secondary_gen is not None:
+            if not isinstance(secondary_gen, DynamicGenerator):
+                raise TypeError("Secondary governor target must be a dynamic generator.")
+            if secondary_gen is gen:
+                raise ValueError("Secondary governor target must differ from the primary.")
+            if secondary_gen.governor:
+                raise ValueError("Secondary generator already has a governor.")
+            if not hasattr(gov, "secondary_output_offset"):
+                raise ValueError("Governor does not define a secondary output.")
+            secondary_offset = int(gov.secondary_output_offset)
+            if secondary_offset <= 0 or secondary_offset >= gov.alg_dim:
+                raise ValueError("Governor secondary output offset is invalid.")
         self.gov.append(gov)
         gen.attach_governor(gov)
+        gov.primary_generator = gen
+        gov.secondary_generator = secondary_gen
+        if secondary_gen is not None:
+            secondary_gen.attach_governor(gov)
         self.add_device(self.gov[-1])
         gov.set_bus(gen.bus)
+
+    def add_pss(self, gen, pss):
+        assert isinstance(gen, DynamicGenerator)
+        assert isinstance(pss, Stabilizer)
+        if gen.stabilizer:
+            raise ValueError("Generator already has a stabilizer.")
+        if not gen.exciter:
+            raise ValueError("Stabilizer requires an attached exciter.")
+        self.pss.append(pss)
+        gen.attach_stabilizer(pss)
+        pss.generator = gen
+        pss.exciter = gen.exciter
+        self.add_device(pss)
+        pss.set_bus(gen.bus)
 
     def add_mot(self, load, mot):
         assert isinstance(load, Load)
@@ -667,6 +707,7 @@ class Psystem:
 
         self.gov_devices = []
         self.exc_devices = []
+        self.pss_devices = []
 
         for gi, gen in enumerate(self.gendyn):
             gen.device_index = gi
@@ -687,6 +728,14 @@ class Psystem:
                     gov.w_idx = gen.dif_ptr + 4
                     self.gen_pm_ctrl_col[gi] = dif + gov.alg_ptr + 0
                     self.gov_devices.append(gov)
+                    secondary = getattr(gov, "secondary_generator", None)
+                    if secondary is not None:
+                        secondary_index = secondary.device_index
+                        secondary_offset = int(gov.secondary_output_offset)
+                        secondary.has_governor = True
+                        self.gen_pm_ctrl_col[secondary_index] = (
+                            dif + gov.alg_ptr + secondary_offset
+                        )
                     mapped = True
                     break
             if not mapped:
@@ -705,6 +754,19 @@ class Psystem:
                     break
             if not mapped:
                 raise AssertionError("Exciter is not attached to any generator")
+
+        for pss in self.pss:
+            gen = pss.generator
+            exc = pss.exciter
+            if gen.stabilizer is not pss or gen.exciter is not exc:
+                raise AssertionError("Stabilizer attachment is inconsistent")
+            pss.gen_index = gen.device_index
+            pss.w_idx = gen.dif_ptr + 4
+            output_offset = int(pss.output_offset)
+            if output_offset < 0 or output_offset >= pss.alg_dim:
+                raise ValueError("Stabilizer output offset is invalid.")
+            exc.pss_input_idx = dif + pss.alg_ptr + output_offset
+            self.pss_devices.append(pss)
 
         self.gov_mask = np.array([1.0 if gen.has_governor else 0.0
                                   for gen in self.gendyn], dtype=np.float64)

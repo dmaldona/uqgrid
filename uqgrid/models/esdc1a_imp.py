@@ -19,7 +19,10 @@ def esdc1a_dsat(e_fd, sat_a, sat_b):
 
 
 @jit(nopython=True, cache=True)
-def esdc1a_resdiff(F, z, v, theta, idxs, bus, Ka, Ta, Kf, Tf, Ke, Te, sat_a, sat_b):
+def esdc1a_resdiff(
+    F, z, v, theta, idxs, bus, Ka, Ta, Kf, Tf, Ke, Te, sat_a, sat_b,
+    pss_input=0.0,
+):
     dp = idxs[0]
     pp = idxs[2]
 
@@ -34,13 +37,16 @@ def esdc1a_resdiff(F, z, v, theta, idxs, bus, Ka, Ta, Kf, Tf, Ke, Te, sat_a, sat
     if vm == 0.0:
         vm = 1e-12
 
-    F[dp] = (Ka * (vref - vm - vr2 - (Kf / Tf) * e_fd) - vr1) / Ta
+    F[dp] = (Ka * (vref - vm + pss_input - vr2 - (Kf / Tf) * e_fd) - vr1) / Ta
     F[dp + 1] = -((Kf / Tf) * e_fd + vr2) / Tf
     F[dp + 2] = (vr1 - Ke * e_fd - esdc1a_sat(e_fd, sat_a, sat_b)) / Te
 
 
 @jit(nopython=True, cache=True)
-def esdc1a_jac(data, indptr, indices, z, v, idxs, bus, Ka, Ta, Kf, Tf, Ke, Te, sat_a, sat_b):
+def esdc1a_jac(
+    data, indptr, indices, z, v, idxs, bus, Ka, Ta, Kf, Tf, Ke, Te,
+    sat_a, sat_b, pss_input_idx=-1,
+):
     dp = idxs[0]
     dev = idxs[2]
 
@@ -59,8 +65,8 @@ def esdc1a_jac(data, indptr, indices, z, v, idxs, bus, Ka, Ta, Kf, Tf, Ke, Te, s
     dvm_dvr = vr / vm
     dvm_dvi = vi / vm
 
-    col = np.empty(5, dtype=np.int64)
-    val = np.empty(5, dtype=np.float64)
+    col = np.empty(6, dtype=np.int64)
+    val = np.empty(6, dtype=np.float64)
 
     row = dp
     col[0] = vr1_idx
@@ -69,11 +75,21 @@ def esdc1a_jac(data, indptr, indices, z, v, idxs, bus, Ka, Ta, Kf, Tf, Ke, Te, s
     val[1] = -Ka / Ta
     col[2] = e_fd_idx
     val[2] = -Ka * Kf / (Ta * Tf)
-    col[3] = vr_idx
-    val[3] = (-Ka / Ta) * dvm_dvr
-    col[4] = vi_idx
-    val[4] = (-Ka / Ta) * dvm_dvi
-    csr_set_row(data, indptr, indices, 5, row, col, val)
+    nvalues = 5
+    if pss_input_idx >= 0:
+        col[3] = pss_input_idx
+        val[3] = Ka / Ta
+        col[4] = vr_idx
+        val[4] = (-Ka / Ta) * dvm_dvr
+        col[5] = vi_idx
+        val[5] = (-Ka / Ta) * dvm_dvi
+        nvalues = 6
+    else:
+        col[3] = vr_idx
+        val[3] = (-Ka / Ta) * dvm_dvr
+        col[4] = vi_idx
+        val[4] = (-Ka / Ta) * dvm_dvi
+    csr_set_row(data, indptr, indices, nvalues, row, col, val)
 
     row = dp + 1
     col[0] = vr2_idx
@@ -207,10 +223,11 @@ class ExcESDC1A(Exciter):
         return sat_b * (e_fd - sat_a) ** 2.0
 
     def residual_diff(self, F, z, v, theta, idxs, power_injection):
+        pss_input = z[self.pss_input_idx] if self.pss_input_idx >= 0 else 0.0
         esdc1a_resdiff(
             F, z, v, theta, idxs, self.bus,
             self.Ka, self.Ta, self.Kf, self.Tf, self.Ke, self.Te,
-            self.sat_a, self.sat_b,
+            self.sat_a, self.sat_b, pss_input,
         )
         return None
 
@@ -239,6 +256,9 @@ class ExcESDC1A(Exciter):
         # first row
         row = dp
         cols = [vr1, vr2, e_fd, vr, vi]
+        if self.pss_input_idx >= 0:
+            cols.append(self.pss_input_idx)
+        cols.sort()
         coord.append([row, cols])
 
         # second row
@@ -257,5 +277,5 @@ class ExcESDC1A(Exciter):
         esdc1a_jac(
             J.data, J.indptr, J.indices, z, v, idxs, self.bus,
             self.Ka, self.Ta, self.Kf, self.Tf, self.Ke, self.Te,
-            self.sat_a, self.sat_b,
+            self.sat_a, self.sat_b, self.pss_input_idx,
         )

@@ -284,7 +284,11 @@ class GenGENROU(DynamicGenerator):
         self.set_pm_val(sol.x[11])
 
         if self.exciter: self.exciter.e_fd0 = sol.x[10]
-        if self.governor: self.governor.p_m0 = sol.x[11]
+        if self.governor:
+            if getattr(self.governor, "secondary_generator", None) is self:
+                self.governor.p_m0_secondary = sol.x[11]
+            else:
+                self.governor.p_m0 = sol.x[11]
 
         dp = self.dif_ptr
         ap = self.alg_ptr
