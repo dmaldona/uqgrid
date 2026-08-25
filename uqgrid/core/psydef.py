@@ -672,6 +672,8 @@ class Psystem:
     def add_pss(self, gen, pss):
         assert isinstance(gen, DynamicGenerator)
         assert isinstance(pss, Stabilizer)
+        if str(pss.id_tag).strip() != str(gen.id_tag).strip():
+            raise ValueError("Stabilizer and generator IDs must match.")
         if gen.stabilizer:
             raise ValueError("Generator already has a stabilizer.")
         if not gen.exciter:

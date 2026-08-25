@@ -15,6 +15,7 @@ from uqgrid.models import (
     GovIEEEG1,
     GovIEESGO,
     GovTGOV1,
+    PssIEEEST,
     StaticGenerator,
 )
 from uqgrid.models.cim5_imp import MotCIM5
@@ -883,6 +884,28 @@ def add_dyr(psys, dyr_filename, verbose=False):
                     "Cannot pair ESST4B with bus %d and idx %s. Skipping.",
                     int(device[0]), gen_id,
                 )
+
+        if 'IEEEST' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            source_parameters = device[3:-1]
+            if len(source_parameters) != 19:
+                raise ValueError(
+                    f"IEEEST at bus {int(device[0])}, generator {gen_id} requires 19 parameters."
+                )
+            values = [float(value) for value in source_parameters]
+            gen = _dynamic_generator(psys, bus, gen_id)
+            if gen is None:
+                logger.warning(
+                    "Cannot pair IEEEST with bus %d and idx %s. Skipping.",
+                    int(device[0]), gen_id,
+                )
+            else:
+                if verbose:
+                    logger.info("Adding IEEEST at bus %d. GENID %s.", int(device[0]), gen_id)
+                psys.add_pss(gen, PssIEEEST(gen_id, *values))
 
         if 'ESDC2A' in device[1]:
             bus = psys.ext2int[int(device[0])]
