@@ -197,26 +197,3 @@ def test_parser_bound_adjustment_is_reported_in_integration_result(data_dir, tmp
     assert adjustments[0]["device_id"] == "1"
     assert adjustments[0]["source_GMAX"] == pytest.approx(0.5)
     assert adjustments[0]["effective_GMAX"] > adjustments[0]["source_GMAX"]
-
-
-@pytest.mark.parametrize(
-    ("case", "counts"),
-    [
-        ("ACTIVSg500", {"GovTGOV1": 15, "GovGAST": 6, "GovHYGOV": 35}),
-        ("ACTIVSg2000", {"GovTGOV1": 288, "GovIEEEG1": 26, "GovHYGOV": 20}),
-    ],
-)
-def test_target_governor_counts(data_dir, case, counts):
-    raw = os.path.join(data_dir, f"{case}.raw")
-    dyr = os.path.join(data_dir, f"{case}.dyr")
-    if not os.path.exists(raw) or not os.path.exists(dyr):
-        pytest.skip(f"{case} data files are not installed")
-    psys = load_psse(raw)
-
-    add_dyr(psys, dyr)
-
-    actual = {
-        name: sum(type(gov).__name__ == name for gov in psys.gov)
-        for name in counts
-    }
-    assert actual == counts

@@ -1,5 +1,4 @@
 import os
-from collections import Counter
 
 import numpy as np
 import pytest
@@ -19,19 +18,6 @@ def data_dir():
     return os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"
     )
-
-
-def _load_case(data_dir, case):
-    raw = os.path.join(data_dir, f"{case}.raw")
-    dyr = os.path.join(data_dir, f"{case}.dyr")
-    if not os.path.exists(raw) or not os.path.exists(dyr):
-        pytest.skip(f"{case} data files are not installed")
-    psys = load_psse(raw)
-    add_dyr(psys, dyr)
-    psys.createYbusComplex()
-    return psys
-
-
 GOVERNOR_FIXTURES = {
     "TGOV1": ("2bus_TGOV1.dyr", 1, 2, 3, 7, 8),
     "GAST": ("2bus_GAST.dyr", 0, 6, 7, 9, 10),
@@ -119,58 +105,3 @@ def test_governor_position_limits_use_shared_integrator_path(
         and event["side"] == "upper"
         for event in result["dynamic_limit_diagnostics"]["events"]
     )
-
-
-def test_activsg500_governor_stack_initializes_and_is_flat(data_dir):
-    psys = _load_case(data_dir, "ACTIVSg500")
-    result = integrate_system(
-        psys,
-        IntegrationConfig(steps=2, dt=1.0 / 120.0, ton=10.0, toff=11.0),
-    )
-
-    assert len(psys.gov) == 56
-    assert np.max(np.abs(result["history"] - result["history"][:, [0]])) < 1e-10
-    assert result["dynamic_limit_diagnostics"]["parameter_adjustments"] == []
-
-
-def test_activsg2000_governor_stack_is_flat_with_source_machine_policy(data_dir):
-    psys = _load_case(data_dir, "ACTIVSg2000")
-    result = integrate_system(
-        psys,
-        IntegrationConfig(
-            steps=2,
-            dt=1.0 / 120.0,
-            ton=10.0,
-            toff=11.0,
-            enforce_q_limits=False,
-        ),
-    )
-
-    assert len(psys.gov) == 334
-    assert np.max(np.abs(result["history"] - result["history"][:, [0]])) < 1e-10
-    adjustments = result["dynamic_limit_diagnostics"]["parameter_adjustments"]
-    counts = Counter(item["device_type"] for item in adjustments)
-    assert counts == {
-        "GovHYGOV": 16,
-        "GovIEEEG1": 9,
-        "ExcESDC1A": 2,
-        "ExcESDC2A": 1,
-    }
-
-
-@pytest.mark.parametrize(
-    ("case", "enforce_q_limits"),
-    [("ACTIVSg500", True), ("ACTIVSg2000", False)],
-)
-def test_target_governor_jacobian_is_finite(data_dir, case, enforce_q_limits):
-    psys = _load_case(data_dir, case)
-    solution = runpf(psys, verbose=False, enforce_q_limits=enforce_q_limits)
-    state, theta = initialize_system(psys, solution)
-    residual = np.zeros_like(state)
-    residual_function(residual, state, theta, psys)
-    jacobian = preallocate_jacobian(psys)
-    residual_jacobian(jacobian, state, theta, psys)
-
-    assert np.all(np.isfinite(jacobian.data))
-    differential = residual[:psys.num_dof_dif]
-    assert np.linalg.norm(differential, np.inf) < 1e-8

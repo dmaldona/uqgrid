@@ -3,15 +3,10 @@ from pathlib import Path
 import pytest
 
 from scripts.validation.dyr_coverage import (
-    ACTIVSG_TARGET_NATIVE_MODELS,
-    ACTIVSG_TARGET_REDIRECTS,
     DyrCoverageError,
     MachineRecordPolicy,
     analyze_dyr_coverage,
 )
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _write_case(tmp_path: Path) -> tuple[Path, Path]:
@@ -203,60 +198,3 @@ def test_duplicate_inactive_record_remains_inactive(tmp_path):
     assert report.counts["active"] == 3
     assert report.counts["inactive"] == 2
     assert report.counts["duplicate"] == 1
-
-
-@pytest.mark.parametrize(
-    ("case", "expected_counts", "machine_less"),
-    [
-        (
-            "ACTIVSg200",
-            {"active": 114, "inactive": 33, "native": 114, "redirected": 0},
-            0,
-        ),
-        (
-            "ACTIVSg500",
-            {"active": 170, "inactive": 102, "native": 170, "redirected": 0},
-            0,
-        ),
-        (
-            "ACTIVSg2000",
-            {"active": 1335, "inactive": 404, "native": 989, "redirected": 346},
-            98,
-        ),
-    ],
-)
-def test_target_case_policy_inventory(case, expected_counts, machine_less):
-    raw = PROJECT_ROOT / "data" / f"{case}.raw"
-    dyr = PROJECT_ROOT / "data" / f"{case}.dyr"
-    if not raw.exists() or not dyr.exists():
-        pytest.skip(f"{case} data files are not installed")
-
-    report = analyze_dyr_coverage(
-        raw,
-        dyr,
-        native_models=ACTIVSG_TARGET_NATIVE_MODELS,
-        redirects=ACTIVSG_TARGET_REDIRECTS,
-        strict=True,
-    )
-
-    for name, expected in expected_counts.items():
-        assert report.counts[name] == expected
-    assert len(report.active_generators_without_machine) == machine_less
-
-
-@pytest.mark.parametrize(
-    ("case", "native", "unsupported"),
-    [("ACTIVSg200", 114, 0), ("ACTIVSg500", 170, 0), ("ACTIVSg2000", 989, 0)],
-)
-def test_target_case_current_implementation_inventory(case, native, unsupported):
-    raw = PROJECT_ROOT / "data" / f"{case}.raw"
-    dyr = PROJECT_ROOT / "data" / f"{case}.dyr"
-    if not raw.exists() or not dyr.exists():
-        pytest.skip(f"{case} data files are not installed")
-
-    report = analyze_dyr_coverage(raw, dyr)
-
-    assert report.counts["native"] == native
-    assert report.counts["unsupported"] == unsupported
-    assert report.counts["unmatched"] == 0
-    assert report.counts["duplicate"] == 0

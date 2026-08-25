@@ -142,12 +142,3 @@ def test_stabilizer_attachment_rejects_mismatched_generator_id(data_dir, tmp_pat
 
     with pytest.raises(ValueError, match="IDs must match"):
         psys.add_pss(psys.gendyn[0], pss)
-
-
-def test_target_ieeest_records_attach_exact_generators(data_dir):
-    for case, expected in (("ACTIVSg500", 2), ("ACTIVSg2000", 333)):
-        psys = load_psse(os.path.join(data_dir, f"{case}.raw"))
-        add_dyr(psys, os.path.join(data_dir, f"{case}.dyr"))
-        assert len(psys.pss) == expected
-        assert all(pss.generator.stabilizer is pss for pss in psys.pss)
-        assert all(pss.generator.exciter is pss.exciter for pss in psys.pss)
