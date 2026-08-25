@@ -1,6 +1,6 @@
 import numpy as np
 from numba import jit
-from uqgrid.core.base_models import Governor
+from uqgrid.core.base_models import BoundedStateMetadata, Governor
 from uqgrid.utils.tools import csr_set_row
 
 
@@ -89,6 +89,17 @@ class GovTGOV1(Governor):
     Parameters follow ordering:
     R, T1, VMAX, VMIN, T2, T3, DT.
     """
+
+    bounded_state_metadata = (
+        BoundedStateMetadata(
+            state_name="x2",
+            state_offset=1,
+            lower_parameter_offset=3,
+            upper_parameter_offset=2,
+            enabled_parameter_offset=7,
+            device_type="TGOV1",
+        ),
+    )
 
     def __init__(self, id_tag, R, T1, VMAX, VMIN, T2, T3, DT, enable_limits=False):
         if R == 0.0:

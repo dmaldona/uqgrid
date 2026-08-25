@@ -1,5 +1,16 @@
 from uqgrid.core.psydef import Psystem, Bus
-from uqgrid.models import GenGENROU, GenGENSAL, ExcESDC1A, ExcSEXS, GovIEESGO, GovTGOV1, StaticGenerator
+from uqgrid.models import (
+    ExcESDC1A,
+    ExcSEXS,
+    GenGENROU,
+    GenGENSAL,
+    GovGAST,
+    GovHYGOV,
+    GovIEEEG1,
+    GovIEESGO,
+    GovTGOV1,
+    StaticGenerator,
+)
 from uqgrid.models.cim5_imp import MotCIM5
 from uqgrid.io.parse_psse import read_raw
 import numpy as np
@@ -9,6 +20,23 @@ import logging
 import math
 
 logger = logging.getLogger(__name__)
+
+
+def _generator_power_ratios(psys, bus, gen_id):
+    for gen in psys.gens:
+        static_id = gen.idx.replace("'", "").strip()
+        if gen.bus == bus and static_id == gen_id.strip():
+            if gen.mbase > 0:
+                return psys.basemva / gen.mbase, gen.mbase / psys.basemva
+            break
+    return 1.0, 1.0
+
+
+def _dynamic_generator(psys, bus, gen_id):
+    for gen in psys.gendyn:
+        if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
+            return gen
+    return None
 
 def load_psse(raw_filename):
 
@@ -562,24 +590,29 @@ def add_dyr(psys, dyr_filename, verbose=False):
             T3 = float(device[8])
             DT = float(device[9])
 
-            power_ratio = 1.0
-            inverse_power_ratio = 1.0
-            for gen in psys.gens:
-                static_id = gen.idx.replace("'", "").strip()
-                if gen.bus == bus and static_id == gen_id.strip():
-                    if gen.mbase > 0:
-                        power_ratio = psys.basemva / gen.mbase
-                        inverse_power_ratio = gen.mbase / psys.basemva
-                    break
+            power_ratio, inverse_power_ratio = _generator_power_ratios(
+                psys, bus, gen_id
+            )
             R *= power_ratio
-            VMAX *= power_ratio
-            VMIN *= power_ratio
+            VMAX *= inverse_power_ratio
+            VMIN *= inverse_power_ratio
             DT *= inverse_power_ratio
+
+            if not math.isfinite(VMIN) or not math.isfinite(VMAX) or VMIN >= VMAX:
+                raise ValueError(
+                    f"Invalid TGOV1 limits at bus {int(device[0])}, generator {gen_id}."
+                )
 
             found_match = False
             for gen in psys.gendyn:
                 if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
-                    psys.add_gov(gen, GovTGOV1(gen_id, R, T1, VMAX, VMIN, T2, T3, DT))
+                    psys.add_gov(
+                        gen,
+                        GovTGOV1(
+                            gen_id, R, T1, VMAX, VMIN, T2, T3, DT,
+                            enable_limits=True,
+                        ),
+                    )
                     found_match = True
                     break
 
@@ -589,6 +622,157 @@ def add_dyr(psys, dyr_filename, verbose=False):
                     int(device[0]),
                     gen_id,
                 )
+
+        if 'GGOV1' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            rselect = int(float(device[3]))
+            fswitch = int(float(device[4]))
+            if (rselect, fswitch) != (1, 1):
+                raise ValueError(
+                    "GGOV1 compatibility redirect requires Rselect=1 and Fswitch=1 "
+                    f"at bus {int(device[0])}, generator {gen_id}."
+                )
+            R = float(device[5])
+            power_ratio, inverse_power_ratio = _generator_power_ratios(
+                psys, bus, gen_id
+            )
+            governor = GovTGOV1(
+                gen_id,
+                R * power_ratio,
+                0.1,
+                1.2 * inverse_power_ratio,
+                0.0,
+                0.2,
+                10.0,
+                0.0,
+                enable_limits=True,
+            )
+            governor.source_model = "GGOV1"
+            governor.source_parameters = tuple(device[3:-1])
+            gen = _dynamic_generator(psys, bus, gen_id)
+            if gen is None:
+                logger.warning(
+                    "Cannot pair GGOV1 with bus %d and idx %s. Skipping.",
+                    int(device[0]), gen_id,
+                )
+            else:
+                psys.add_gov(gen, governor)
+                psys.dynamic_model_redirects.append(
+                    {
+                        "source_model": "GGOV1",
+                        "effective_model": "TGOV1",
+                        "bus": int(device[0]),
+                        "device_id": gen_id,
+                        "source_parameters": governor.source_parameters,
+                    }
+                )
+
+        if 'GAST' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            values = [float(value) for value in device[3:12]]
+            R, T1, T2, T3, AT, KT, VMAX, VMIN, DT = values
+            power_ratio, inverse_power_ratio = _generator_power_ratios(
+                psys, bus, gen_id
+            )
+            R *= power_ratio
+            AT *= inverse_power_ratio
+            VMAX *= inverse_power_ratio
+            VMIN *= inverse_power_ratio
+            DT *= inverse_power_ratio
+            gen = _dynamic_generator(psys, bus, gen_id)
+            if gen is None:
+                logger.warning(
+                    "Cannot pair GAST with bus %d and idx %s. Skipping.",
+                    int(device[0]), gen_id,
+                )
+            else:
+                psys.add_gov(
+                    gen,
+                    GovGAST(
+                        gen_id, R, T1, T2, T3, AT, KT, VMAX, VMIN, DT,
+                        enable_limits=True,
+                    ),
+                )
+
+        if 'HYGOV' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            values = [float(value) for value in device[3:15]]
+            R, r, Tr, Tf, Tg, VELM, GMAX, GMIN, Tw, At, DT, qNL = values
+            power_ratio, inverse_power_ratio = _generator_power_ratios(
+                psys, bus, gen_id
+            )
+            R *= power_ratio
+            r *= power_ratio
+            VELM *= inverse_power_ratio
+            GMAX *= inverse_power_ratio
+            GMIN *= inverse_power_ratio
+            DT *= inverse_power_ratio
+            qNL *= inverse_power_ratio
+            gen = _dynamic_generator(psys, bus, gen_id)
+            if gen is None:
+                logger.warning(
+                    "Cannot pair HYGOV with bus %d and idx %s. Skipping.",
+                    int(device[0]), gen_id,
+                )
+            else:
+                psys.add_gov(
+                    gen,
+                    GovHYGOV(
+                        gen_id, R, r, Tr, Tf, Tg, VELM, GMAX, GMIN, Tw,
+                        At, DT, qNL, g_floor=1e-8, enable_limits=True,
+                        adjust_initial_limits=True,
+                    ),
+                )
+
+        if 'IEEEG1' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            bus2_external = int(float(device[3]))
+            id2 = str(device[4]).strip().replace("'", "")
+            values = [float(value) for value in device[5:25]]
+            (
+                K, T1, T2, T3, UO, UC, PMAX, PMIN, T4, K1, K2, T5,
+                K3, K4, T6, K5, K6, T7, K7, K8,
+            ) = values
+            _, inverse_power_ratio = _generator_power_ratios(psys, bus, gen_id)
+            K *= inverse_power_ratio
+            PMAX *= inverse_power_ratio
+            PMIN *= inverse_power_ratio
+            primary = _dynamic_generator(psys, bus, gen_id)
+            if primary is None:
+                logger.warning(
+                    "Cannot pair IEEEG1 with bus %d and idx %s. Skipping.",
+                    int(device[0]), gen_id,
+                )
+                continue
+            secondary = None
+            if bus2_external != 0:
+                if bus2_external not in psys.ext2int:
+                    raise ValueError(f"IEEEG1 secondary bus {bus2_external} not found.")
+                secondary = _dynamic_generator(
+                    psys, psys.ext2int[bus2_external], id2
+                )
+                if secondary is None:
+                    raise ValueError(
+                        f"Cannot pair IEEEG1 secondary generator at bus {bus2_external}, idx {id2}."
+                    )
+            governor = GovIEEEG1(
+                gen_id, bus2_external, id2, K, T1, T2, T3, UO, UC,
+                PMAX, PMIN, T4, K1, K2, T5, K3, K4, T6, K5, K6,
+                T7, K7, K8, enable_limits=True, adjust_initial_limits=True,
+            )
+            psys.add_gov(primary, governor, secondary_gen=secondary)
 
         if 'ESDC1A' in device[1]:
 
@@ -755,6 +939,19 @@ def add_dyr(psys, dyr_filename, verbose=False):
             "Retained %d static generators at %d buses.",
             sum(len(gens) for gens in static_gens_by_bus.values()),
             len(static_gens_by_bus),
+        )
+
+    if psys.dynamic_model_redirects:
+        counts = {}
+        for redirect in psys.dynamic_model_redirects:
+            key = (redirect["source_model"], redirect["effective_model"])
+            counts[key] = counts.get(key, 0) + 1
+        logger.warning(
+            "Applied dynamic-model compatibility redirects: %s.",
+            ", ".join(
+                f"{source}->{effective}: {count}"
+                for (source, effective), count in sorted(counts.items())
+            ),
         )
 
 def load_gic(psys, gis_filename):

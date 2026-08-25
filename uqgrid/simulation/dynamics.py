@@ -2137,6 +2137,17 @@ def _initialize_integration_state(
         ),
         max_dynamic_limit_iterations=config.max_dynamic_limit_iterations,
     )
+    dynamic_limit_diagnostics["parameter_adjustments"] = [
+        {
+            "device_type": type(device).__name__,
+            "device_id": str(device.id_tag).strip(),
+            "bus": int(psys.buses[device.bus].id),
+            **device.limit_initialization_diagnostics,
+        }
+        for device in psys.devices
+        if getattr(device, "limit_initialization_diagnostics", None)
+        and device.limit_initialization_diagnostics.get("bounds_adjusted", False)
+    ]
     return pf_solution, z0, theta, dynamic_limit_diagnostics
 
 

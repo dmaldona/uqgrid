@@ -139,12 +139,12 @@ def test_tgov1_dt_uses_machine_to_system_base_scaling(data_dir, tmp_path):
     machine_to_system = mbase / sbase
 
     assert gov.R == pytest.approx(0.05 * system_to_machine)
-    assert gov.VMAX == pytest.approx(1.2 * system_to_machine)
-    assert gov.VMIN == pytest.approx(-0.1 * system_to_machine)
+    assert gov.VMAX == pytest.approx(1.2 * machine_to_system)
+    assert gov.VMIN == pytest.approx(-0.1 * machine_to_system)
     assert gov.DT == pytest.approx(0.3 * machine_to_system)
 
 
-def test_tgov1_limits_are_stored_but_disabled_by_default():
+def test_tgov1_constructor_limits_are_disabled_until_parser_enables_them():
     gov = GovTGOV1("1", R=0.05, T1=0.1, VMAX=1.2, VMIN=-0.1, T2=0.2, T3=10.0, DT=0.3)
     gov.par_ptr = 0
     gov.pref = 0.7

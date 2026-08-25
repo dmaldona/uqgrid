@@ -409,6 +409,7 @@ class Psystem:
         # OSL signal injectors (forced oscillations, colored noise).
         # See uqgrid/osl/. Empty by default → zero-overhead in integrators.
         self.signal_injectors = []
+        self.dynamic_model_redirects = []
 
         # Dynamic devices
         self.gendyn = []
