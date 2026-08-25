@@ -1,4 +1,5 @@
 import os
+from collections import Counter
 
 import numpy as np
 import pytest
@@ -148,10 +149,12 @@ def test_activsg2000_governor_stack_is_flat_with_source_machine_policy(data_dir)
     assert len(psys.gov) == 334
     assert np.max(np.abs(result["history"] - result["history"][:, [0]])) < 1e-10
     adjustments = result["dynamic_limit_diagnostics"]["parameter_adjustments"]
-    assert len(adjustments) == 25
-    assert {item["device_type"] for item in adjustments} == {
-        "GovHYGOV",
-        "GovIEEEG1",
+    counts = Counter(item["device_type"] for item in adjustments)
+    assert counts == {
+        "GovHYGOV": 16,
+        "GovIEEEG1": 9,
+        "ExcESDC1A": 2,
+        "ExcESDC2A": 1,
     }
 
 

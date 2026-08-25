@@ -101,8 +101,10 @@ from uqgrid.simulation.dynamic_limits import (
     DynamicLimitMode,
     _contextualize_dynamic_limit_runtime_error,
     collect_limited_state_descriptors,
+    evaluate_limited_state_bounds,
     initialize_dynamic_limit_modes,
     project_limited_derivatives,
+    project_limited_states,
     update_dynamic_limit_active_set,
     validate_initial_dynamic_limits,
 )
@@ -808,22 +810,21 @@ def _effective_cn_start_derivative(
     return effective
 
 
-def _active_limit_bound(descriptor, mode):
+def _active_limit_bound(descriptor, mode, state):
     mode = DynamicLimitMode(mode)
+    lower, upper, _ = evaluate_limited_state_bounds(state, descriptor)
     if mode == DynamicLimitMode.UPPER_ACTIVE:
-        return descriptor.upper_bound
+        return upper
     if mode == DynamicLimitMode.LOWER_ACTIVE:
-        return descriptor.lower_bound
+        return lower
     return None
 
 
 def _apply_beuler_active_rows(F, J, z, descriptors, modes):
-    """Replace active BE equations with bound equations and identity rows."""
-    diagonal_column = np.zeros(1, dtype=np.int64)
-    diagonal_value = np.ones(1, dtype=np.float64)
+    """Replace active BE equations with their bound constraint rows."""
     for descriptor in descriptors:
         bound = _active_limit_bound(
-            descriptor, modes[descriptor.state_index]
+            descriptor, modes[descriptor.state_index], z
         )
         if bound is None:
             continue
@@ -831,18 +832,66 @@ def _apply_beuler_active_rows(F, J, z, descriptors, modes):
         F[state_index] = z[state_index] - bound
         if J is not None:
             csr_mult_row(J.data, J.indptr, J.indices, state_index, 0.0)
-            diagonal_column[0] = state_index
+            _, _, derivatives = evaluate_limited_state_bounds(z, descriptor)
+            coefficient = (
+                descriptor.lower_bound
+                if DynamicLimitMode(modes[state_index]) == DynamicLimitMode.LOWER_ACTIVE
+                else descriptor.upper_bound
+            )
+            columns = np.empty(1 + len(derivatives), dtype=np.int64)
+            values = np.empty(1 + len(derivatives), dtype=np.float64)
+            columns[0] = state_index
+            values[0] = 1.0
+            for i, (column, derivative) in enumerate(derivatives, start=1):
+                columns[i] = column
+                values[i] = -coefficient * derivative
+            order = np.argsort(columns)
             csr_set_row(
                 J.data,
                 J.indptr,
                 J.indices,
-                1,
+                len(columns),
                 state_index,
-                diagonal_column,
-                diagonal_value,
+                columns[order],
+                values[order],
             )
 
 
+def _enforce_moving_bounds_after_topology_change(
+    z, theta, psys, residual, jacobian, descriptors, modes, *, time,
+    stage_or_endpoint, newton_tol, newton_max_iter, verbose,
+):
+    """Restore feasibility when a topology change moves voltage-scaled bounds."""
+    events = []
+    moving = [item for item in descriptors if item.bound_scale is not None]
+    for _ in range(10):
+        projected, projection_events = project_limited_states(
+            z, moving, time=time, stage_or_endpoint=stage_or_endpoint
+        )
+        if not projection_events:
+            return z, modes, events
+        events.extend(projection_events)
+        for event in projection_events:
+            modes[event["state_index"]] = (
+                DynamicLimitMode.UPPER_ACTIVE
+                if event["side"] == "upper"
+                else DynamicLimitMode.LOWER_ACTIVE
+            )
+        z, _, _, _ = integrate(
+            projected, theta, 0.0, psys, residual, jacobian, None,
+            verbose=verbose, fsolve=False, newton_tol=newton_tol,
+            newton_max_iter=newton_max_iter, uold=None, vold=None, mold=None,
+        )
+    raise DynamicLimitError(
+        {
+            "message": "Moving dynamic-limit projection did not converge",
+            "operation": "topology_change_projection",
+            "time": float(time),
+            "stage_or_endpoint": stage_or_endpoint,
+            "failure_reasons": ["projection_iteration_limit"],
+            "events": events,
+        }
+    )
 def _limit_mode_signature(descriptors, modes):
     return tuple(
         DynamicLimitMode(modes[item.state_index]).value
@@ -927,7 +976,7 @@ def _solve_beuler_fixed_active_set(
     z = np.array(zold, dtype=float, copy=True)
     for descriptor in descriptors:
         bound = _active_limit_bound(
-            descriptor, modes[descriptor.state_index]
+            descriptor, modes[descriptor.state_index], z
         )
         if bound is not None:
             z[descriptor.state_index] = bound
@@ -1426,7 +1475,7 @@ class _PETScActiveSetWorkspace:
         guess = np.array(zold, dtype=float, copy=True)
         for descriptor in descriptors:
             bound = _active_limit_bound(
-                descriptor, modes[descriptor.state_index]
+                descriptor, modes[descriptor.state_index], guess
             )
             if bound is not None:
                 guess[descriptor.state_index] = bound
@@ -1740,6 +1789,15 @@ def _integrate_system_petsc_implicit_limits(
                     vold=None,
                     mold=None,
                 )
+                if any(item.bound_scale is not None for item in descriptors):
+                    z, modes, events = _enforce_moving_bounds_after_topology_change(
+                        z, theta, psys, residual, jacobian, descriptors, modes,
+                        time=tvec[i], stage_or_endpoint="fault_on",
+                        newton_tol=config.newton_tol,
+                        newton_max_iter=config.newton_max_iter,
+                        verbose=config.verbose,
+                    )
+                    dynamic_limit_diagnostics["events"].extend(events)
             if i == schedule.fault_off_index:
                 if config.verbose:
                     logger.info("Remove fault")
@@ -1760,6 +1818,15 @@ def _integrate_system_petsc_implicit_limits(
                     vold=None,
                     mold=None,
                 )
+                if any(item.bound_scale is not None for item in descriptors):
+                    z, modes, events = _enforce_moving_bounds_after_topology_change(
+                        z, theta, psys, residual, jacobian, descriptors, modes,
+                        time=tvec[i], stage_or_endpoint="fault_off",
+                        newton_tol=config.newton_tol,
+                        newton_max_iter=config.newton_max_iter,
+                        verbose=config.verbose,
+                    )
+                    dynamic_limit_diagnostics["events"].extend(events)
             history[:, i] = z
     finally:
         if fault is not None:
@@ -2231,6 +2298,15 @@ def preallocate_jacobian(psys):
                 list_coordinates[coord[j][0]].extend(coord[j][1])
                 list_coordinates[coord[j][0]] = sorted(
                     set(list_coordinates[coord[j][0]]))
+
+        for metadata in getattr(psys.devices[i], "bounded_state_metadata", ()):
+            if metadata.bound_scale != "terminal_voltage":
+                continue
+            row = psys.devices[i].dif_ptr + metadata.state_offset
+            voltage = dif_size + alg_size + 2 * psys.devices[i].bus
+            columns = [voltage] if psys.power_injection else [voltage, voltage + 1]
+            list_coordinates[row].extend(columns)
+            list_coordinates[row] = sorted(set(list_coordinates[row]))
 
     # because the ZIP load depends only on the bus voltage, no need to
     # re-compute this.
@@ -3248,6 +3324,18 @@ def integrate_system(
                         newton_tol=newton_tol, newton_max_iter=newton_max_iter,
                         uold=None, vold=None, mold=None,
                     )
+                    if any(item.bound_scale is not None for item in limit_descriptors):
+                        z, limit_modes, limit_events = (
+                            _enforce_moving_bounds_after_topology_change(
+                                z, theta, psys, residual, jacobian,
+                                limit_descriptors, limit_modes, time=tvec[i],
+                                stage_or_endpoint="fault_on",
+                                newton_tol=newton_tol,
+                                newton_max_iter=newton_max_iter,
+                                verbose=verbose,
+                            )
+                        )
+                        dynamic_limit_diagnostics["events"].extend(limit_events)
                 if i == schedule.fault_off_index:
                     if verbose:
                         logger.info("Remove fault")
@@ -3258,6 +3346,18 @@ def integrate_system(
                         newton_tol=newton_tol, newton_max_iter=newton_max_iter,
                         uold=None, vold=None, mold=None,
                     )
+                    if any(item.bound_scale is not None for item in limit_descriptors):
+                        z, limit_modes, limit_events = (
+                            _enforce_moving_bounds_after_topology_change(
+                                z, theta, psys, residual, jacobian,
+                                limit_descriptors, limit_modes, time=tvec[i],
+                                stage_or_endpoint="fault_off",
+                                newton_tol=newton_tol,
+                                newton_max_iter=newton_max_iter,
+                                verbose=verbose,
+                            )
+                        )
+                        dynamic_limit_diagnostics["events"].extend(limit_events)
                 history[:, i] = np.copy(z)
         finally:
             if fault is not None:

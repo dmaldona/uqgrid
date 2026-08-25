@@ -1,6 +1,7 @@
 import numpy as np
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Optional
 from uqgrid.utils.tools import csr_add_row, csr_set_row
 
 # constants
@@ -17,6 +18,7 @@ class BoundedStateMetadata:
     upper_parameter_offset: int
     enabled_parameter_offset: int
     device_type: str
+    bound_scale: Optional[str] = None
 
 
 class DeviceModel(ABC):

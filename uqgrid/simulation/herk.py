@@ -90,6 +90,26 @@ def solve_stage_algebraic(X_i, y0, v0, theta, psys, F_full, J_full,
 # ---------------------------------------------------------------------------
 
 
+def _solve_algebraics_with_dynamic_bounds(
+    x, y, v, theta, psys, F, J, tol, max_iter, descriptors, *, time, stage,
+):
+    """Iterate algebraic solves and moving-bound projections to consistency."""
+    events = []
+    for _ in range(10):
+        y, v, _ = solve_stage_algebraic(
+            x, y, v, theta, psys, F, J, tol, max_iter
+        )
+        complete = np.concatenate([x, y, v])
+        projected, projection_events = project_limited_states(
+            complete, descriptors, time=time, stage_or_endpoint=stage
+        )
+        events.extend(projection_events)
+        x = projected[:psys.num_dof_dif]
+        if not projection_events:
+            return x, y, v, complete, events
+    raise RuntimeError("Moving dynamic-limit projection did not converge.")
+
+
 def _herk_step_with_limits(
     z_old,
     theta,
@@ -112,6 +132,9 @@ def _herk_step_with_limits(
     limit_descriptors = list(limit_descriptors)
     if limit_modes is None:
         limit_modes = initialize_dynamic_limit_modes(limit_descriptors)
+    has_dynamic_bounds = any(
+        descriptor.bound_scale is not None for descriptor in limit_descriptors
+    )
 
     NDIFFEQ = psys.num_dof_dif
     alg_size = psys.num_dof_alg
@@ -134,7 +157,7 @@ def _herk_step_with_limits(
 
         stage_time = t_start + c[i] * h
         stage_name = f"stage_{i + 1}"
-        if limit_descriptors:
+        if limit_descriptors and not has_dynamic_bounds:
             X_i, projection_events = project_limited_states(
                 X_i,
                 limit_descriptors,
@@ -142,9 +165,19 @@ def _herk_step_with_limits(
                 stage_or_endpoint=stage_name,
             )
             events.extend(projection_events)
-
-        Y_i, V_i, _ = solve_stage_algebraic(
-            X_i, Y_last, V_last, theta, psys, F, J, tol, max_iter)
+        if limit_descriptors and has_dynamic_bounds:
+            X_i, Y_i, V_i, z_stage, projection_events = (
+                _solve_algebraics_with_dynamic_bounds(
+                    X_i, Y_last, V_last, theta, psys, F, J, tol, max_iter,
+                    limit_descriptors, time=stage_time, stage=stage_name,
+                )
+            )
+            events.extend(projection_events)
+        else:
+            Y_i, V_i, _ = solve_stage_algebraic(
+                X_i, Y_last, V_last, theta, psys, F, J, tol, max_iter
+            )
+            z_stage = np.concatenate([X_i, Y_i, V_i])
         Y_last, V_last = Y_i, V_i
 
         z_stage = np.concatenate([X_i, Y_i, V_i])
@@ -152,7 +185,7 @@ def _herk_step_with_limits(
         raw_derivative = F[:NDIFFEQ].copy()
         if limit_descriptors:
             K[i], _ = project_limited_derivatives(
-                X_i,
+                z_stage,
                 raw_derivative,
                 limit_descriptors,
                 tolerance=limit_tolerance,
@@ -161,7 +194,7 @@ def _herk_step_with_limits(
             )
             limit_modes, _, transition_events = (
                 update_explicit_dynamic_limit_modes(
-                    X_i,
+                    z_stage,
                     raw_derivative,
                     limit_descriptors,
                     limit_modes,
@@ -176,7 +209,7 @@ def _herk_step_with_limits(
 
     x_new = x_n + h * (b @ K)
     endpoint_time = t_start + h
-    if limit_descriptors:
+    if limit_descriptors and not has_dynamic_bounds:
         x_new, projection_events = project_limited_states(
             x_new,
             limit_descriptors,
@@ -185,15 +218,25 @@ def _herk_step_with_limits(
         )
         events.extend(projection_events)
 
-    Y_new, V_new, _ = solve_stage_algebraic(
-        x_new, Y_last, V_last, theta, psys, F, J, tol, max_iter)
-    z_new = np.concatenate([x_new, Y_new, V_new])
+    if limit_descriptors and has_dynamic_bounds:
+        x_new, Y_new, V_new, z_new, projection_events = (
+            _solve_algebraics_with_dynamic_bounds(
+                x_new, Y_last, V_last, theta, psys, F, J, tol, max_iter,
+                limit_descriptors, time=endpoint_time, stage="endpoint",
+            )
+        )
+        events.extend(projection_events)
+    else:
+        Y_new, V_new, _ = solve_stage_algebraic(
+            x_new, Y_last, V_last, theta, psys, F, J, tol, max_iter
+        )
+        z_new = np.concatenate([x_new, Y_new, V_new])
 
     if limit_descriptors:
         residual_function(F, z_new, theta, psys)
         raw_derivative = F[:NDIFFEQ].copy()
         limit_modes, _, transition_events = update_explicit_dynamic_limit_modes(
-            x_new,
+            z_new,
             raw_derivative,
             limit_descriptors,
             limit_modes,
@@ -350,6 +393,12 @@ def integrate_system_herk(psys, config, ctx=None):
                 y_new, v_new, _ = solve_stage_algebraic(
                     x, y, v, theta, psys, F, J, tol, max_iter)
                 z = np.concatenate([x, y_new, v_new])
+                if any(item.bound_scale is not None for item in limit_descriptors):
+                    x, y_new, v_new, z, events = _solve_algebraics_with_dynamic_bounds(
+                        x, y_new, v_new, theta, psys, F, J, tol, max_iter,
+                        limit_descriptors, time=tvec[i], stage="fault_on",
+                    )
+                    dynamic_limit_diagnostics["events"].extend(events)
 
             if i == schedule.fault_off_index:
                 fault.remove()
@@ -359,6 +408,12 @@ def integrate_system_herk(psys, config, ctx=None):
                 y_new, v_new, _ = solve_stage_algebraic(
                     x, y, v, theta, psys, F, J, tol, max_iter)
                 z = np.concatenate([x, y_new, v_new])
+                if any(item.bound_scale is not None for item in limit_descriptors):
+                    x, y_new, v_new, z, events = _solve_algebraics_with_dynamic_bounds(
+                        x, y_new, v_new, theta, psys, F, J, tol, max_iter,
+                        limit_descriptors, time=tvec[i], stage="fault_off",
+                    )
+                    dynamic_limit_diagnostics["events"].extend(events)
             history[:, i] = z
     finally:
         if fault is not None:

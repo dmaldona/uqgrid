@@ -164,7 +164,7 @@ def test_stabilizer_output_changes_esdc1a_residual_and_jacobian(data_dir, tmp_pa
     psys, pss, z, theta = _initialized_esdc1a_case(data_dir, tmp_path)
     exc = psys.exc[0]
     pss_col = psys.num_dof_dif + pss.alg_ptr
-    regulator_row = exc.dif_ptr
+    regulator_row = exc.dif_ptr + 2
 
     baseline = np.zeros_like(z)
     residual_function(baseline, z, theta, psys)
@@ -175,12 +175,14 @@ def test_stabilizer_output_changes_esdc1a_residual_and_jacobian(data_dir, tmp_pa
     residual_function(changed, perturbed, theta, psys)
 
     assert changed[regulator_row] - baseline[regulator_row] == pytest.approx(
-        exc.Ka * perturbation / exc.Ta
+        exc.Ka * exc.Tc * perturbation / (exc.Ta * exc.Tb)
     )
 
     jacobian = preallocate_jacobian(psys)
     residual_jacobian(jacobian, z, theta, psys)
-    assert jacobian[regulator_row, pss_col] == pytest.approx(exc.Ka / exc.Ta)
+    assert jacobian[regulator_row, pss_col] == pytest.approx(
+        exc.Ka * exc.Tc / (exc.Ta * exc.Tb)
+    )
 
 
 def test_secondary_governor_output_routes_to_exact_generator(data_dir):

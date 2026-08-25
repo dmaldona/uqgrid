@@ -45,9 +45,14 @@ class LimitedStateDescriptor:
     bus: int
     device_id: str
     enabled: bool
+    bound_scale: str | None = None
+    bound_scale_indices: tuple[int, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         values = asdict(self)
+        if self.bound_scale is None:
+            values.pop("bound_scale")
+            values.pop("bound_scale_indices")
         for key in ("lower_bound", "upper_bound"):
             value = float(values[key])
             values[key] = value if math.isfinite(value) else None
@@ -86,6 +91,14 @@ def collect_limited_state_descriptors(psys, theta) -> list[LimitedStateDescripto
     for device in psys.devices:
         for metadata in getattr(device, "bounded_state_metadata", ()):
             par_ptr = int(device.par_ptr)
+            bound_scale_indices = ()
+            if metadata.bound_scale == "terminal_voltage":
+                voltage_ptr = psys.num_dof_dif + psys.num_dof_alg + 2 * device.bus
+                bound_scale_indices = (
+                    (voltage_ptr,)
+                    if psys.power_injection
+                    else (voltage_ptr, voltage_ptr + 1)
+                )
             descriptors.append(
                 LimitedStateDescriptor(
                     state_index=int(device.dif_ptr + metadata.state_offset),
@@ -101,9 +114,38 @@ def collect_limited_state_descriptors(psys, theta) -> list[LimitedStateDescripto
                     enabled=bool(
                         theta[par_ptr + metadata.enabled_parameter_offset]
                     ),
+                    bound_scale=metadata.bound_scale,
+                    bound_scale_indices=bound_scale_indices,
                 )
             )
     return descriptors
+
+
+def evaluate_limited_state_bounds(state, descriptor):
+    """Return effective bounds and derivatives of their common scale."""
+    if descriptor.bound_scale is None:
+        return float(descriptor.lower_bound), float(descriptor.upper_bound), ()
+    if descriptor.bound_scale != "terminal_voltage":
+        raise ValueError(f"Unsupported dynamic-limit bound scale: {descriptor.bound_scale}")
+    state = np.asarray(state, dtype=float)
+    indices = descriptor.bound_scale_indices
+    if len(indices) == 1:
+        scale = float(state[indices[0]])
+        derivatives = ((indices[0], 1.0),)
+    else:
+        real = float(state[indices[0]])
+        imag = float(state[indices[1]])
+        scale = math.hypot(real, imag)
+        derivatives = (
+            ((indices[0], 0.0), (indices[1], 0.0))
+            if scale == 0.0
+            else ((indices[0], real / scale), (indices[1], imag / scale))
+        )
+    return (
+        float(descriptor.lower_bound) * scale,
+        float(descriptor.upper_bound) * scale,
+        derivatives,
+    )
 
 
 def _json_number(value: float) -> float | None:
@@ -279,8 +321,7 @@ def project_limited_states(
                 time=time,
                 stage_or_endpoint=stage_or_endpoint,
             )
-        lower = float(descriptor.lower_bound)
-        upper = float(descriptor.upper_bound)
+        lower, upper, _ = evaluate_limited_state_bounds(projected, descriptor)
         if value < lower:
             projected[descriptor.state_index] = lower
             events.append(
@@ -334,6 +375,10 @@ def project_limited_derivatives(
     for descriptor in descriptors:
         if not descriptor.enabled:
             continue
+        if descriptor.bound_scale is not None:
+            # Moving bounds are enforced by stage/endpoint projection. Their
+            # outward direction depends on the unavailable bound velocity.
+            continue
         _validate_enabled_descriptor(
             descriptor,
             operation="derivative_projection",
@@ -360,8 +405,7 @@ def project_limited_derivatives(
                 time=time,
                 stage_or_endpoint=stage_or_endpoint,
             )
-        lower = float(descriptor.lower_bound)
-        upper = float(descriptor.upper_bound)
+        lower, upper, _ = evaluate_limited_state_bounds(state, descriptor)
         side = None
         bound = None
         if value >= upper - tolerance and derivative > 0.0:
@@ -418,6 +462,9 @@ def update_explicit_dynamic_limit_modes(
         if not descriptor.enabled:
             updated[state_index] = DynamicLimitMode.FREE
             continue
+        if descriptor.bound_scale is not None:
+            updated[state_index] = DynamicLimitMode.FREE
+            continue
         _validate_enabled_descriptor(
             descriptor,
             operation="explicit_mode_update",
@@ -445,8 +492,7 @@ def update_explicit_dynamic_limit_modes(
                 stage_or_endpoint=stage_or_endpoint,
             )
 
-        lower = float(descriptor.lower_bound)
-        upper = float(descriptor.upper_bound)
+        lower, upper, _ = evaluate_limited_state_bounds(state, descriptor)
         if value >= upper - tolerance and derivative > 0.0:
             next_mode = DynamicLimitMode.UPPER_ACTIVE
         elif value <= lower + tolerance and derivative < 0.0:
@@ -599,8 +645,7 @@ def evaluate_dynamic_limit_complementarity(
                 descriptor,
                 value=residual,
             )
-        lower = float(descriptor.lower_bound)
-        upper = float(descriptor.upper_bound)
+        lower, upper, _ = evaluate_limited_state_bounds(endpoint_state, descriptor)
         side = None
         bound = None
         if mode == DynamicLimitMode.UPPER_ACTIVE:
@@ -677,8 +722,7 @@ def update_dynamic_limit_active_set(
             continue
         value = float(endpoint_state[state_index])
         residual = float(free_residual[state_index])
-        lower = float(descriptor.lower_bound)
-        upper = float(descriptor.upper_bound)
+        lower, upper, _ = evaluate_limited_state_bounds(endpoint_state, descriptor)
         side = None
         action = None
         bound = None
@@ -756,8 +800,7 @@ def validate_initial_dynamic_limits(
             failure_reasons.append(reason)
 
     for descriptor in checked_descriptors:
-        lower = float(descriptor.lower_bound)
-        upper = float(descriptor.upper_bound)
+        lower, upper, _ = evaluate_limited_state_bounds(z0, descriptor)
         value = float(z0[descriptor.state_index])
 
         if not math.isfinite(lower) or not math.isfinite(upper):
