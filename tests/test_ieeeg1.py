@@ -49,7 +49,7 @@ def _jacobian(governor, z, theta, idxs):
     return matrix.toarray()
 
 
-@pytest.mark.parametrize("zero_times", itertools.product((False, True), repeat=4))
+@pytest.mark.parametrize("zero_times", tuple(itertools.product((False, True), repeat=4)))
 @pytest.mark.parametrize("zero_t1", (False, True))
 def test_zero_time_constant_combinations_are_finite(zero_times, zero_t1):
     governor = _governor(
