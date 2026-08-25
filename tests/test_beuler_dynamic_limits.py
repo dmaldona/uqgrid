@@ -146,6 +146,31 @@ def test_native_be_crossing_activates_bound_without_overshoot(data_dir, side):
     json.dumps(events, allow_nan=False)
 
 
+def test_finite_difference_jacobian_uses_same_active_set_limits(data_dir):
+    analytical_system, analytical_context, state_index, lower, upper = (
+        _biased_two_bus(data_dir, "upper")
+    )
+    numerical_system, numerical_context, _, _, _ = _biased_two_bus(
+        data_dir, "upper"
+    )
+
+    analytical = integrate_system(
+        analytical_system, _config(jacobian_mode="analytical"), analytical_context
+    )
+    numerical = integrate_system(
+        numerical_system,
+        _config(jacobian_mode="finite_difference"),
+        numerical_context,
+    )
+
+    np.testing.assert_allclose(
+        numerical["history"], analytical["history"], rtol=1e-7, atol=1e-9
+    )
+    values = numerical["history"][state_index]
+    assert np.min(values) >= lower - 1e-12
+    assert np.max(values) <= upper + 1e-12
+
+
 @pytest.mark.parametrize("side", ["upper", "lower"])
 def test_native_be_pins_outward_and_releases_for_inward_drive(data_dir, side):
     psys = _build_two_bus(data_dir)

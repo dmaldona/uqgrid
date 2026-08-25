@@ -126,7 +126,7 @@ def _jacobian_diagonal_zeros(J_data, J_ptr, J_idx, ndiffeq):
         csr_set_row(J_data, J_ptr, J_idx, 1, i, col, data)
 
 
-def residual_jacobian(J, z, theta, psys):
+def _analytical_residual_jacobian(J, z, theta, psys):
     """Top-level residual Jacobian assembly entry point."""
 
     if z.flags.writeable:
@@ -184,3 +184,66 @@ def residual_jacobian(J, z, theta, psys):
     for fault in psys.fault_events:
         if fault.active:
             fault.residual_jac(J, z, v, theta, dev, psys.power_injection)
+
+
+def _column_groups(J):
+    """Greedily color columns that do not share a structural row."""
+    column_rows = [set() for _ in range(J.shape[1])]
+    for row in range(J.shape[0]):
+        for pointer in range(J.indptr[row], J.indptr[row + 1]):
+            column_rows[J.indices[pointer]].add(row)
+    groups = []
+    group_rows = []
+    for column, rows in enumerate(column_rows):
+        for index, occupied in enumerate(group_rows):
+            if rows.isdisjoint(occupied):
+                groups[index].append(column)
+                occupied.update(rows)
+                break
+        else:
+            groups.append([column])
+            group_rows.append(set(rows))
+    return tuple(tuple(group) for group in groups)
+
+
+def finite_difference_residual_jacobian(J, z, theta, psys, eps=1e-7):
+    """Assemble a sparse centered-difference Jacobian using structural coloring."""
+    from uqgrid.simulation.residual import residual_function
+
+    signature = (J.shape, J.indptr.tobytes(), J.indices.tobytes())
+    cached = getattr(psys, "_finite_difference_jacobian_coloring", None)
+    if cached is None or cached[0] != signature:
+        groups = _column_groups(J)
+        psys._finite_difference_jacobian_coloring = (signature, groups)
+    else:
+        groups = cached[1]
+    J.data.fill(0.0)
+    for group in groups:
+        increased = np.array(z, dtype=float, copy=True)
+        decreased = np.array(z, dtype=float, copy=True)
+        steps = {}
+        for column in group:
+            step = float(eps) * max(1.0, abs(float(z[column])))
+            increased[column] += step
+            decreased[column] -= step
+            steps[column] = step
+        f_increased = np.zeros_like(z)
+        f_decreased = np.zeros_like(z)
+        residual_function(f_increased, increased, theta, psys)
+        residual_function(f_decreased, decreased, theta, psys)
+        difference = f_increased - f_decreased
+        for row in range(J.shape[0]):
+            for pointer in range(J.indptr[row], J.indptr[row + 1]):
+                column = int(J.indices[pointer])
+                if column in steps:
+                    J.data[pointer] = difference[row] / (2.0 * steps[column])
+    return J
+
+
+def residual_jacobian(J, z, theta, psys):
+    """Top-level residual Jacobian assembly entry point."""
+    if getattr(psys, "jacobian_mode", "analytical") == "finite_difference":
+        return finite_difference_residual_jacobian(
+            J, z, theta, psys, getattr(psys, "finite_difference_epsilon", 1e-7)
+        )
+    return _analytical_residual_jacobian(J, z, theta, psys)

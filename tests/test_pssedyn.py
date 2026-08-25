@@ -2,6 +2,7 @@ import os
 import pytest
 import numpy as np
 from uqgrid.core.psydef import Psystem
+from uqgrid.core.psydef import Bus
 from uqgrid.models import GenGENROU, GenGENSAL, GovTGOV1
 from uqgrid.models.esdc1a_imp import esdc1a_sat_coefficients
 from uqgrid.simulation.dynamics import initialize_system, integrate_system, preallocate_jacobian
@@ -257,6 +258,31 @@ def test_static_generator_initialization_and_jacobian(data_dir, tmp_path):
         psys, sysvec, theta, jacobian, eps=1e-6, top_k=10, tol=1e-5,
     )
 
+    assert np.linalg.norm(residual, np.inf) < 1e-8
+    assert mismatches == []
+
+
+def test_q_limited_static_generator_initialization_and_jacobian(data_dir, tmp_path):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    psys.gens[1].qgub = 0.02
+    dyr_path = tmp_path / "empty.dyr"
+    dyr_path.write_text("")
+
+    add_dyr(psys, str(dyr_path))
+    psys.createYbusComplex()
+    pf_solution = runpf(psys, verbose=False, enforce_q_limits=True)
+    sysvec, theta = initialize_system(psys, pf_solution)
+    residual = np.zeros_like(sysvec)
+    residual_function(residual, sysvec, theta, psys)
+    jacobian = preallocate_jacobian(psys)
+    residual_jacobian(jacobian, sysvec, theta, psys)
+    mismatches = compare_jacobians(
+        psys, sysvec, theta, jacobian, eps=1e-6, top_k=10, tol=1e-5,
+    )
+
+    static_gen = next(gen for gen in psys.static_gens if gen.bus == 1)
+    assert static_gen.q_limited
+    assert pf_solution.bus_types[1] == Bus.PQ
     assert np.linalg.norm(residual, np.inf) < 1e-8
     assert mismatches == []
 

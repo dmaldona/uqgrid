@@ -85,7 +85,7 @@ def _algebraic_projection_adjoint(
     return projected_lambda, projected_mu
 
 from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
-from uqgrid.core import Psystem
+from uqgrid.core import Bus, Psystem
 from uqgrid.simulation.pflow import (
     PowerFlowSolution,
     PowerFlowValidationError,
@@ -2103,6 +2103,10 @@ def initialize_system(psys: Psystem, pf_solution: PowerFlowSolution):
         elif device.model_type == "static_generator":
             pi = sum(pf_solution.gen_psch[idx] for idx in device.gen_idxs)
             qi = sum(pf_solution.gen_qsch[idx] for idx in device.gen_idxs)
+            device.q_limited = (
+                device.bus_type == Bus.PV
+                and pf_solution.bus_types[device.bus] == Bus.PQ
+            )
         elif device.model_type == "ZIPLoad":
             pi = -device.pload
             qi = device.qload
@@ -2869,6 +2873,9 @@ def integrate_system(
     solve_power_flow = config.solve_powerflow_dynamics
     arkimex = config.arkimex
     method = config.method
+    psys.power_injection = power_injection
+    psys.jacobian_mode = config.jacobian_mode
+    psys.finite_difference_epsilon = config.finite_difference_epsilon
 
     if method in {"beuler", "cn"}:
         pass
@@ -2882,8 +2889,6 @@ def integrate_system(
         logger.info("ARKIMEX activated.")
 
     results = {}
-    psys.power_injection=power_injection
-
     # retrieve parameters
     pf_solution, z0, theta, dynamic_limit_diagnostics = (
         _initialize_integration_state(psys, config, ctx)

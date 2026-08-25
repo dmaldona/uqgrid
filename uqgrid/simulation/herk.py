@@ -308,6 +308,8 @@ def integrate_system_herk(psys, config, ctx=None):
     A, b, c = TABLEAUS[method]
 
     psys.power_injection = config.power_injection
+    psys.jacobian_mode = config.jacobian_mode
+    psys.finite_difference_epsilon = config.finite_difference_epsilon
 
     pf_solution, z0, theta, dynamic_limit_diagnostics = (
         _initialize_integration_state(psys, config, ctx)

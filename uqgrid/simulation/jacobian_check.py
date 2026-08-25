@@ -81,6 +81,43 @@ def finite_difference_jacobian(psys, z, theta, eps=1e-6):
     return J
 
 
+def compare_jacobian_columns(
+    psys, z, theta, J_analytical, columns, *, rows=None, eps=1e-6,
+):
+    """Compare selected Jacobian columns without allocating a dense matrix."""
+    z = np.asarray(z, dtype=float)
+    columns = tuple(dict.fromkeys(int(column) for column in columns))
+    rows = np.arange(z.size, dtype=int) if rows is None else np.asarray(rows, dtype=int)
+    index_map = build_index_map(psys)
+    results = []
+    for column in columns:
+        step = float(eps) * max(1.0, abs(float(z[column])))
+        increased = z.copy()
+        decreased = z.copy()
+        increased[column] += step
+        decreased[column] -= step
+        f_increased = np.zeros_like(z)
+        f_decreased = np.zeros_like(z)
+        residual_function(f_increased, increased, theta, psys)
+        residual_function(f_decreased, decreased, theta, psys)
+        numerical = (f_increased[rows] - f_decreased[rows]) / (2.0 * step)
+        analytical = np.asarray(J_analytical[rows, column].toarray()).ravel()
+        differences = np.abs(analytical - numerical)
+        worst = int(np.argmax(differences))
+        results.append(
+            {
+                "column": column,
+                "column_desc": index_map.get(column, f"col{column}"),
+                "maximum_absolute_error": float(differences[worst]),
+                "worst_row": int(rows[worst]),
+                "worst_row_desc": index_map.get(int(rows[worst]), f"row{rows[worst]}"),
+                "analytical": float(analytical[worst]),
+                "finite_difference": float(numerical[worst]),
+            }
+        )
+    return results
+
+
 def compare_jacobians(psys, z, theta, J_analytical, eps=1e-6, top_k=10, tol=0.0):
     """Compare analytical Jacobian against finite-difference Jacobian.
 

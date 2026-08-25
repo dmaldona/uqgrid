@@ -88,6 +88,10 @@ class IntegrationConfig(BaseModel):
     solve_powerflow_dynamics: bool = Field(True, description="Solve power flow before dynamics.")
     arkimex: bool = Field(False, description="Use ARKIMEX integrator.")
     check_jacobian: bool = Field(False, description="Run FD Jacobian check (non-PETSc only).")
+    jacobian_mode: str = Field(
+        "analytical", description="Residual Jacobian assembly: analytical | finite_difference."
+    )
+    finite_difference_epsilon: float = Field(1e-7, gt=0.0, allow_inf_nan=False)
     jacobian_check_tol: float = Field(1e-6, description="Absolute tolerance for Jacobian FD checks.")
     jacobian_check_top_k: int = Field(10, description="Number of Jacobian mismatches to report.")
     jacobian_check_csv: Optional[str] = Field(None, description="Optional CSV path for Jacobian mismatch report.")
@@ -126,6 +130,12 @@ class IntegrationConfig(BaseModel):
             )
         return value
 
+    @field_validator("jacobian_mode")
+    def supported_jacobian_mode(cls, value):
+        if value not in {"analytical", "finite_difference"}:
+            raise ValueError("`jacobian_mode` must be 'analytical' or 'finite_difference'.")
+        return value
+
     @model_validator(mode="after")
     def validate_integration_contract(self):
         slow = self.arkimex_slow_differential
@@ -157,6 +167,16 @@ class IntegrationConfig(BaseModel):
             raise ValueError("`method='cn'` requires `petsc=True`.")
         if self.method in {"herk2", "herk4"} and self.petsc:
             raise ValueError(f"`method='{self.method}'` requires `petsc=False`.")
+        if self.jacobian_mode == "finite_difference" and (
+            self.petsc or self.method != "beuler"
+        ):
+            raise ValueError(
+                "`jacobian_mode='finite_difference'` requires native backward Euler."
+            )
+        if self.jacobian_mode == "finite_difference" and self.check_jacobian:
+            raise ValueError(
+                "`check_jacobian=True` requires `jacobian_mode='analytical'`."
+            )
         if self.comp_sens and (not self.petsc or self.method != "cn"):
             raise ValueError(
                 "`comp_sens=True` requires `petsc=True` and `method='cn'`."
