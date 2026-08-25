@@ -1,6 +1,9 @@
 from uqgrid.core.psydef import Psystem, Bus
 from uqgrid.models import (
     ExcESDC1A,
+    ExcESST4B,
+    ExcEXAC2,
+    ExcIEEET1,
     ExcSEXS,
     GenGENROU,
     GenGENSAL,
@@ -774,6 +777,55 @@ def add_dyr(psys, dyr_filename, verbose=False):
             )
             psys.add_gov(primary, governor, secondary_gen=secondary)
 
+        if 'EXAC2' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            source_parameters = device[3:-1]
+            if len(source_parameters) != 23:
+                raise ValueError(
+                    f"EXAC2 at bus {int(device[0])}, generator {gen_id} requires 23 parameters."
+                )
+            values = [float(value) for value in source_parameters]
+            gen = _dynamic_generator(psys, bus, gen_id)
+            if gen is None:
+                logger.warning(
+                    "Cannot pair EXAC2 with bus %d and idx %s. Skipping.",
+                    int(device[0]), gen_id,
+                )
+            else:
+                if verbose:
+                    logger.info("Adding EXAC2 at bus %d. GENID %s.", int(device[0]), gen_id)
+                psys.add_exc(gen, ExcEXAC2(gen_id, gen, *values))
+
+        if 'ESST4B' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            source_parameters = device[3:-1]
+            values = [float(value) for value in source_parameters]
+            if len(values) != 17:
+                raise ValueError(
+                    f"ESST4B at bus {int(device[0])}, generator {gen_id} requires 17 parameters."
+                )
+            found_match = False
+            for gen in psys.gendyn:
+                if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
+                    psys.add_exc(gen, ExcESST4B(gen_id, gen, *values))
+                    found_match = True
+                    if verbose:
+                        logger.info(
+                            "Adding ESST4B at bus %d. GENID %s.", int(device[0]), gen_id
+                        )
+                    break
+            if not found_match:
+                logger.warning(
+                    "Cannot pair ESST4B with bus %d and idx %s. Skipping.",
+                    int(device[0]), gen_id,
+                )
+
         if 'ESDC1A' in device[1]:
 
             bus = psys.ext2int[int(device[0])]
@@ -872,6 +924,69 @@ def add_dyr(psys, dyr_filename, verbose=False):
                     "Cannot pair SEXS with bus %d and idx %s. Skipping.",
                     int(device[0]),
                     gen_id,
+                )
+
+        if 'EXPIC1' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            source_parameters = tuple(device[3:-1])
+            if len(source_parameters) != 24:
+                raise ValueError(
+                    f"EXPIC1 at bus {int(device[0])}, generator {gen_id} requires 24 parameters."
+                )
+            gen = _dynamic_generator(psys, bus, gen_id)
+            if gen is None:
+                logger.warning(
+                    "Cannot pair EXPIC1 with bus %d and idx %s. Skipping.",
+                    int(device[0]), gen_id,
+                )
+            else:
+                exciter = ExcSEXS(
+                    gen_id, 0.4, 5.0, 20.0, 1.0, -99.0, 99.0,
+                    enable_limits=True,
+                )
+                exciter.source_model = "EXPIC1"
+                exciter.source_parameters = source_parameters
+                psys.add_exc(gen, exciter)
+                psys.dynamic_model_redirects.append(
+                    {
+                        "source_model": "EXPIC1",
+                        "effective_model": "SEXS",
+                        "bus": int(device[0]),
+                        "device_id": gen_id,
+                        "source_parameters": source_parameters,
+                    }
+                )
+
+        if 'IEEET1' in device[1]:
+            bus = psys.ext2int[int(device[0])]
+            gen_id = str(device[2]).strip().replace("'", "")
+            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+                continue
+            if verbose:
+                logger.info(
+                    "Adding IEEET1 at bus %d. GENID %s.",
+                    int(device[0]), gen_id,
+                )
+
+            source_parameters = device[3:-1]
+            if len(source_parameters) != 14:
+                raise ValueError(
+                    f"IEEET1 at bus {int(device[0])}, generator {gen_id} requires 14 parameters."
+                )
+            parameters = [float(value) for value in source_parameters]
+            found_match = False
+            for gen in psys.gendyn:
+                if gen.bus == bus and gen.id_tag.strip() == gen_id.strip():
+                    psys.add_exc(gen, ExcIEEET1(gen_id, *parameters))
+                    found_match = True
+                    break
+            if not found_match:
+                logger.warning(
+                    "Cannot pair IEEET1 with bus %d and idx %s. Skipping.",
+                    int(device[0]), gen_id,
                 )
 
 

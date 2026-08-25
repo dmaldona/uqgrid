@@ -749,7 +749,10 @@ class Psystem:
                     gen.has_exciter = True
                     exc.gen_index = gi
                     efd_idx = exc.efd_idx if hasattr(exc, "efd_idx") else 2
-                    self.gen_efd_ctrl_col[gi] = exc.dif_ptr + efd_idx
+                    if getattr(exc, "output_is_algebraic", False):
+                        self.gen_efd_ctrl_col[gi] = dif + exc.alg_ptr + efd_idx
+                    else:
+                        self.gen_efd_ctrl_col[gi] = exc.dif_ptr + efd_idx
                     self.exc_devices.append(exc)
                     mapped = True
                     break
