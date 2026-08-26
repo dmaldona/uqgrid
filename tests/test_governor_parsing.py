@@ -160,7 +160,84 @@ def test_ieeeg1_parser_converts_power_quantities(data_dir, tmp_path):
 
     gov = psys.gov[0]
     assert (gov.K, gov.PMAX, gov.PMIN) == pytest.approx((10.0, 0.6, 0.0))
-    assert (gov.UO, gov.UC) == pytest.approx((0.3, -0.3))
+    assert (gov.UO, gov.UC) == pytest.approx((0.15, -0.15))
+
+
+def test_limit_initialization_policy_is_validated(data_dir, tmp_path):
+    dyr = _write_dyr(
+        tmp_path,
+        "1 'HYGOV' 1 0.05 0.4 5.0 0.2 0.5 0.167 1 0 1.2 1.25 0.2 0.08 /",
+    )
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+
+    with pytest.raises(ValueError, match="must be 'adjust' or 'strict'"):
+        add_dyr(psys, str(dyr), limit_initialization_policy="invalid")
+
+
+@pytest.mark.parametrize("model", ("HYGOV", "IEEEG1"))
+def test_strict_limit_initialization_policy_reaches_parsed_governor(
+    data_dir, tmp_path, model
+):
+    record = {
+        "HYGOV": "1 'HYGOV' 1 0.05 0.4 5.0 0.2 0.5 0.167 1 0 1.2 1.25 0.2 0.08 /",
+        "IEEEG1": "1 'IEEEG1' 1 0 0 20 0.2 0 0.1 0.3 -0.3 1.2 0 0.4 0.5 0 1.0 0.5 0 0 0 0 0 0 0 /",
+    }[model]
+    dyr = _write_dyr(tmp_path, record)
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+
+    add_dyr(psys, str(dyr), limit_initialization_policy="strict")
+
+    assert psys.gov[0].adjust_initial_limits is False
+
+
+@pytest.mark.parametrize("model", ("HYGOV", "IEEEG1"))
+def test_strict_limit_initialization_policy_rejects_violated_source_bound(
+    data_dir, tmp_path, model
+):
+    record = {
+        "HYGOV": "1 'HYGOV' 1 0.05 0.4 5.0 0.2 0.5 0.167 0.1 0 1.2 1.25 0.2 0.08 /",
+        "IEEEG1": "1 'IEEEG1' 1 0 0 20 0.2 0 0.1 0.3 -0.3 0.1 0 0.4 0.5 0 1.0 0.5 0 0 0 0 0 0 0 /",
+    }[model]
+    dyr = _write_dyr(tmp_path, record)
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+    add_dyr(psys, str(dyr), limit_initialization_policy="strict")
+    psys.createYbusComplex()
+
+    expected = "GMIN/GMAX" if model == "HYGOV" else "PMIN/PMAX"
+    with pytest.raises(ValueError, match=expected):
+        integrate_system(
+            psys,
+            IntegrationConfig(steps=1, dt=1.0 / 120.0, ton=1.0, toff=2.0),
+        )
+
+
+@pytest.mark.parametrize("model", ("HYGOV", "IEEEG1"))
+def test_adjust_limit_initialization_policy_reports_source_and_effective_bound(
+    data_dir, tmp_path, model
+):
+    record = {
+        "HYGOV": "1 'HYGOV' 1 0.05 0.4 5.0 0.2 0.5 0.167 0.1 0 1.2 1.25 0.2 0.08 /",
+        "IEEEG1": "1 'IEEEG1' 1 0 0 20 0.2 0 0.1 0.3 -0.3 0.1 0 0.4 0.5 0 1.0 0.5 0 0 0 0 0 0 0 /",
+    }[model]
+    dyr = _write_dyr(tmp_path, record)
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+    add_dyr(psys, str(dyr))
+    psys.createYbusComplex()
+
+    result = integrate_system(
+        psys,
+        IntegrationConfig(steps=1, dt=1.0 / 120.0, ton=1.0, toff=2.0),
+    )
+
+    adjustment = result["dynamic_limit_diagnostics"]["parameter_adjustments"][0]
+    assert adjustment["bounds_adjusted"] is True
+    assert adjustment["initialization_policy"] == "adjust"
+    if model == "HYGOV":
+        assert adjustment["source_GMAX"] == pytest.approx(0.1)
+        assert adjustment["effective_GMAX"] > adjustment["source_GMAX"]
+    else:
+        assert adjustment["source_PMAX"] == pytest.approx(0.1)
+        assert adjustment["effective_PMAX"] > adjustment["source_PMAX"]
 
 
 def test_tgov1_parser_enables_limits_and_uses_power_base(data_dir, tmp_path):
@@ -197,3 +274,26 @@ def test_parser_bound_adjustment_is_reported_in_integration_result(data_dir, tmp
     assert adjustments[0]["device_id"] == "1"
     assert adjustments[0]["source_GMAX"] == pytest.approx(0.5)
     assert adjustments[0]["effective_GMAX"] > adjustments[0]["source_GMAX"]
+
+
+def test_ieeeg1_coefficient_normalization_is_reported_in_integration_result(
+    data_dir, tmp_path
+):
+    dyr = _write_dyr(
+        tmp_path,
+        "1 'IEEEG1' 1 0 0 20 0.2 0 0.1 0.3 -0.3 2.0 0 0.4 1.0 0 1.0 0.5 0 0 0 0 0 0 0 /",
+    )
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+    add_dyr(psys, str(dyr))
+    psys.createYbusComplex()
+
+    result = integrate_system(
+        psys,
+        IntegrationConfig(steps=1, dt=1.0 / 120.0, ton=1.0, toff=2.0),
+    )
+
+    adjustment = result["dynamic_limit_diagnostics"]["parameter_adjustments"][0]
+    assert adjustment["device_type"] == "GovIEEEG1"
+    assert adjustment["coefficients_adjusted"] is True
+    assert adjustment["source_hp_coefficient_sum"] == pytest.approx(1.5)
+    assert adjustment["effective_hp_coefficient_sum"] == pytest.approx(1.0)

@@ -165,13 +165,24 @@ outside EMIN/EMAX beyond `dynamic_limit_tolerance` raise `DynamicLimitError`
 before Jacobian allocation, PETSc setup, fault scheduling, or time stepping.
 Initial values are never silently clamped.
 
+Parsed HYGOV desired-gate limits and IEEEG1 valve-position limits use the same
+shared hard-limit machinery. By default, `add_dyr(...,
+limit_initialization_policy="adjust")` widens only a source bound violated by
+the initialized gate or valve and records both source and effective values in
+the dynamic-limit diagnostics. Set `limit_initialization_policy="strict"` to
+reject such an operating point instead. HYGOV retains its model-local gate-rate
+clip, while IEEEG1 retains its model-local valve-rate clip. IEEEG1 power and
+power-rate parameters are converted from generator MBASE to system SBASE;
+its HP and LP shaft coefficients are preserved when their branch sum is at
+most one and normalized independently when a branch sum exceeds one.
+
 Every successful result contains a JSON-safe `dynamic_limit_diagnostics`
 summary, including disabled and zero-state cases. Native HERK2 and HERK4 enforce
-SEXS Efd limits at every RK stage and weighted endpoint. A tentative stage is
-projected before its algebraic solve, only outward derivatives are blocked, and
-the final weighted state is projected before its endpoint algebraic solve.
-Inward derivatives release immediately, while the upstream SEXS state keeps
-evolving when Efd is pinned.
+enabled bounded-state limits at every RK stage and weighted endpoint. A
+tentative stage is projected before its algebraic solve, only outward
+derivatives are blocked, and the final weighted state is projected before its
+endpoint algebraic solve. Inward derivatives release immediately, while
+upstream controller states continue to evolve when a bounded state is pinned.
 
 HERK limiter activation is evaluated only at RK stages and endpoints. It does
 not localize the exact crossing, backtrack, or add timestamps. Accuracy is
@@ -180,11 +191,11 @@ their nominal order on smooth intervals. Diagnostics record actual clamps and
 compact `activate`/`release` transitions, not every repeatedly blocked stage.
 
 Native and PETSc backward Euler use a fixed-active-set nonlinear solve at every
-endpoint. Free states retain the ordinary BE equation. An active Efd row is
-replaced by `Efd_next - bound = 0` with an identity Jacobian row, while all
-algebraic equations remain in the coupled solve. After convergence, the
-discarded free BE residual determines whether an active state remains pinned or
-releases inward. The solve repeats until the active set is
+endpoint. Free states retain the ordinary BE equation. An active bounded-state
+row is replaced by `state_next - bound = 0` with an identity Jacobian row,
+while all algebraic equations remain in the coupled solve. After convergence,
+the discarded free BE residual determines whether an active state remains
+pinned or releases inward. The solve repeats until the active set is
 complementarity-consistent. Cycling, nonlinear-solver failure, or exceeding
 `max_dynamic_limit_iterations` raises a structured `DynamicLimitError`.
 
@@ -235,16 +246,16 @@ bounds, enabled status, and implicit `free_residual` fields remain available.
 The schema constants are exported as `DYNAMIC_LIMIT_EVENT_FIELDS` and
 `DYNAMIC_LIMIT_EVENT_ACTIONS`.
 
-Cross-integrator validation requires stored and HERK stage Efd values to remain
-inside their configured bounds, algebraic endpoint residuals to remain below
-solver tolerance, and implicit free or active integration rows to satisfy their
-method equations and complementarity conditions. A raw differential residual
-during a disturbance is the physical state derivative and is not expected to
-be zero. No-fault initialized trajectories remain flat. Native and PETSc BE use
-the same equations and agree to nonlinear-solver tolerance. All methods
-converge toward the same trajectory as the step is reduced, while stage- or
-endpoint-only limiter transitions can differ by up to one step because UQGrid
-does not localize crossings.
+Cross-integrator validation requires stored and HERK stage bounded-state values
+to remain inside their configured limits, algebraic endpoint residuals to
+remain below solver tolerance, and implicit free or active integration rows to
+satisfy their method equations and complementarity conditions. A raw
+differential residual during a disturbance is the physical state derivative
+and is not expected to be zero. No-fault initialized trajectories remain flat.
+Native and PETSc BE use the same equations and agree to nonlinear-solver
+tolerance. All methods converge toward the same trajectory as the step is
+reduced, while stage- or endpoint-only limiter transitions can differ by up to
+one step because UQGrid does not localize crossings.
 
 ### Final operating-point validation
 

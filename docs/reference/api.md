@@ -10,8 +10,11 @@ from uqgrid.io.parse import load_psse, add_dyr
 ```
 
 - `load_psse(raw_filename: str) -> Psystem`: Parse PSS®E RAW network files.
-- `add_dyr(psys: Psystem, dyr_path: str)`: Attach DYR-based dynamic models to an
-  existing system.
+- `add_dyr(psys: Psystem, dyr_path: str, verbose=False, *,
+  limit_initialization_policy="adjust")`: Attach DYR-based dynamic models to
+  an existing system. Parsed HYGOV and IEEEG1 records widen only a violated
+  initial gate or valve bound under `"adjust"`; use `"strict"` to reject an
+  operating point outside the source DYR bounds.
 
 ## `uqgrid.simulation.config`
 

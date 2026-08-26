@@ -83,7 +83,7 @@ def test_zero_time_constant_combinations_are_finite(zero_times, zero_t1):
     np.testing.assert_allclose(perturbed_residual, residual)
 
 
-def test_initialization_normalizes_coefficients_and_has_zero_residual():
+def test_initialization_uses_effective_coefficients_and_has_zero_residual():
     governor = _governor()
     z, theta, idxs = _initialized(governor)
     residual = np.zeros_like(z)
@@ -92,6 +92,101 @@ def test_initialization_normalizes_coefficients_and_has_zero_residual():
     assert sum(governor.normalized_K) == pytest.approx(1.0)
     assert governor.K1n == pytest.approx(0.5)
     assert np.linalg.norm(residual, np.inf) < 1e-12
+
+
+def test_coefficients_below_one_are_preserved_by_shaft():
+    governor = _governor(K1=0.4, K3=0.2, K5=0.1)
+
+    assert governor.source_K[0::2] == pytest.approx((0.4, 0.2, 0.1, 0.0))
+    assert governor.normalized_K[0::2] == pytest.approx((0.4, 0.2, 0.1, 0.0))
+    assert governor.coefficient_adjustment_diagnostics["coefficients_adjusted"] is False
+
+
+def test_coefficients_at_one_are_preserved_by_shaft():
+    governor = _governor(K1=0.6, K3=0.3, K5=0.1)
+
+    assert governor.source_K[0::2] == pytest.approx((0.6, 0.3, 0.1, 0.0))
+    assert governor.normalized_K[0::2] == pytest.approx((0.6, 0.3, 0.1, 0.0))
+    assert governor.coefficient_adjustment_diagnostics["coefficients_adjusted"] is False
+
+
+def test_coefficients_above_one_are_normalized_within_hp_shaft():
+    governor = _governor(K1=1.0, K3=0.5, K5=0.0)
+
+    assert governor.normalized_K[0::2] == pytest.approx((2.0 / 3.0, 1.0 / 3.0, 0.0, 0.0))
+    diagnostics = governor.coefficient_adjustment_diagnostics
+    assert diagnostics["hp_coefficients_adjusted"] is True
+    assert diagnostics["lp_coefficients_adjusted"] is False
+    assert diagnostics["effective_hp_coefficient_sum"] == pytest.approx(1.0)
+
+
+def test_dual_output_coefficients_are_normalized_by_shaft():
+    governor = _governor(
+        BUS2=2,
+        ID2="1",
+        K1=0.4,
+        K3=0.2,
+        K5=0.1,
+        K2=0.8,
+        K4=0.4,
+    )
+
+    assert governor.normalized_K[0::2] == pytest.approx((0.4, 0.2, 0.1, 0.0))
+    assert governor.normalized_K[1::2] == pytest.approx((2.0 / 3.0, 1.0 / 3.0, 0.0, 0.0))
+    diagnostics = governor.coefficient_adjustment_diagnostics
+    assert diagnostics["hp_coefficients_adjusted"] is False
+    assert diagnostics["lp_coefficients_adjusted"] is True
+
+
+def test_dual_output_coefficients_at_one_are_preserved_by_shaft():
+    governor = _governor(
+        BUS2=2,
+        ID2="1",
+        K1=0.6,
+        K3=0.4,
+        K5=0.0,
+        K2=0.75,
+        K4=0.25,
+    )
+
+    assert governor.normalized_K[0::2] == pytest.approx((0.6, 0.4, 0.0, 0.0))
+    assert governor.normalized_K[1::2] == pytest.approx((0.75, 0.25, 0.0, 0.0))
+    assert governor.coefficient_adjustment_diagnostics["coefficients_adjusted"] is False
+
+
+@pytest.mark.parametrize(
+    "overrides,message",
+    [
+        ({"K1": -0.1}, "must be non-negative"),
+        ({"K1": np.nan}, "must be finite"),
+        ({"K1": 0.0, "K3": 0.0, "K5": 0.0}, "must be positive"),
+        ({"K2": 0.1}, "must be zero without a secondary output"),
+        (
+            {"BUS2": 2, "ID2": "1", "K2": 0.0, "K4": 0.0, "K6": 0.0, "K8": 0.0},
+            "must be positive for a secondary output",
+        ),
+    ],
+)
+def test_invalid_shaft_coefficients_are_rejected(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        _governor(**overrides)
+
+
+@pytest.mark.parametrize(
+    "overrides,message",
+    [
+        ({"K": np.nan}, "K must be finite"),
+        ({"T3": np.nan}, "T3 must be positive"),
+        ({"T2": -0.1}, "time constants must be non-negative"),
+        ({"T4": np.inf}, "time constants must be non-negative"),
+        ({"UO": np.inf}, "UC <= 0 <= UO"),
+        ({"PMIN": np.nan}, "PMIN must be less than PMAX"),
+        ({"PMIN": 1.2, "PMAX": 1.2}, "PMIN must be less than PMAX"),
+    ],
+)
+def test_invalid_gains_time_constants_and_limits_are_rejected(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        _governor(**overrides)
 
 
 @pytest.mark.parametrize(
@@ -158,6 +253,7 @@ def test_explicit_policy_adjusts_effective_bounds_without_changing_source():
     assert theta[metadata.enabled_parameter_offset] == 1.0
     assert governor.limit_initialization_diagnostics["bounds_adjusted"] is True
     assert governor.limit_initialization_diagnostics["adjust_initial_limits"] is True
+    assert governor.limit_initialization_diagnostics["coefficients_adjusted"] is True
     assert metadata.state_offset == 1
     assert metadata.device_type == "IEEEG1"
 
@@ -187,6 +283,24 @@ def test_disabled_limits_leave_valve_rate_unclipped():
     assert jacobian[1, governor.w_idx] == pytest.approx(-governor.K / governor.T3)
 
 
+@pytest.mark.parametrize(
+    "side,pref_delta,expected_sign",
+    [("upper", -0.2, -1.0), ("lower", 0.2, 1.0)],
+)
+def test_valve_at_position_bound_retains_inward_raw_velocity(
+    side, pref_delta, expected_sign
+):
+    governor = _governor(UO=10.0, UC=-10.0)
+    z, theta, idxs = _initialized(governor)
+    z[1] = governor.PMAX if side == "upper" else governor.PMIN
+    theta[28] = z[1] + pref_delta
+    residual = np.zeros_like(z)
+
+    governor.residual_diff(residual, z, np.empty(0), theta, idxs, False)
+
+    assert np.sign(residual[1]) == expected_sign
+
+
 def test_runtime_residual_and_jacobian_read_theta_values():
     governor = _governor(T1=0.0, T2=0.0)
     z, theta, idxs = _initialized(governor)
@@ -209,7 +323,14 @@ def test_runtime_residual_and_jacobian_read_theta_values():
 
 
 def test_optional_secondary_output_uses_algebraic_offset_one():
-    governor = _governor(BUS2=2, ID2="1", K1=1.0, K2=1.0, K3=0.0)
+    governor = _governor(
+        BUS2=2,
+        ID2="1",
+        K1=0.5,
+        K2=0.25,
+        K3=0.0,
+        K5=0.0,
+    )
     governor.p_m0_secondary = 0.2
     z, theta, idxs = _initialized(governor, mechanical_power=0.4)
     residual = np.zeros_like(z)

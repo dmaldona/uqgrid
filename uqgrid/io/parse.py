@@ -405,9 +405,20 @@ def return_dyr_device(data, dev, ptr):
         ptr = ptr + 1
     return ptr, dev
 
-def add_dyr(psys, dyr_filename, verbose=False):
+def add_dyr(
+    psys,
+    dyr_filename,
+    verbose=False,
+    *,
+    limit_initialization_policy="adjust",
+):
 
     assert isinstance(psys, Psystem)
+    if limit_initialization_policy not in {"adjust", "strict"}:
+        raise ValueError(
+            "limit_initialization_policy must be 'adjust' or 'strict'."
+        )
+    adjust_initial_limits = limit_initialization_policy == "adjust"
     
     devices = []
 
@@ -736,7 +747,7 @@ def add_dyr(psys, dyr_filename, verbose=False):
                     GovHYGOV(
                         gen_id, R, r, Tr, Tf, Tg, VELM, GMAX, GMIN, Tw,
                         At, DT, qNL, g_floor=1e-8, enable_limits=True,
-                        adjust_initial_limits=True,
+                        adjust_initial_limits=adjust_initial_limits,
                     ),
                 )
 
@@ -754,6 +765,8 @@ def add_dyr(psys, dyr_filename, verbose=False):
             ) = values
             _, inverse_power_ratio = _generator_power_ratios(psys, bus, gen_id)
             K *= inverse_power_ratio
+            UO *= inverse_power_ratio
+            UC *= inverse_power_ratio
             PMAX *= inverse_power_ratio
             PMIN *= inverse_power_ratio
             primary = _dynamic_generator(psys, bus, gen_id)
@@ -777,7 +790,8 @@ def add_dyr(psys, dyr_filename, verbose=False):
             governor = GovIEEEG1(
                 gen_id, bus2_external, id2, K, T1, T2, T3, UO, UC,
                 PMAX, PMIN, T4, K1, K2, T5, K3, K4, T6, K5, K6,
-                T7, K7, K8, enable_limits=True, adjust_initial_limits=True,
+                T7, K7, K8, enable_limits=True,
+                adjust_initial_limits=adjust_initial_limits,
             )
             psys.add_gov(primary, governor, secondary_gen=secondary)
 

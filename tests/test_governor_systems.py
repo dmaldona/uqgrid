@@ -73,10 +73,7 @@ def test_governor_position_limits_use_shared_integrator_path(
     theta[governor.par_ptr + lower_offset] = initial - width
     theta[governor.par_ptr + upper_offset] = initial + width
     theta[governor.par_ptr + enabled_offset] = 1.0
-    if model == "HYGOV":
-        state[governor.dif_ptr] = 0.05
-    else:
-        theta[governor.par_ptr + pref_offset] += 0.2
+    theta[governor.par_ptr + pref_offset] += 0.2
     context = IntegrationCtx()
     context.set_initial_conditions(state.copy())
     context.set_theta(theta.copy())
@@ -103,5 +100,70 @@ def test_governor_position_limits_use_shared_integrator_path(
         event["action"] == "activate"
         and event["device_type"] == model
         and event["side"] == "upper"
+        for event in result["dynamic_limit_diagnostics"]["events"]
+    )
+    if model in {"HYGOV", "IEEEG1"}:
+        assert np.max(values) == pytest.approx(upper, abs=1e-8)
+        assert values[-1] == pytest.approx(upper, abs=1e-8)
+
+
+@pytest.mark.parametrize("model", ("HYGOV", "IEEEG1"))
+@pytest.mark.parametrize(
+    ("method", "petsc"),
+    [
+        pytest.param("beuler", False, id="native-be"),
+        pytest.param("herk2", False, id="herk2"),
+        pytest.param("herk4", False, id="herk4"),
+        pytest.param("beuler", True, id="petsc-be"),
+        pytest.param("cn", True, id="petsc-cn"),
+    ],
+)
+def test_corrected_governors_activate_and_hold_lower_position_limit(
+    data_dir, model, method, petsc
+):
+    if petsc:
+        pytest.importorskip("petsc4py")
+    dyr_name, state_offset, upper_offset, lower_offset, enabled_offset, pref_offset = (
+        GOVERNOR_FIXTURES[model]
+    )
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+    add_dyr(psys, os.path.join(data_dir, dyr_name))
+    psys.createYbusComplex()
+    solution = runpf(psys, verbose=False)
+    state, theta = initialize_system(psys, solution)
+    governor = psys.gov[0]
+    state_index = governor.dif_ptr + state_offset
+    initial = state[state_index]
+    width = 0.001 if model == "HYGOV" else 0.01
+    lower = initial - width
+    theta[governor.par_ptr + lower_offset] = lower
+    theta[governor.par_ptr + upper_offset] = initial + width
+    theta[governor.par_ptr + enabled_offset] = 1.0
+    theta[governor.par_ptr + pref_offset] -= 0.2
+    context = IntegrationCtx()
+    context.set_initial_conditions(state.copy())
+    context.set_theta(theta.copy())
+
+    result = integrate_system(
+        psys,
+        IntegrationConfig(
+            method=method,
+            petsc=petsc,
+            steps=20,
+            dt=0.005,
+            ton=1.0,
+            toff=2.0,
+        ),
+        context,
+    )
+
+    values = result["history"][state_index]
+    assert np.min(values) >= lower - 1e-8
+    assert np.min(values) == pytest.approx(lower, abs=1e-8)
+    assert values[-1] == pytest.approx(lower, abs=1e-8)
+    assert any(
+        event["action"] == "activate"
+        and event["device_type"] == model
+        and event["side"] == "lower"
         for event in result["dynamic_limit_diagnostics"]["events"]
     )

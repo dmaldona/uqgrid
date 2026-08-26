@@ -20,6 +20,7 @@ def hygov_resdiff(
     w = z[w_idx]
     R = theta[pp]
     r = theta[pp + 1]
+    Tr = theta[pp + 2]
     Tf = theta[pp + 3]
     Tg = theta[pp + 4]
     VELM = theta[pp + 5]
@@ -31,16 +32,14 @@ def hygov_resdiff(
     enable_limits = theta[pp + 13] != 0.0
     pref = theta[pp + 14]
 
-    dg = gtpos + LG / r
-    pd = pref - w - R * dg
-    rate_lower = -VELM - LG / r
-    rate_upper = VELM - LG / r
-    if enable_limits and LG <= rate_lower:
-        gtpos_rate = rate_lower
-    elif enable_limits and LG >= rate_upper:
-        gtpos_rate = rate_upper
+    filter_rate = (pref - w - R * gtpos - LG) / Tf
+    raw_gate_rate = (LG + Tr * filter_rate) / (r * Tr)
+    if enable_limits and raw_gate_rate <= -VELM:
+        gtpos_rate = -VELM
+    elif enable_limits and raw_gate_rate >= VELM:
+        gtpos_rate = VELM
     else:
-        gtpos_rate = LG
+        gtpos_rate = raw_gate_rate
 
     if g <= g_floor:
         g_eff = g_floor
@@ -48,9 +47,9 @@ def hygov_resdiff(
         g_eff = g
     h = q * q / (g_eff * g_eff)
 
-    F[dp] = (pd - LG) / Tf
+    F[dp] = filter_rate
     F[dp + 1] = gtpos_rate
-    F[dp + 2] = (dg - g) / Tg
+    F[dp + 2] = (gtpos - g) / Tg
     F[dp + 3] = (1.0 - h) / Tw
     F[ap] = At * h * (q - qNL) - DT * w * g - p_m
 
@@ -65,6 +64,7 @@ def hygov_jac(
     pp = idxs[3]
     R = theta[pp]
     r = theta[pp + 1]
+    Tr = theta[pp + 2]
     Tf = theta[pp + 3]
     Tg = theta[pp + 4]
     VELM = theta[pp + 5]
@@ -80,12 +80,17 @@ def hygov_jac(
     q = z[dp + 3]
     w = z[w_idx]
 
-    rate_lower = -VELM - LG / r
-    rate_upper = VELM - LG / r
-    if enable_limits and (LG <= rate_lower or LG >= rate_upper):
-        dgtpos_rate_dLG = -1.0 / r
+    gtpos = z[dp + 1]
+    filter_rate = (theta[pp + 14] - w - R * gtpos - LG) / Tf
+    raw_gate_rate = (LG + Tr * filter_rate) / (r * Tr)
+    if enable_limits and (raw_gate_rate <= -VELM or raw_gate_rate >= VELM):
+        dgtpos_rate_dLG = 0.0
+        dgtpos_rate_dgtpos = 0.0
+        dgtpos_rate_dw = 0.0
     else:
-        dgtpos_rate_dLG = 1.0
+        dgtpos_rate_dLG = (1.0 / Tr - 1.0 / Tf) / r
+        dgtpos_rate_dgtpos = -R / (r * Tf)
+        dgtpos_rate_dw = -1.0 / (r * Tf)
 
     if g <= g_floor:
         g_eff = g_floor
@@ -99,21 +104,24 @@ def hygov_jac(
     for ptr in range(indptr[dp], indptr[dp + 1]):
         col = indices[ptr]
         if col == dp:
-            data[ptr] = (-R / r - 1.0) / Tf
+            data[ptr] = -1.0 / Tf
         elif col == dp + 1:
             data[ptr] = -R / Tf
         elif col == w_idx:
             data[ptr] = -1.0 / Tf
 
     for ptr in range(indptr[dp + 1], indptr[dp + 2]):
-        if indices[ptr] == dp:
+        col = indices[ptr]
+        if col == dp:
             data[ptr] = dgtpos_rate_dLG
+        elif col == dp + 1:
+            data[ptr] = dgtpos_rate_dgtpos
+        elif col == w_idx:
+            data[ptr] = dgtpos_rate_dw
 
     for ptr in range(indptr[dp + 2], indptr[dp + 3]):
         col = indices[ptr]
-        if col == dp:
-            data[ptr] = 1.0 / (r * Tg)
-        elif col == dp + 1:
+        if col == dp + 1:
             data[ptr] = 1.0 / Tg
         elif col == dp + 2:
             data[ptr] = -1.0 / Tg
@@ -138,7 +146,7 @@ def hygov_jac(
 
 
 class GovHYGOV(Governor):
-    """Hydro turbine governor with gate position and gate-rate limits."""
+    """PSS/E HYGOV hydro governor with gate position and rate limits."""
 
     bounded_state_metadata = (
         BoundedStateMetadata(
@@ -155,17 +163,19 @@ class GovHYGOV(Governor):
         self, id_tag, R, r, Tr, Tf, Tg, VELM, GMAX, GMIN, Tw, At, DT, qNL,
         g_floor, enable_limits=False, adjust_initial_limits=False,
     ):
-        if r <= 0.0:
+        if not np.isfinite(r) or r <= 0.0:
             raise ValueError("HYGOV r must be positive.")
-        if Tf == 0.0 or Tg == 0.0 or Tw == 0.0:
-            raise ValueError("HYGOV Tf, Tg, and Tw must be non-zero.")
-        if At == 0.0:
-            raise ValueError("HYGOV At must be non-zero.")
-        if VELM < 0.0:
+        if not np.isfinite(Tr) or Tr <= 0.0:
+            raise ValueError("HYGOV Tr must be positive.")
+        if any(not np.isfinite(value) or value <= 0.0 for value in (Tf, Tg, Tw)):
+            raise ValueError("HYGOV Tf, Tg, and Tw must be positive.")
+        if not np.isfinite(At) or At <= 0.0:
+            raise ValueError("HYGOV At must be positive.")
+        if not np.isfinite(VELM) or VELM < 0.0:
             raise ValueError("HYGOV VELM must be non-negative.")
-        if GMIN >= GMAX:
+        if not np.isfinite(GMIN) or not np.isfinite(GMAX) or GMIN >= GMAX:
             raise ValueError("HYGOV GMIN must be less than GMAX.")
-        if g_floor <= 0.0:
+        if not np.isfinite(g_floor) or g_floor <= 0.0:
             raise ValueError("HYGOV g_floor must be positive.")
 
         self.R = R
@@ -221,6 +231,9 @@ class GovHYGOV(Governor):
                 self.GMIN != self.GMIN_original or self.GMAX != self.GMAX_original
             ),
             "adjust_initial_limits": bool(self.adjust_initial_limits),
+            "initialization_policy": (
+                "adjust" if self.adjust_initial_limits else "strict"
+            ),
         }
         self.pref = self.R * q0
 
@@ -267,8 +280,8 @@ class GovHYGOV(Governor):
         ap = idxs[1]
         return [
             [dp, sorted({dp, dp + 1, self.w_idx})],
-            [dp + 1, [dp]],
-            [dp + 2, [dp, dp + 1, dp + 2]],
+            [dp + 1, sorted({dp, dp + 1, self.w_idx})],
+            [dp + 2, [dp + 1, dp + 2]],
             [dp + 3, [dp + 2, dp + 3]],
             [ap, sorted({dp + 2, dp + 3, self.w_idx, ap})],
         ]

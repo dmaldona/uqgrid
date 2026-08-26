@@ -187,13 +187,24 @@ class GovIEEEG1(Governor):
         enable_limits=True,
         adjust_initial_limits=False,
     ):
-        if T3 <= 0.0:
+        if not np.isfinite(K):
+            raise ValueError("IEEEG1 K must be finite.")
+        if not np.isfinite(T3) or T3 <= 0.0:
             raise ValueError("IEEEG1 T3 must be positive.")
-        if any(value < 0.0 for value in (T1, T4, T5, T6, T7)):
+        if any(
+            not np.isfinite(value) or value < 0.0
+            for value in (T1, T2, T4, T5, T6, T7)
+        ):
             raise ValueError("IEEEG1 time constants must be non-negative.")
-        if UC > 0.0 or UO < 0.0 or UC > UO:
+        if (
+            not np.isfinite(UC)
+            or not np.isfinite(UO)
+            or UC > 0.0
+            or UO < 0.0
+            or UC > UO
+        ):
             raise ValueError("IEEEG1 rate limits must satisfy UC <= 0 <= UO.")
-        if PMIN >= PMAX:
+        if not np.isfinite(PMIN) or not np.isfinite(PMAX) or PMIN >= PMAX:
             raise ValueError("IEEEG1 PMIN must be less than PMAX.")
 
         self.BUS2 = BUS2
@@ -221,19 +232,55 @@ class GovIEEEG1(Governor):
         self.enable_limits = enable_limits
         self.adjust_initial_limits = adjust_initial_limits
 
-        coefficient_sum = sum((K1, K2, K3, K4, K5, K6, K7, K8))
-        if coefficient_sum == 0.0:
-            raise ValueError("IEEEG1 K1-K8 must not all be zero.")
-        self.normalized_K = tuple(
-            value / coefficient_sum
-            for value in (K1, K2, K3, K4, K5, K6, K7, K8)
-        )
-        for index, value in enumerate(self.normalized_K, start=1):
-            setattr(self, f"K{index}n", value)
-
         self.has_secondary_output = not (
             BUS2 in (0, "0", None, "") and ID2 in (0, "0", None, "")
         )
+        source_coefficients = np.asarray(
+            (K1, K2, K3, K4, K5, K6, K7, K8), dtype=float
+        )
+        if not np.all(np.isfinite(source_coefficients)):
+            raise ValueError("IEEEG1 K1-K8 must be finite.")
+        if np.any(source_coefficients < 0.0):
+            raise ValueError("IEEEG1 K1-K8 must be non-negative.")
+
+        hp_sum = float(np.sum(source_coefficients[0::2]))
+        lp_sum = float(np.sum(source_coefficients[1::2]))
+        if hp_sum == 0.0:
+            raise ValueError("IEEEG1 K1+K3+K5+K7 must be positive.")
+        if self.has_secondary_output and lp_sum == 0.0:
+            raise ValueError(
+                "IEEEG1 K2+K4+K6+K8 must be positive for a secondary output."
+            )
+        if not self.has_secondary_output and lp_sum != 0.0:
+            raise ValueError(
+                "IEEEG1 K2+K4+K6+K8 must be zero without a secondary output."
+            )
+
+        hp_scale = 1.0 / hp_sum if hp_sum > 1.0 else 1.0
+        lp_scale = 1.0 / lp_sum if lp_sum > 1.0 else 1.0
+        effective_coefficients = source_coefficients.copy()
+        effective_coefficients[0::2] *= hp_scale
+        effective_coefficients[1::2] *= lp_scale
+        self.source_K = tuple(float(value) for value in source_coefficients)
+        self.normalized_K = tuple(float(value) for value in effective_coefficients)
+        self.coefficient_adjustment_diagnostics = {
+            "source_coefficients": list(self.source_K),
+            "effective_coefficients": list(self.normalized_K),
+            "source_hp_coefficient_sum": hp_sum,
+            "source_lp_coefficient_sum": lp_sum,
+            "effective_hp_coefficient_sum": float(
+                np.sum(effective_coefficients[0::2])
+            ),
+            "effective_lp_coefficient_sum": float(
+                np.sum(effective_coefficients[1::2])
+            ),
+            "hp_coefficients_adjusted": bool(hp_scale != 1.0),
+            "lp_coefficients_adjusted": bool(lp_scale != 1.0),
+            "coefficients_adjusted": bool(hp_scale != 1.0 or lp_scale != 1.0),
+        }
+        for index, value in enumerate(self.normalized_K, start=1):
+            setattr(self, f"K{index}n", value)
+
         algebraic_dimension = 2 if self.has_secondary_output else 1
         if self.has_secondary_output:
             self.secondary_output_offset = 1
@@ -302,6 +349,10 @@ class GovIEEEG1(Governor):
                 self.effective_PMIN != self.PMIN or self.effective_PMAX != self.PMAX
             ),
             "adjust_initial_limits": bool(self.adjust_initial_limits),
+            "initialization_policy": (
+                "adjust" if self.adjust_initial_limits else "strict"
+            ),
+            **self.coefficient_adjustment_diagnostics,
         }
 
         x[self.dif_ptr:self.dif_ptr + 6] = (0.0, valve, valve, valve, valve, valve)

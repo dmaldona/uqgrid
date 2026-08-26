@@ -2217,7 +2217,12 @@ def _initialize_integration_state(
         }
         for device in psys.devices
         if getattr(device, "limit_initialization_diagnostics", None)
-        and device.limit_initialization_diagnostics.get("bounds_adjusted", False)
+        and (
+            device.limit_initialization_diagnostics.get("bounds_adjusted", False)
+            or device.limit_initialization_diagnostics.get(
+                "coefficients_adjusted", False
+            )
+        )
     ]
     return pf_solution, z0, theta, dynamic_limit_diagnostics
 
