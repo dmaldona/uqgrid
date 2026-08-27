@@ -176,6 +176,23 @@ power-rate parameters are converted from generator MBASE to system SBASE;
 its HP and LP shaft coefficients are preserved when their branch sum is at
 most one and normalized independently when a branch sum exceeds one.
 
+ESAC1A applies its internal `VRMIN`/`VRMAX` clamp between the regulator state
+and field-voltage block. Initialization is strict: the required steady-state
+signal must satisfy both `VAMIN`/`VAMAX` and effective `VRMIN`/`VRMAX`; UQGrid
+does not widen those limits. ESST4B uses model-local directional anti-windup
+for both PI loops. An integrator is blocked only while its limited PI output is
+at the corresponding bound and its raw derivative points farther outward;
+inward motion releases immediately. These moving PI-output conditions are not
+fixed state bounds and therefore do not use the shared active-set layer.
+
+IEEEST computes its washout output as `T5 * washout_derivative`. Consequently,
+`T5=0` produces exactly zero stabilizer output and output Jacobian even though
+the internal washout state can continue to evolve. An IEEEST record may appear
+after its generator but before its exciter in a DYR file; attachment is deferred
+until that exciter is available. A missing dynamic generator is still skipped
+with a warning, while a dynamic generator that never receives an exciter is an
+error.
+
 Every successful result contains a JSON-safe `dynamic_limit_diagnostics`
 summary, including disabled and zero-state cases. Native HERK2 and HERK4 enforce
 enabled bounded-state limits at every RK stage and weighted endpoint. A
@@ -198,6 +215,11 @@ the discarded free BE residual determines whether an active state remains
 pinned or releases inward. The solve repeats until the active set is
 complementarity-consistent. Cycling, nonlinear-solver failure, or exceeding
 `max_dynamic_limit_iterations` raises a structured `DynamicLimitError`.
+The same configured iteration cap applies when voltage-scaled bounds move at a
+fault application or clearing. Algebraic nonconvergence and projection
+exhaustion at those topology transitions use the common runtime limiter
+diagnostics, including method, backend, event time, fault stage, and previously
+accepted limiter events.
 
 When PETSc BE has at least one enabled limited state, UQGrid advances the shared
 time grid one interval at a time with ordinary PETSc SNES rather than TS. The

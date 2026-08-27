@@ -31,6 +31,15 @@ def _limited(value, lower, upper):
 
 
 @jit(nopython=True, cache=True)
+def _antiwindup(limited_output, raw_derivative, lower, upper):
+    if limited_output >= upper and raw_derivative > 0.0:
+        return 0.0, 0.0
+    if limited_output <= lower and raw_derivative < 0.0:
+        return 0.0, 0.0
+    return raw_derivative, 1.0
+
+
+@jit(nopython=True, cache=True)
 def _signals(z, v, idxs, bus, gen_dp, gen_ap, par, machine, power_injection, pss_input):
     dp, ap = idxs[0], idxs[1]
     TR, KPR, _, VRMAX, VRMIN, TA, KPM, _, VMMAX, VMMIN, KG, KP, KI, VBMAX, KC, XL, THETAP, vref, VGMAX = par
@@ -85,11 +94,17 @@ def esst4b_resdiff(
     values = _signals(
         z, v, idxs, bus, gen_dp, gen_ap, par, machine, power_injection, pss_input
     )
-    vt, error, raw_r, regulator, _, _, inner_error, raw_m, inner, source = values
+    vt, error, _, regulator, _, _, inner_error, _, inner, source = values
+    outer_derivative, _ = _antiwindup(
+        regulator, KIR * error, par[4], par[3]
+    )
+    inner_derivative, _ = _antiwindup(
+        inner, KIM * inner_error, par[9], par[8]
+    )
     F[dp] = (vt - v_sensed) / TR if TR > 0.0 else 0.0
-    F[dp + 1] = KIR * (error - 2.0 * (raw_r - regulator))
+    F[dp + 1] = outer_derivative
     F[dp + 2] = (regulator - v_lag) / TA if TA > 0.0 else 0.0
-    F[dp + 3] = KIM * (inner_error - 2.0 * (raw_m - inner))
+    F[dp + 3] = inner_derivative
     F[ap] = source * inner - z[ap]
 
 
@@ -128,7 +143,11 @@ def esst4b_jac(
         derror[13] = 1.0
     draw_r = KPR * derror
     draw_r[9] += 1.0
-    raw_r = KPR * (par[17] - (z[dp] if TR > 0.0 else vt) + (z[pss_idx] if pss_idx >= 0 else 0.0)) + z[dp + 1]
+    outer_error = (
+        par[17] - (z[dp] if TR > 0.0 else vt)
+        + (z[pss_idx] if pss_idx >= 0 else 0.0)
+    )
+    raw_r = KPR * outer_error + z[dp + 1]
     regulator, slope_r = _limited(raw_r, VRMIN, VRMAX)
     dregulator = slope_r * draw_r
     dlag = np.zeros(n)
@@ -148,6 +167,12 @@ def esst4b_jac(
     raw_m = KPM * inner_error + z[dp + 3]
     inner, slope_m = _limited(raw_m, VMMIN, VMMAX)
     dinner = slope_m * draw_m
+    _, outer_aw_slope = _antiwindup(
+        regulator, KIR * outer_error, VRMIN, VRMAX
+    )
+    _, inner_aw_slope = _antiwindup(
+        inner, KIM * inner_error, VMMIN, VMMAX
+    )
 
     x_d, x_dp, x_qp, x_ddp, xl, sat_a, sat_b = machine
     e_qp, e_dp, phi_1d, phi_2q = z[gen_dp:gen_dp + 4]
@@ -202,10 +227,10 @@ def esst4b_jac(
     rows[:] = 0.0
     if TR > 0.0:
         rows[0] = (dvt - dsensed) / TR
-    rows[1] = KIR * (derror - 2.0 * (draw_r - dregulator))
+    rows[1] = outer_aw_slope * KIR * derror
     if TA > 0.0:
         rows[2] = (dregulator - dlag) / TA
-    rows[3] = KIM * (dinner_error - 2.0 * (draw_m - dinner))
+    rows[3] = inner_aw_slope * KIM * dinner_error
     rows[4] = source * dinner + inner * dsource
     rows[4, 12] -= 1.0
 

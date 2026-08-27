@@ -8,9 +8,18 @@ from uqgrid.models.genrou_imp import sat_coefficients
 
 
 @jit(nopython=True, cache=True)
+def _regulator_limit(value, lower, upper):
+    if value <= lower:
+        return lower, 0.0
+    if value >= upper:
+        return upper, 0.0
+    return value, 1.0
+
+
+@jit(nopython=True, cache=True)
 def _signals(
     z, v, idxs, bus, power_injection, pss_input, vref, gen_dp, gen_ap,
-    TR, TB, TC, KA, TE, KC, KD, KE, KF, TF,
+    TR, TB, TC, KA, TE, VRMIN, VRMAX, KC, KD, KE, KF, TF,
     sat_a, sat_b, xd, xdp, xqp, xddp, xl, gen_sat_a, gen_sat_b,
 ):
     dp = idxs[0]
@@ -43,32 +52,35 @@ def _signals(
     else:
         ll_out = ll + (TC / TB) * (error - ll)
 
+    vr, dvr_dva = _regulator_limit(va, VRMIN, VRMAX)
+
     ratio = KC * xad / ve
     fex, dfex = _rectifier(ratio)
     efd = ve * fex
     return (
         vm, dxad, vfe, dvfe_dve, error, ll_out, ratio, fex, dfex, efd,
+        vr, dvr_dva,
     )
 
 
 @jit(nopython=True, cache=True)
 def esac1a_resdiff(
     F, z, v, theta, idxs, bus, power_injection, pss_input, vref, gen_dp, gen_ap,
-    TR, TB, TC, KA, TA, TE, KC, KD, KE, KF, TF,
+    TR, TB, TC, KA, TA, TE, VRMIN, VRMAX, KC, KD, KE, KF, TF,
     sat_a, sat_b, xd, xdp, xqp, xddp, xl, gen_sat_a, gen_sat_b,
 ):
     dp, ap = idxs[0], idxs[1]
     vt, ll, va, _, wf = z[dp:dp + 5]
     signals = _signals(
         z, v, idxs, bus, power_injection, pss_input, vref, gen_dp, gen_ap,
-        TR, TB, TC, KA, TE, KC, KD, KE, KF, TF,
+        TR, TB, TC, KA, TE, VRMIN, VRMAX, KC, KD, KE, KF, TF,
         sat_a, sat_b, xd, xdp, xqp, xddp, xl, gen_sat_a, gen_sat_b,
     )
-    vm, _, vfe, _, error, ll_out, _, _, _, efd = signals
+    vm, _, vfe, _, error, ll_out, _, _, _, efd, vr, _ = signals
     F[dp] = -vt if TR == 0.0 else (vm - vt) / TR
     F[dp + 1] = -ll if TB == 0.0 else (error - ll) / TB
     F[dp + 2] = (KA * ll_out - va) / TA
-    F[dp + 3] = (va - vfe) / TE
+    F[dp + 3] = (vr - vfe) / TE
     F[dp + 4] = (vfe - wf) / TF
     F[ap] = efd - z[ap]
 
@@ -76,7 +88,7 @@ def esac1a_resdiff(
 @jit(nopython=True, cache=True)
 def esac1a_jac(
     data, indptr, indices, z, v, idxs, bus, power_injection, pss_input_idx,
-    vref, gen_dp, gen_ap, TR, TB, TC, KA, TA, TE,
+    vref, gen_dp, gen_ap, TR, TB, TC, KA, TA, TE, VRMIN, VRMAX,
     KC, KD, KE, KF, TF, sat_a, sat_b,
     xd, xdp, xqp, xddp, xl, gen_sat_a, gen_sat_b,
 ):
@@ -84,10 +96,10 @@ def esac1a_jac(
     pss_input = z[pss_input_idx] if pss_input_idx >= 0 else 0.0
     signals = _signals(
         z, v, idxs, bus, power_injection, pss_input, vref, gen_dp, gen_ap,
-        TR, TB, TC, KA, TE, KC, KD, KE, KF, TF,
+        TR, TB, TC, KA, TE, VRMIN, VRMAX, KC, KD, KE, KF, TF,
         sat_a, sat_b, xd, xdp, xqp, xddp, xl, gen_sat_a, gen_sat_b,
     )
-    vm, dxad, _, dvfe_dve, _, _, ratio, fex, dfex, _ = signals
+    vm, dxad, _, dvfe_dve, _, _, ratio, fex, dfex, _, _, dvr_dva = signals
     machine_cols = np.array((gen_dp, gen_dp + 1, gen_dp + 2, gen_dp + 3, gen_ap + 3))
     vr_col = dev + 2 * bus
     vi_col = vr_col + 1
@@ -166,7 +178,7 @@ def esac1a_jac(
         n += 1
     _set_row(data, indptr, indices, n, dp + 2, cols, vals)
 
-    cols[0], vals[0] = dp + 2, 1.0 / TE
+    cols[0], vals[0] = dp + 2, dvr_dva / TE
     cols[1], vals[1] = dp + 3, -dvfe_dve / TE
     n = 2
     for i in range(5):
@@ -272,6 +284,10 @@ class ExcESAC1A(Exciter):
         vfe = self.KE * ve + se + self.KD * xad
         if not self.VAMIN <= vfe <= self.VAMAX:
             raise ValueError("ESAC1A initial regulator state is outside VAMIN/VAMAX.")
+        if not self.VRMIN <= vfe <= self.effective_vrmax:
+            raise ValueError(
+                "ESAC1A initial regulator signal is outside effective VRMIN/VRMAX."
+            )
         error = vfe / self.KA
         self.vref = vm + error
         x[self.dif_ptr:self.dif_ptr + 5] = (
@@ -300,7 +316,7 @@ class ExcESAC1A(Exciter):
         esac1a_resdiff(
             F, z, v, theta, idxs, self.bus, power_injection, pss, self.vref,
             gen_dp, gen_ap, self.TR, self.TB, self.TC, self.KA, self.TA,
-            self.TE, self.KC, self.KD,
+            self.TE, self.VRMIN, self.effective_vrmax, self.KC, self.KD,
             self.KE, self.KF, self.TF, self.sat_a, self.sat_b, *machine,
         )
 
@@ -343,6 +359,6 @@ class ExcESAC1A(Exciter):
             J.data, J.indptr, J.indices, z, v, idxs, self.bus,
             power_injection, self.pss_input_idx, self.vref, gen_dp, gen_ap,
             self.TR, self.TB, self.TC, self.KA, self.TA,
-            self.TE, self.KC, self.KD,
+            self.TE, self.VRMIN, self.effective_vrmax, self.KC, self.KD,
             self.KE, self.KF, self.TF, self.sat_a, self.sat_b, *machine,
         )

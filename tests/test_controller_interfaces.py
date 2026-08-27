@@ -218,6 +218,34 @@ def test_secondary_governor_output_routes_to_exact_generator(data_dir):
     assert jacobian[secondary_row, dif + governor.alg_ptr + 1] == pytest.approx(-1.0)
 
 
+def test_governor_routing_uses_stored_primary_when_generator_order_is_reversed(
+    data_dir,
+):
+    psys = load_psse(os.path.join(data_dir, "ieee9_v33.raw"))
+    add_dyr(psys, os.path.join(data_dir, "ieee9bus.dyr"))
+    secondary = psys.gendyn[0]
+    primary = psys.gendyn[1]
+    unrelated = psys.gendyn[2]
+    governor = StubTwoOutputGovernor(primary.id_tag)
+    other_governor = StubTwoOutputGovernor(unrelated.id_tag)
+    psys.add_gov(primary, governor, secondary_gen=secondary)
+    psys.add_gov(unrelated, other_governor)
+
+    psys.initialize()
+
+    dif = psys.num_dof_dif
+    assert governor.gen_index == primary.device_index
+    assert governor.w_idx == primary.dif_ptr + 4
+    assert psys.gen_pm_ctrl_col[primary.device_index] == dif + governor.alg_ptr
+    assert psys.gen_pm_ctrl_col[secondary.device_index] == dif + governor.alg_ptr + 1
+    assert other_governor.gen_index == unrelated.device_index
+    assert other_governor.w_idx == unrelated.dif_ptr + 4
+    assert (
+        psys.gen_pm_ctrl_col[unrelated.device_index]
+        == dif + other_governor.alg_ptr
+    )
+
+
 def test_controller_attachment_rejects_duplicate_generator_control(data_dir):
     psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
     add_dyr(psys, os.path.join(data_dir, "2bus_SEXS.dyr"))

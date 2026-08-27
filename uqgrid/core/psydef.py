@@ -723,26 +723,46 @@ class Psystem:
             self.gen_efd_out_idx[gi] = dif + gen.alg_ptr + 5
 
         for gov in self.gov:
-            mapped = False
-            for gi, gen in enumerate(self.gendyn):
-                if gen.governor is gov:
-                    gen.has_governor = True
-                    gov.gen_index = gi
-                    gov.w_idx = gen.dif_ptr + 4
-                    self.gen_pm_ctrl_col[gi] = dif + gov.alg_ptr + 0
-                    self.gov_devices.append(gov)
-                    secondary = getattr(gov, "secondary_generator", None)
-                    if secondary is not None:
-                        secondary_index = secondary.device_index
-                        secondary_offset = int(gov.secondary_output_offset)
-                        secondary.has_governor = True
-                        self.gen_pm_ctrl_col[secondary_index] = (
-                            dif + gov.alg_ptr + secondary_offset
-                        )
-                    mapped = True
-                    break
-            if not mapped:
-                raise AssertionError("Governor is not attached to any generator")
+            primary = getattr(gov, "primary_generator", None)
+            primary_index = int(getattr(primary, "device_index", -1))
+            if (
+                primary_index < 0
+                or primary_index >= ng
+                or self.gendyn[primary_index] is not primary
+                or primary.governor is not gov
+            ):
+                raise ValueError("Governor primary-generator attachment is inconsistent.")
+
+            primary.has_governor = True
+            gov.gen_index = primary_index
+            gov.w_idx = primary.dif_ptr + 4
+            primary_column = dif + gov.alg_ptr
+            self.gen_pm_ctrl_col[primary_index] = primary_column
+            self.gov_devices.append(gov)
+
+            secondary = getattr(gov, "secondary_generator", None)
+            if secondary is not None:
+                secondary_index = int(getattr(secondary, "device_index", -1))
+                if (
+                    secondary_index < 0
+                    or secondary_index >= ng
+                    or self.gendyn[secondary_index] is not secondary
+                    or secondary.governor is not gov
+                ):
+                    raise ValueError(
+                        "Governor secondary-generator attachment is inconsistent."
+                    )
+                secondary_offset = int(gov.secondary_output_offset)
+                secondary_column = dif + gov.alg_ptr + secondary_offset
+                if (
+                    secondary_index == primary_index
+                    or secondary_column == primary_column
+                ):
+                    raise ValueError(
+                        "Governor primary and secondary outputs must be distinct."
+                    )
+                secondary.has_governor = True
+                self.gen_pm_ctrl_col[secondary_index] = secondary_column
 
         for exc in self.exc:
             mapped = False

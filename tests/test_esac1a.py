@@ -11,7 +11,12 @@ from uqgrid.models.esac1a_imp import (
     esac1a_jac,
     esac1a_resdiff,
 )
-from uqgrid.simulation.dynamics import initialize_system, preallocate_jacobian
+from uqgrid.simulation.config import IntegrationConfig, IntegrationCtx
+from uqgrid.simulation.dynamics import (
+    initialize_system,
+    integrate_system,
+    preallocate_jacobian,
+)
 from uqgrid.simulation.jacobian import residual_jacobian
 from uqgrid.simulation.pflow import runpf
 from uqgrid.simulation.residual import residual_function
@@ -44,7 +49,8 @@ def _signals_for(exc, psys, state):
     return _signals(
         state, v, idxs, exc.bus, psys.power_injection, 0.0, exc.vref,
         gen_dp, gen_ap, exc.TR, exc.TB, exc.TC, exc.KA,
-        exc.TE, exc.KC, exc.KD, exc.KE, exc.KF, exc.TF,
+        exc.TE, exc.VRMIN, exc.effective_vrmax,
+        exc.KC, exc.KD, exc.KE, exc.KF, exc.TF,
         exc.sat_a, exc.sat_b, *machine,
     )
 
@@ -84,6 +90,53 @@ def test_esac1a_field_equation_uses_regulator_state(esac1a_case):
     residual = np.zeros_like(state)
     residual_function(residual, state, theta, psys)
     assert residual[exc.dif_ptr + 3] == pytest.approx(0.2 / exc.TE)
+
+
+@pytest.mark.parametrize(
+    "va, expected, expected_slope",
+    [
+        (10.0, 9.0, 0.0),
+        (-10.0, -9.0, 0.0),
+        (0.5, 0.5, 1.0),
+        (9.0, 9.0, 0.0),
+        (-9.0, -9.0, 0.0),
+    ],
+)
+def test_esac1a_regulator_signal_is_clamped(
+    esac1a_case, va, expected, expected_slope,
+):
+    psys, state, theta = esac1a_case
+    exc = psys.exc[0]
+    state = state.copy()
+    state[exc.dif_ptr + 2] = va
+
+    signals = _signals_for(exc, psys, state)
+    assert signals[10] == pytest.approx(expected)
+    assert signals[11] == pytest.approx(expected_slope)
+
+    residual = np.zeros_like(state)
+    residual_function(residual, state, theta, psys)
+    assert residual[exc.dif_ptr + 3] == pytest.approx(
+        (expected - signals[2]) / exc.TE
+    )
+
+
+def test_esac1a_rejects_initial_regulator_signal_outside_vr_limits(
+    tmp_path,
+):
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+    dyr = tmp_path / "esac1a_narrow_vr.dyr"
+    dyr.write_text(
+        "1 'GENROU' 1 6.1 0.05 1.0 0.15 3.38 0.0 1.575 1.512 0.291 0.39 0.1733 0.0787 0.0 0.0 /\n"
+        "1 'ESAC1A' 1 0.02 1.0 0.2 100.0 0.05 20.0 -20.0 0.8 0.1 1.0 "
+        "0.1 0.2 1.0 3.0 0.01 4.0 0.02 0.1 -0.1 /\n"
+    )
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+    add_dyr(psys, str(dyr))
+    psys.createYbusComplex()
+
+    with pytest.raises(ValueError, match="effective VRMIN/VRMAX"):
+        initialize_system(psys, runpf(psys, verbose=False))
 
 
 def test_esac1a_saturation_and_rectifier_branches(esac1a_case):
@@ -176,3 +229,50 @@ def test_esac1a_numba_kernels_compile(esac1a_case):
     residual_jacobian(jacobian, state, theta, psys)
     assert esac1a_resdiff.signatures
     assert esac1a_jac.signatures
+
+
+@pytest.mark.parametrize(
+    "method,petsc",
+    [
+        ("beuler", False),
+        ("herk2", False),
+        ("herk4", False),
+        ("beuler", True),
+        ("cn", True),
+    ],
+)
+def test_esac1a_faulted_integration_is_finite(
+    esac1a_case, method, petsc,
+):
+    psys, state, theta = esac1a_case
+    if petsc:
+        pytest.importorskip("petsc4py")
+    exc = psys.exc[0]
+    state = state.copy()
+    theta = theta.copy()
+    exc.effective_vrmax = state[exc.dif_ptr + 2] + 0.005
+    state[exc.dif_ptr] -= 0.2
+    exc.initialize_theta(theta)
+    psys.add_busfault(exc.bus, 0.05)
+    context = IntegrationCtx()
+    context.set_initial_conditions(state)
+    context.set_theta(theta)
+
+    result = integrate_system(
+        psys,
+        IntegrationConfig(
+            method=method,
+            petsc=petsc,
+            steps=4,
+            dt=1.0 / 120.0,
+            ton=1.0 / 120.0,
+            toff=2.0 / 120.0,
+        ),
+        context,
+    )
+
+    assert np.all(np.isfinite(result["history"]))
+    assert any(
+        _signals_for(exc, psys, endpoint)[11] == 0.0
+        for endpoint in result["history"].T
+    )

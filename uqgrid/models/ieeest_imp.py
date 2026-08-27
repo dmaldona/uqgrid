@@ -43,7 +43,7 @@ def _ieeest_signals(z, idxs, w_idx, par):
     wash_x = z[dp + 6]
     wash_input = par[12] * ll2_y
     wash_dx = (wash_input - wash_x) / par[11]
-    wash_y = par[10] * wash_dx if par[10] > 0.0 else wash_x
+    wash_y = par[10] * wash_dx
 
     return (
         f1_dx, f1_x, f2_dx1, f2_dx2, ll1_dx, ll2_dx, wash_dx, wash_y
@@ -146,11 +146,7 @@ def ieeest_jac(data, indptr, indices, z, v, idxs, w_idx, bus, power_injection, p
 
     deriv[6] = par[12] * ll2_y / par[11]
     deriv[6, 6] -= 1.0 / par[11]
-    if par[10] > 0.0:
-        output_deriv = par[10] * deriv[6]
-    else:
-        output_deriv = np.zeros(8, dtype=np.float64)
-        output_deriv[6] = 1.0
+    output_deriv = par[10] * deriv[6]
 
     signals = _ieeest_signals(z, idxs, w_idx, par)
     raw_output = signals[7]

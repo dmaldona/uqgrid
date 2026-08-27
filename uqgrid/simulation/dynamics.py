@@ -857,19 +857,68 @@ def _apply_beuler_active_rows(F, J, z, descriptors, modes):
             )
 
 
-def _enforce_moving_bounds_after_topology_change(
-    z, theta, psys, residual, jacobian, descriptors, modes, *, time,
-    stage_or_endpoint, newton_tol, newton_max_iter, verbose,
+def _resolve_limited_topology_change(
+    z,
+    theta,
+    psys,
+    residual,
+    jacobian,
+    descriptors,
+    modes,
+    *,
+    time,
+    stage_or_endpoint,
+    newton_tol,
+    newton_max_iter,
+    max_dynamic_limit_iterations,
+    verbose,
 ):
-    """Restore feasibility when a topology change moves voltage-scaled bounds."""
+    """Resolve topology algebraics and any voltage-scaled bound movement."""
     events = []
     moving = [item for item in descriptors if item.bound_scale is not None]
-    for _ in range(10):
+
+    def solve_algebraics(state):
+        try:
+            endpoint, _, _, _ = integrate(
+                state,
+                theta,
+                0.0,
+                psys,
+                residual,
+                jacobian,
+                None,
+                verbose=verbose,
+                fsolve=False,
+                newton_tol=newton_tol,
+                newton_max_iter=newton_max_iter,
+                uold=None,
+                vold=None,
+                mold=None,
+            )
+        except (NameError, RuntimeError) as exc:
+            raise DynamicLimitError(
+                {
+                    "message": "Topology-change algebraic solve did not converge",
+                    "operation": "topology_change_algebraic_solve",
+                    "time": float(time),
+                    "stage_or_endpoint": stage_or_endpoint,
+                    "failure_reasons": ["algebraic_nonconvergence"],
+                    "solver_error": f"{type(exc).__name__}: {exc}",
+                    "events": [dict(event) for event in events],
+                }
+            ) from exc
+        return endpoint
+
+    endpoint = solve_algebraics(z)
+    if not moving:
+        return endpoint, modes, events
+
+    for _ in range(max_dynamic_limit_iterations):
         projected, projection_events = project_limited_states(
-            z, moving, time=time, stage_or_endpoint=stage_or_endpoint
+            endpoint, moving, time=time, stage_or_endpoint=stage_or_endpoint
         )
         if not projection_events:
-            return z, modes, events
+            return endpoint, modes, events
         events.extend(projection_events)
         for event in projection_events:
             modes[event["state_index"]] = (
@@ -877,11 +926,8 @@ def _enforce_moving_bounds_after_topology_change(
                 if event["side"] == "upper"
                 else DynamicLimitMode.LOWER_ACTIVE
             )
-        z, _, _, _ = integrate(
-            projected, theta, 0.0, psys, residual, jacobian, None,
-            verbose=verbose, fsolve=False, newton_tol=newton_tol,
-            newton_max_iter=newton_max_iter, uold=None, vold=None, mold=None,
-        )
+        endpoint = solve_algebraics(projected)
+
     raise DynamicLimitError(
         {
             "message": "Moving dynamic-limit projection did not converge",
@@ -889,9 +935,12 @@ def _enforce_moving_bounds_after_topology_change(
             "time": float(time),
             "stage_or_endpoint": stage_or_endpoint,
             "failure_reasons": ["projection_iteration_limit"],
+            "active_set_iterations": int(max_dynamic_limit_iterations),
             "events": events,
         }
     )
+
+
 def _limit_mode_signature(descriptors, modes):
     return tuple(
         DynamicLimitMode(modes[item.state_index]).value
@@ -1773,60 +1822,60 @@ def _integrate_system_petsc_implicit_limits(
                 if config.verbose:
                     logger.info("Apply fault")
                 fault.apply()
-                z, _, _, _ = integrate(
-                    z,
-                    theta,
-                    0.0,
-                    psys,
-                    residual,
-                    jacobian,
-                    None,
-                    verbose=config.verbose,
-                    fsolve=False,
-                    newton_tol=config.newton_tol,
-                    newton_max_iter=config.newton_max_iter,
-                    uold=None,
-                    vold=None,
-                    mold=None,
-                )
-                if any(item.bound_scale is not None for item in descriptors):
-                    z, modes, events = _enforce_moving_bounds_after_topology_change(
-                        z, theta, psys, residual, jacobian, descriptors, modes,
-                        time=tvec[i], stage_or_endpoint="fault_on",
+                try:
+                    z, modes, events = _resolve_limited_topology_change(
+                        z,
+                        theta,
+                        psys,
+                        residual,
+                        jacobian,
+                        descriptors,
+                        modes,
+                        time=tvec[i],
+                        stage_or_endpoint="fault_on",
                         newton_tol=config.newton_tol,
                         newton_max_iter=config.newton_max_iter,
+                        max_dynamic_limit_iterations=(
+                            config.max_dynamic_limit_iterations
+                        ),
                         verbose=config.verbose,
                     )
                     dynamic_limit_diagnostics["events"].extend(events)
+                except DynamicLimitError as exc:
+                    raise _contextualize_dynamic_limit_runtime_error(
+                        exc, method=method, backend="petsc", time=tvec[i],
+                        stage_or_endpoint="fault_on",
+                        prior_events=dynamic_limit_diagnostics["events"],
+                    ) from exc
             if i == schedule.fault_off_index:
                 if config.verbose:
                     logger.info("Remove fault")
                 fault.remove()
-                z, _, _, _ = integrate(
-                    z,
-                    theta,
-                    0.0,
-                    psys,
-                    residual,
-                    jacobian,
-                    None,
-                    verbose=config.verbose,
-                    fsolve=False,
-                    newton_tol=config.newton_tol,
-                    newton_max_iter=config.newton_max_iter,
-                    uold=None,
-                    vold=None,
-                    mold=None,
-                )
-                if any(item.bound_scale is not None for item in descriptors):
-                    z, modes, events = _enforce_moving_bounds_after_topology_change(
-                        z, theta, psys, residual, jacobian, descriptors, modes,
-                        time=tvec[i], stage_or_endpoint="fault_off",
+                try:
+                    z, modes, events = _resolve_limited_topology_change(
+                        z,
+                        theta,
+                        psys,
+                        residual,
+                        jacobian,
+                        descriptors,
+                        modes,
+                        time=tvec[i],
+                        stage_or_endpoint="fault_off",
                         newton_tol=config.newton_tol,
                         newton_max_iter=config.newton_max_iter,
+                        max_dynamic_limit_iterations=(
+                            config.max_dynamic_limit_iterations
+                        ),
                         verbose=config.verbose,
                     )
                     dynamic_limit_diagnostics["events"].extend(events)
+                except DynamicLimitError as exc:
+                    raise _contextualize_dynamic_limit_runtime_error(
+                        exc, method=method, backend="petsc", time=tvec[i],
+                        stage_or_endpoint="fault_off",
+                        prior_events=dynamic_limit_diagnostics["events"],
+                    ) from exc
             history[:, i] = z
     finally:
         if fault is not None:
@@ -3328,46 +3377,90 @@ def integrate_system(
                     if verbose:
                         logger.info("Apply fault")
                     fault.apply()
-                    z, _, _, _ = integrate(
-                        z, theta, 0.0, psys, residual, jacobian, None,
-                        verbose=verbose, fsolve=False,
-                        newton_tol=newton_tol, newton_max_iter=newton_max_iter,
-                        uold=None, vold=None, mold=None,
-                    )
-                    if any(item.bound_scale is not None for item in limit_descriptors):
-                        z, limit_modes, limit_events = (
-                            _enforce_moving_bounds_after_topology_change(
-                                z, theta, psys, residual, jacobian,
-                                limit_descriptors, limit_modes, time=tvec[i],
-                                stage_or_endpoint="fault_on",
-                                newton_tol=newton_tol,
-                                newton_max_iter=newton_max_iter,
-                                verbose=verbose,
+                    if limit_descriptors:
+                        try:
+                            z, limit_modes, limit_events = (
+                                _resolve_limited_topology_change(
+                                    z,
+                                    theta,
+                                    psys,
+                                    residual,
+                                    jacobian,
+                                    limit_descriptors,
+                                    limit_modes,
+                                    time=tvec[i],
+                                    stage_or_endpoint="fault_on",
+                                    newton_tol=newton_tol,
+                                    newton_max_iter=newton_max_iter,
+                                    max_dynamic_limit_iterations=(
+                                        config.max_dynamic_limit_iterations
+                                    ),
+                                    verbose=verbose,
+                                )
                             )
+                            dynamic_limit_diagnostics["events"].extend(
+                                limit_events
+                            )
+                        except DynamicLimitError as exc:
+                            raise _contextualize_dynamic_limit_runtime_error(
+                                exc, method="beuler", backend="native",
+                                time=tvec[i], stage_or_endpoint="fault_on",
+                                prior_events=(
+                                    dynamic_limit_diagnostics["events"]
+                                ),
+                            ) from exc
+                    else:
+                        z, _, _, _ = integrate(
+                            z, theta, 0.0, psys, residual, jacobian, None,
+                            verbose=verbose, fsolve=False,
+                            newton_tol=newton_tol,
+                            newton_max_iter=newton_max_iter,
+                            uold=None, vold=None, mold=None,
                         )
-                        dynamic_limit_diagnostics["events"].extend(limit_events)
                 if i == schedule.fault_off_index:
                     if verbose:
                         logger.info("Remove fault")
                     fault.remove()
-                    z, _, _, _ = integrate(
-                        z, theta, 0.0, psys, residual, jacobian, None,
-                        verbose=verbose, fsolve=False,
-                        newton_tol=newton_tol, newton_max_iter=newton_max_iter,
-                        uold=None, vold=None, mold=None,
-                    )
-                    if any(item.bound_scale is not None for item in limit_descriptors):
-                        z, limit_modes, limit_events = (
-                            _enforce_moving_bounds_after_topology_change(
-                                z, theta, psys, residual, jacobian,
-                                limit_descriptors, limit_modes, time=tvec[i],
-                                stage_or_endpoint="fault_off",
-                                newton_tol=newton_tol,
-                                newton_max_iter=newton_max_iter,
-                                verbose=verbose,
+                    if limit_descriptors:
+                        try:
+                            z, limit_modes, limit_events = (
+                                _resolve_limited_topology_change(
+                                    z,
+                                    theta,
+                                    psys,
+                                    residual,
+                                    jacobian,
+                                    limit_descriptors,
+                                    limit_modes,
+                                    time=tvec[i],
+                                    stage_or_endpoint="fault_off",
+                                    newton_tol=newton_tol,
+                                    newton_max_iter=newton_max_iter,
+                                    max_dynamic_limit_iterations=(
+                                        config.max_dynamic_limit_iterations
+                                    ),
+                                    verbose=verbose,
+                                )
                             )
+                            dynamic_limit_diagnostics["events"].extend(
+                                limit_events
+                            )
+                        except DynamicLimitError as exc:
+                            raise _contextualize_dynamic_limit_runtime_error(
+                                exc, method="beuler", backend="native",
+                                time=tvec[i], stage_or_endpoint="fault_off",
+                                prior_events=(
+                                    dynamic_limit_diagnostics["events"]
+                                ),
+                            ) from exc
+                    else:
+                        z, _, _, _ = integrate(
+                            z, theta, 0.0, psys, residual, jacobian, None,
+                            verbose=verbose, fsolve=False,
+                            newton_tol=newton_tol,
+                            newton_max_iter=newton_max_iter,
+                            uold=None, vold=None, mold=None,
                         )
-                        dynamic_limit_diagnostics["events"].extend(limit_events)
                 history[:, i] = np.copy(z)
         finally:
             if fault is not None:

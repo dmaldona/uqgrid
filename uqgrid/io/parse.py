@@ -443,7 +443,49 @@ def add_dyr(
             else:
                 ptr, dev = return_dyr_device(data, dev, ptr)
                 devices.append(dev)
-    
+
+    pending_ieeest = []
+
+    def attach_ieeest(device, *, final=False):
+        bus_external = int(device[0])
+        bus = psys.ext2int[bus_external]
+        gen_id = str(device[2]).strip().replace("'", "")
+        if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
+            return True
+        source_parameters = device[3:-1]
+        if len(source_parameters) != 19:
+            raise ValueError(
+                f"IEEEST at bus {bus_external}, generator {gen_id} "
+                "requires 19 parameters."
+            )
+        gen = _dynamic_generator(psys, bus, gen_id)
+        if gen is None:
+            if final:
+                logger.warning(
+                    "Cannot pair IEEEST with bus %d and idx %s. Skipping.",
+                    bus_external, gen_id,
+                )
+            return False
+        if not gen.exciter:
+            if final:
+                raise ValueError(
+                    f"IEEEST at bus {bus_external}, generator {gen_id} "
+                    "requires an attached exciter."
+                )
+            return False
+        if verbose:
+            logger.info("Adding IEEEST at bus %d. GENID %s.", bus_external, gen_id)
+        values = [float(value) for value in source_parameters]
+        psys.add_pss(gen, PssIEEEST(gen_id, *values))
+        return True
+
+    def retry_pending_ieeest(*, final=False):
+        remaining = []
+        for pending in pending_ieeest:
+            if not attach_ieeest(pending, final=final):
+                remaining.append(pending)
+        pending_ieeest[:] = remaining
+
     for device in devices:
 
         if 'GENROU' in device[1]:
@@ -900,26 +942,8 @@ def add_dyr(
                 )
 
         if 'IEEEST' in device[1]:
-            bus = psys.ext2int[int(device[0])]
-            gen_id = str(device[2]).strip().replace("'", "")
-            if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
-                continue
-            source_parameters = device[3:-1]
-            if len(source_parameters) != 19:
-                raise ValueError(
-                    f"IEEEST at bus {int(device[0])}, generator {gen_id} requires 19 parameters."
-                )
-            values = [float(value) for value in source_parameters]
-            gen = _dynamic_generator(psys, bus, gen_id)
-            if gen is None:
-                logger.warning(
-                    "Cannot pair IEEEST with bus %d and idx %s. Skipping.",
-                    int(device[0]), gen_id,
-                )
-            else:
-                if verbose:
-                    logger.info("Adding IEEEST at bus %d. GENID %s.", int(device[0]), gen_id)
-                psys.add_pss(gen, PssIEEEST(gen_id, *values))
+            if not attach_ieeest(device):
+                pending_ieeest.append(device)
 
         if 'ESDC2A' in device[1]:
             bus = psys.ext2int[int(device[0])]
@@ -1195,6 +1219,11 @@ def add_dyr(
                     psys.add_load_dynamics(load, MotCIM5(load_id, ra, xa, xm, r1,
                         x1, Hin, Damp))
                     break
+
+        if pending_ieeest and 'IEEEST' not in device[1]:
+            retry_pending_ieeest()
+
+    retry_pending_ieeest(final=True)
 
     static_gens_by_bus = {}
     for gen in psys.gens:

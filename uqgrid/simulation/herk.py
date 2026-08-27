@@ -92,13 +92,36 @@ def solve_stage_algebraic(X_i, y0, v0, theta, psys, F_full, J_full,
 
 def _solve_algebraics_with_dynamic_bounds(
     x, y, v, theta, psys, F, J, tol, max_iter, descriptors, *, time, stage,
+    max_dynamic_limit_iterations,
 ):
     """Iterate algebraic solves and moving-bound projections to consistency."""
     events = []
-    for _ in range(10):
-        y, v, _ = solve_stage_algebraic(
-            x, y, v, theta, psys, F, J, tol, max_iter
-        )
+    topology_change = stage in ("fault_on", "fault_off")
+    for _ in range(max_dynamic_limit_iterations):
+        try:
+            y, v, _ = solve_stage_algebraic(
+                x, y, v, theta, psys, F, J, tol, max_iter
+            )
+        except RuntimeError as exc:
+            raise DynamicLimitError(
+                {
+                    "message": (
+                        "Topology-change algebraic solve did not converge"
+                        if topology_change
+                        else "Limited HERK algebraic solve did not converge"
+                    ),
+                    "operation": (
+                        "topology_change_algebraic_solve"
+                        if topology_change
+                        else "limited_algebraic_solve"
+                    ),
+                    "time": float(time),
+                    "stage_or_endpoint": stage,
+                    "failure_reasons": ["algebraic_nonconvergence"],
+                    "solver_error": f"{type(exc).__name__}: {exc}",
+                    "events": [dict(event) for event in events],
+                }
+            ) from exc
         complete = np.concatenate([x, y, v])
         projected, projection_events = project_limited_states(
             complete, descriptors, time=time, stage_or_endpoint=stage
@@ -107,7 +130,25 @@ def _solve_algebraics_with_dynamic_bounds(
         x = projected[:psys.num_dof_dif]
         if not projection_events:
             return x, y, v, complete, events
-    raise RuntimeError("Moving dynamic-limit projection did not converge.")
+    raise DynamicLimitError(
+        {
+            "message": (
+                "Topology-change dynamic-limit projection did not converge"
+                if topology_change
+                else "Moving dynamic-limit projection did not converge"
+            ),
+            "operation": (
+                "topology_change_projection"
+                if topology_change
+                else "moving_bound_projection"
+            ),
+            "time": float(time),
+            "stage_or_endpoint": stage,
+            "failure_reasons": ["projection_iteration_limit"],
+            "active_set_iterations": int(max_dynamic_limit_iterations),
+            "events": events,
+        }
+    )
 
 
 def _herk_step_with_limits(
@@ -127,6 +168,7 @@ def _herk_step_with_limits(
     limit_tolerance=0.0,
     limit_modes=None,
     t_start=0.0,
+    max_dynamic_limit_iterations=20,
 ):
     """Advance one HERK step and return limiter state and events."""
     limit_descriptors = list(limit_descriptors)
@@ -170,6 +212,7 @@ def _herk_step_with_limits(
                 _solve_algebraics_with_dynamic_bounds(
                     X_i, Y_last, V_last, theta, psys, F, J, tol, max_iter,
                     limit_descriptors, time=stage_time, stage=stage_name,
+                    max_dynamic_limit_iterations=max_dynamic_limit_iterations,
                 )
             )
             events.extend(projection_events)
@@ -223,6 +266,7 @@ def _herk_step_with_limits(
             _solve_algebraics_with_dynamic_bounds(
                 x_new, Y_last, V_last, theta, psys, F, J, tol, max_iter,
                 limit_descriptors, time=endpoint_time, stage="endpoint",
+                max_dynamic_limit_iterations=max_dynamic_limit_iterations,
             )
         )
         events.extend(projection_events)
@@ -321,6 +365,11 @@ def integrate_system_herk(psys, config, ctx=None):
             for descriptor in collect_limited_state_descriptors(psys, theta)
             if descriptor.enabled
         ]
+    topology_limit_descriptors = [
+        descriptor
+        for descriptor in limit_descriptors
+        if descriptor.bound_scale is not None
+    ]
     limit_modes = initialize_dynamic_limit_modes(limit_descriptors)
 
     system_size = z0.shape[0]
@@ -375,6 +424,9 @@ def integrate_system_herk(psys, config, ctx=None):
                     limit_tolerance=config.dynamic_limit_tolerance,
                     limit_modes=limit_modes,
                     t_start=t_start,
+                    max_dynamic_limit_iterations=(
+                        config.max_dynamic_limit_iterations
+                    ),
                 )
             except DynamicLimitError as exc:
                 raise _contextualize_dynamic_limit_runtime_error(
@@ -392,30 +444,74 @@ def integrate_system_herk(psys, config, ctx=None):
                 x = z[:NDIFFEQ]
                 y = z[NDIFFEQ:NDIFFEQ + alg_size]
                 v = z[NDIFFEQ + alg_size:]
-                y_new, v_new, _ = solve_stage_algebraic(
-                    x, y, v, theta, psys, F, J, tol, max_iter)
-                z = np.concatenate([x, y_new, v_new])
-                if any(item.bound_scale is not None for item in limit_descriptors):
-                    x, y_new, v_new, z, events = _solve_algebraics_with_dynamic_bounds(
-                        x, y_new, v_new, theta, psys, F, J, tol, max_iter,
-                        limit_descriptors, time=tvec[i], stage="fault_on",
+                if limit_descriptors:
+                    try:
+                        _, _, _, z, events = _solve_algebraics_with_dynamic_bounds(
+                            x,
+                            y,
+                            v,
+                            theta,
+                            psys,
+                            F,
+                            J,
+                            tol,
+                            max_iter,
+                            topology_limit_descriptors,
+                            time=tvec[i],
+                            stage="fault_on",
+                            max_dynamic_limit_iterations=(
+                                config.max_dynamic_limit_iterations
+                            ),
+                        )
+                        dynamic_limit_diagnostics["events"].extend(events)
+                    except DynamicLimitError as exc:
+                        raise _contextualize_dynamic_limit_runtime_error(
+                            exc, method=method, backend="native", time=tvec[i],
+                            stage_or_endpoint="fault_on",
+                            prior_events=dynamic_limit_diagnostics["events"],
+                        ) from exc
+                else:
+                    y_new, v_new, _ = solve_stage_algebraic(
+                        x, y, v, theta, psys, F, J, tol, max_iter
                     )
-                    dynamic_limit_diagnostics["events"].extend(events)
+                    z = np.concatenate([x, y_new, v_new])
 
             if i == schedule.fault_off_index:
                 fault.remove()
                 x = z[:NDIFFEQ]
                 y = z[NDIFFEQ:NDIFFEQ + alg_size]
                 v = z[NDIFFEQ + alg_size:]
-                y_new, v_new, _ = solve_stage_algebraic(
-                    x, y, v, theta, psys, F, J, tol, max_iter)
-                z = np.concatenate([x, y_new, v_new])
-                if any(item.bound_scale is not None for item in limit_descriptors):
-                    x, y_new, v_new, z, events = _solve_algebraics_with_dynamic_bounds(
-                        x, y_new, v_new, theta, psys, F, J, tol, max_iter,
-                        limit_descriptors, time=tvec[i], stage="fault_off",
+                if limit_descriptors:
+                    try:
+                        _, _, _, z, events = _solve_algebraics_with_dynamic_bounds(
+                            x,
+                            y,
+                            v,
+                            theta,
+                            psys,
+                            F,
+                            J,
+                            tol,
+                            max_iter,
+                            topology_limit_descriptors,
+                            time=tvec[i],
+                            stage="fault_off",
+                            max_dynamic_limit_iterations=(
+                                config.max_dynamic_limit_iterations
+                            ),
+                        )
+                        dynamic_limit_diagnostics["events"].extend(events)
+                    except DynamicLimitError as exc:
+                        raise _contextualize_dynamic_limit_runtime_error(
+                            exc, method=method, backend="native", time=tvec[i],
+                            stage_or_endpoint="fault_off",
+                            prior_events=dynamic_limit_diagnostics["events"],
+                        ) from exc
+                else:
+                    y_new, v_new, _ = solve_stage_algebraic(
+                        x, y, v, theta, psys, F, J, tol, max_iter
                     )
-                    dynamic_limit_diagnostics["events"].extend(events)
+                    z = np.concatenate([x, y_new, v_new])
             history[:, i] = z
     finally:
         if fault is not None:

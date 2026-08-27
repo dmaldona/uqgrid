@@ -571,7 +571,10 @@ diagnostics in the scenario record. Runtime limiter failures from every
 supported backend use `reject_reason="dynamic_limit_runtime_failed"`. Implicit
 failures additionally report Newton, active-set, complementarity, transition,
 backend, and PETSc SNES details when applicable. Final validation remains
-opt-in.
+opt-in. Fault-application and clearing failures use the same classification:
+algebraic nonconvergence or voltage-scaled bound projection exhaustion records
+the method, backend, finite event time, fault stage, configured iteration cap,
+and prior limiter events.
 When enabled, a validation failure rejects the fault replay before dynamic
 initialization. The fault diagnostic record includes the structured
 `power_flow_validation` result.

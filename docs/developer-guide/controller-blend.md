@@ -37,6 +37,14 @@ enter the mass matrix as identity rows. The algebraic outputs (`p_m_out`,
 During this pass GENROU records its own output indices (`pm_idx`, `efd_idx`) so
 its residual and Jacobian never need to look up controller state locations.
 
+Governor routing uses each governor's stored `primary_generator` and optional
+`secondary_generator` references. It does not infer the primary from generator
+list order or from the first matching back-reference. Initialization validates
+that both machines belong to the current system, still reference that governor,
+and map to distinct output columns. The speed input always comes from the
+configured primary machine, while a dual-output governor retains its declared
+secondary-output offset.
+
 ## Blend equations
 
 GENROU owns two algebraic equations that mix references with controller output:
@@ -78,6 +86,8 @@ in the CSR structure while keeping the logic concentrated in one place.
 - Initialization mappings (`gen_*_idx`, controller masks/columns).
 - Blend Jacobian sparsity with and without controllers.
 - Equality of blend outputs and references at the initial operating point.
+- Exact primary/secondary routing when generator order differs from governor
+  output order and when multiple governors are present.
 
 `tests/test_pssedyn.py` now derives indices programmatically from the same
 arrays, removing the brittle hard-coded offsets it used before.
