@@ -1,0 +1,25 @@
+{
+  "case": "data/ieee9_v33.raw",
+  "dynamics": "data/ieee9bus.dyr",
+  "fault_bus_id": 1,
+  "fault_impedance_pu": 1.0,
+  "integration": {
+    "method": "beuler",
+    "dt_s": 0.01,
+    "end_s": 0.05,
+    "start_s": 0.02,
+    "clear_s": 0.03,
+    "petsc": false
+  },
+  "step_count": 6,
+  "state_count": 60,
+  "time_s": [0.0, 0.01, 0.02, 0.03, 0.04, 0.05],
+  "final_generator_speeds_pu": [
+    -0.0002955911142814391,
+    -0.00005219230881128916,
+    -0.00005748069921359382
+  ],
+  "minimum_bus_voltage_pu": 0.9791286406801841,
+  "maximum_abs_generator_speed_pu": 0.00031531995009859766,
+  "history_l2_norm": 16.54024526820793
+}

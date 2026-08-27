@@ -54,9 +54,17 @@ docs = [
     "mkdocstrings[python]>=0.25.0",
 ]
 
+mcp = [
+    "mcp[cli]==2.1.1; python_version >= '3.10'",
+]
+
 [project.urls]
 Homepage = "https://github.com/dmaldona/uqgrid"
 Repository = "https://github.com/dmaldona/uqgrid"
+
+[project.scripts]
+uqgrid-mcp = "uqgrid.mcp.server:main"
+uqgrid-remote = "uqgrid.remote:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
