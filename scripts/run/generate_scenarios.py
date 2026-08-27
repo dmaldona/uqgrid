@@ -1571,6 +1571,10 @@ def _integration_config_from_dict(integration_config=None):
         toff=int_cfg.get("toff", 0.4),
         verbose=int_cfg.get("verbose", False),
         petsc=int_cfg.get("petsc", True),
+        jacobian_mode=int_cfg.get("jacobian_mode", "analytical"),
+        finite_difference_epsilon=int_cfg.get(
+            "finite_difference_epsilon", 1e-7
+        ),
         enforce_q_limits=int_cfg.get("enforce_q_limits", True),
         q_limit_tolerance=int_cfg.get("q_limit_tolerance", 1e-8),
         max_q_limit_iterations=int_cfg.get("max_q_limit_iterations"),
@@ -2279,29 +2283,7 @@ def run_single_scenario_worker(
         psys.createYbusComplex()
 
         # Configure integration parameters
-        int_cfg = integration_config or {}
-        cfg = IntegrationConfig(
-            tend=int_cfg.get('tend', 10.0),           # Simulation end time [s]
-            dt=int_cfg.get('dt', 1/120.0),            # Time step [s]
-            method=int_cfg.get('method', 'beuler'),
-            power_injection=int_cfg.get('power_injection', False),
-            ton=int_cfg.get('ton', 0.25),             # Fault onset time [s]
-            toff=int_cfg.get('toff', 0.4),            # Fault clearing time [s]
-            verbose=int_cfg.get('verbose', False),
-            petsc=int_cfg.get('petsc', True),
-            enforce_q_limits=int_cfg.get('enforce_q_limits', True),
-            q_limit_tolerance=int_cfg.get('q_limit_tolerance', 1e-8),
-            max_q_limit_iterations=int_cfg.get('max_q_limit_iterations'),
-            power_flow_validation=int_cfg.get('power_flow_validation', {}),
-            enforce_dynamic_limits=int_cfg.get('enforce_dynamic_limits', True),
-            dynamic_limit_tolerance=int_cfg.get('dynamic_limit_tolerance', 1e-8),
-            dynamic_limit_release_tolerance=int_cfg.get(
-                'dynamic_limit_release_tolerance', 1e-10
-            ),
-            max_dynamic_limit_iterations=int_cfg.get(
-                'max_dynamic_limit_iterations', 20
-            ),
-        )
+        cfg = _integration_config_from_dict(integration_config)
 
         try:
             sim = integrate_system(psys, cfg)
@@ -3490,6 +3472,8 @@ def get_default_config(model_name: str) -> dict:
             "toff": 0.4,               # Fault clearing time [s]
             "verbose": False,
             "petsc": True,
+            "jacobian_mode": "analytical",
+            "finite_difference_epsilon": 1e-7,
             "enforce_q_limits": True,
             "q_limit_tolerance": 1e-8,
             "max_q_limit_iterations": None,
@@ -3917,6 +3901,10 @@ Examples:
         "toff": integration_cfg.get("toff", 0.4),
         "verbose": integration_cfg.get("verbose", False),
         "petsc": integration_cfg.get("petsc", True),
+        "jacobian_mode": integration_cfg.get("jacobian_mode", "analytical"),
+        "finite_difference_epsilon": integration_cfg.get(
+            "finite_difference_epsilon", 1e-7
+        ),
         "enforce_q_limits": integration_cfg.get("enforce_q_limits", True),
         "q_limit_tolerance": integration_cfg.get("q_limit_tolerance", 1e-8),
         "max_q_limit_iterations": integration_cfg.get("max_q_limit_iterations"),
@@ -4043,6 +4031,11 @@ Examples:
     print(f"  - Fault clearing (toff): {integration_config['toff']} s")
     print(f"  - Power injection: {integration_config['power_injection']}")
     print(f"  - PETSc solver: {integration_config['petsc']}")
+    print(f"  - Jacobian mode: {integration_config['jacobian_mode']}")
+    print(
+        "  - Finite-difference epsilon: "
+        f"{integration_config['finite_difference_epsilon']}"
+    )
     print(f"  - Enforce PF Q limits: {integration_config['enforce_q_limits']}")
     print(f"  - PF Q-limit tolerance: {integration_config['q_limit_tolerance']}")
     print(

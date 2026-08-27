@@ -66,6 +66,7 @@ exclude = ["tests*"]
 # Basic pytest configuration
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "adjoint: marks tests as adjoint validation tests (slow)",
 ]

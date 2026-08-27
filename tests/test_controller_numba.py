@@ -10,6 +10,9 @@ from uqgrid.models.sexs_imp import sexs_resdiff, sexs_jac
 from uqgrid.models.tgov1_imp import tgov1_resdiff, tgov1_jac
 from uqgrid.models.esdc1a_imp import esdc1a_resdiff, esdc1a_jac
 from uqgrid.models.ieesgo_imp import ieesgo_resdiff, ieesgo_jac
+from uqgrid.models.gast_imp import gast_resdiff, gast_jac
+from uqgrid.models.hygov_imp import hygov_resdiff, hygov_jac
+from uqgrid.models.ieeeg1_imp import ieeeg1_resdiff, ieeeg1_jac
 
 
 @pytest.fixture
@@ -62,5 +65,36 @@ def test_controller_numba_kernels_compile(data_dir, tmp_path):
         esdc1a_resdiff,
         esdc1a_jac,
     ]
+    for kernel in kernels:
+        assert kernel.signatures
+
+
+@pytest.mark.parametrize(
+    "record,kernels",
+    [
+        (
+            "1 'GAST' 1 0.05 0.4 0.1 3 2 2 2 0 0 /",
+            (gast_resdiff, gast_jac),
+        ),
+        (
+            "1 'HYGOV' 1 0.05 0.4 5 0.2 0.5 0.167 2 0 1.2 1.25 0.2 0.08 /",
+            (hygov_resdiff, hygov_jac),
+        ),
+        (
+            "1 'IEEEG1' 1 0 0 20 0.2 0 0.1 0.3 -0.3 2 0 0.4 0.5 0 1 0.5 0 0 0 0 0 0 0 /",
+            (ieeeg1_resdiff, ieeeg1_jac),
+        ),
+    ],
+)
+def test_new_governor_numba_kernels_compile(data_dir, tmp_path, record, kernels):
+    dyr = tmp_path / "governor.dyr"
+    dyr.write_text(
+        "1 'GENROU' 1 6.1 0.05 1.0 0.15 3.38 0.0 1.575 1.512 0.291 0.39 0.1733 0.0787 0.0 0.0 /\n"
+        + record
+        + "\n"
+    )
+
+    _run_case(os.path.join(data_dir, "2bus_33.raw"), str(dyr))
+
     for kernel in kernels:
         assert kernel.signatures

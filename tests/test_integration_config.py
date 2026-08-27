@@ -48,6 +48,28 @@ def test_integration_config_q_limit_defaults():
     assert cfg.power_flow_validation.voltage_min is None
     assert cfg.power_flow_validation.branch_loading_max is None
     assert IntegrationConfig(enforce_q_limits=False).enforce_q_limits is False
+    assert IntegrationConfig().jacobian_mode == "analytical"
+
+
+def test_integration_config_accepts_native_finite_difference_jacobian():
+    cfg = IntegrationConfig(jacobian_mode="finite_difference")
+    assert cfg.finite_difference_epsilon == pytest.approx(1e-7)
+
+
+def test_herk_resets_cached_jacobian_mode(monkeypatch):
+    psys = type("System", (), {})()
+    psys.jacobian_mode = "finite_difference"
+    monkeypatch.setattr(
+        dynamics,
+        "integrate_system_herk",
+        lambda system, config, ctx: system.jacobian_mode,
+    )
+
+    result = dynamics.integrate_system(
+        psys, IntegrationConfig(method="herk2", jacobian_mode="analytical")
+    )
+
+    assert result == "analytical"
 
 
 @pytest.mark.parametrize(
@@ -60,6 +82,14 @@ def test_integration_config_q_limit_defaults():
         ({"method": "bogus"}, "method"),
         ({"method": "cn"}, "requires `petsc=True`"),
         ({"method": "herk2", "petsc": True}, "requires `petsc=False`"),
+        ({"jacobian_mode": "invalid"}, "jacobian_mode"),
+        ({"jacobian_mode": "finite_difference", "petsc": True}, "native backward Euler"),
+        ({"jacobian_mode": "finite_difference", "method": "herk2"}, "native backward Euler"),
+        (
+            {"jacobian_mode": "finite_difference", "check_jacobian": True},
+            "requires `jacobian_mode='analytical'`",
+        ),
+        ({"finite_difference_epsilon": float("inf")}, "finite number"),
         (
             {"comp_sens": True, "petsc": True, "enforce_dynamic_limits": False},
             "method='cn'",

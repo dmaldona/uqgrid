@@ -1,7 +1,13 @@
 import numpy as np
 from scipy.sparse import csr_matrix
 
+from uqgrid.io.parse import add_dyr, load_psse
 from uqgrid.models import ExcSEXS
+from uqgrid.simulation.config import IntegrationConfig
+from uqgrid.simulation.dynamics import integrate_system
+from uqgrid.simulation.dynamics import initialize_system, preallocate_jacobian
+from uqgrid.simulation.jacobian import residual_jacobian
+from uqgrid.simulation.pflow import runpf
 
 
 def _sexs_jacobian_fixture():
@@ -90,3 +96,46 @@ def test_sexs_limits_are_stored_but_disabled_by_default():
     assert exc.Emax == 1.0
     assert exc.enable_limits is False
     assert theta[6] == 0.0
+
+
+def test_finite_difference_jacobian_mode_matches_analytical_trajectory(tmp_path):
+    import os
+
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+
+    def run(jacobian_mode):
+        psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+        add_dyr(psys, os.path.join(data_dir, "2bus_SEXS.dyr"))
+        psys.createYbusComplex()
+        psys.add_busfault(1, 1.0)
+        return integrate_system(
+            psys,
+            IntegrationConfig(
+                steps=3, dt=1.0 / 120.0, ton=1.0 / 120.0,
+                toff=2.0 / 120.0, jacobian_mode=jacobian_mode,
+            ),
+        )["history"]
+
+    analytical = run("analytical")
+    numerical = run("finite_difference")
+    np.testing.assert_allclose(numerical, analytical, rtol=1e-7, atol=1e-9)
+
+
+def test_finite_difference_coloring_is_rebuilt_for_new_sparsity():
+    import os
+
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+    add_dyr(psys, os.path.join(data_dir, "2bus_SEXS.dyr"))
+    psys.createYbusComplex()
+    state, theta = initialize_system(psys, runpf(psys, verbose=False))
+    psys.jacobian_mode = "finite_difference"
+
+    first = preallocate_jacobian(psys)
+    residual_jacobian(first, state, theta, psys)
+    first_signature = psys._finite_difference_jacobian_coloring[0]
+    psys.power_injection = True
+    second = preallocate_jacobian(psys)
+    residual_jacobian(second, state, theta, psys)
+
+    assert psys._finite_difference_jacobian_coloring[0] != first_signature

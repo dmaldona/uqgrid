@@ -176,14 +176,15 @@ class GenGENROU(DynamicGenerator):
         sat_a, sat_b = sat_coefficients(self.S1, self.S2)
         psi2 = np.sqrt(psi_de*psi_de + psi_qe*psi_qe)
         Se = sat_se(psi2, sat_a, sat_b)
+        gqd = (x_q - xl)/(x_d - xl)
 
         # Machine states
         F[0] = (-e_qp + e_fd - (i_d - (-x_ddp + x_dp)*(-e_qp + i_d*
                                                        (x_dp - xl) + phi_1d)/
                                 ((x_dp - xl)**2.0))*(x_d - x_dp) - Se*psi_de)/T_d0p
         F[1] = (-e_dp + (i_q - (-x_qdp + x_qp)*
-                         (e_dp + i_q*(x_qp - xl) + phi_2q)/((x_qp - xl)**2.0))*
-                (x_q - x_qp))/T_q0p
+                          (e_dp + i_q*(x_qp - xl) + phi_2q)/((x_qp - xl)**2.0))*
+                (x_q - x_qp) + Se*psi_qe*gqd)/T_q0p
         F[2] = (e_qp - i_d*(x_dp - xl) - phi_1d)/T_d0dp
         F[3] = (-e_dp - i_q*(x_qp - xl) - phi_2q)/T_q0dp
 
@@ -276,6 +277,12 @@ class GenGENROU(DynamicGenerator):
                 'xtol': 1e-8,
                 'disp': False
             })
+        residual_norm = np.linalg.norm(self.residualFinit(sol.x, vm, va, p, q), np.inf)
+        if not sol.success or not np.isfinite(residual_norm) or residual_norm > 1e-8:
+            raise ValueError(
+                f"GENROU initialization failed at bus {self.bus}, generator "
+                f"{self.id_tag}: {sol.message}; residual={residual_norm:.3e}."
+            )
 
         self.e_fd = sol.x[10]
         self.p_m = sol.x[11]
@@ -284,7 +291,11 @@ class GenGENROU(DynamicGenerator):
         self.set_pm_val(sol.x[11])
 
         if self.exciter: self.exciter.e_fd0 = sol.x[10]
-        if self.governor: self.governor.p_m0 = sol.x[11]
+        if self.governor:
+            if getattr(self.governor, "secondary_generator", None) is self:
+                self.governor.p_m0_secondary = sol.x[11]
+            else:
+                self.governor.p_m0 = sol.x[11]
 
         dp = self.dif_ptr
         ap = self.alg_ptr
@@ -437,7 +448,7 @@ class GenGENROU(DynamicGenerator):
 
         # Differential rows
         coord.append([dp, [e_qp, e_dp, phi_1d, phi_2q, i_d, efd_out]])
-        coord.append([dp + 1, [e_dp, phi_2q, i_q]])
+        coord.append([dp + 1, [e_qp, e_dp, phi_1d, phi_2q, i_q]])
         coord.append([dp + 2, [e_qp, phi_1d, i_d]])
         coord.append([dp + 3, [e_dp, phi_2q, i_q]])
         coord.append([dp + 4, [e_qp, e_dp, phi_1d, phi_2q, w, i_q, i_d, pm_out]])
@@ -674,12 +685,13 @@ def resdiff_genrou(F, z, v, theta, idxs, power_injection):
     sat_a, sat_b = sat_coefficients_nb(S1, S2)
     psi2 = np.sqrt(psi_de*psi_de + psi_qe*psi_qe)
     Se = sat_se_nb(psi2, sat_a, sat_b)
+    gqd = (x_q - xl)/(x_d - xl)
 
     # equations
     F[dp] = (-e_qp + e_fd - (i_d - (-x_ddp + x_dp)*(-e_qp + i_d*(x_dp - xl) \
         + phi_1d)/((x_dp - xl)**2.0))*(x_d - x_dp) - Se*psi_de)/T_d0p
     F[dp + 1] = (-e_dp + (i_q - (-x_qdp + x_qp)*( e_dp + i_q*(x_qp - xl) \
-        + phi_2q)/((x_qp - xl)**2.0))*(x_q - x_qp))/T_q0p
+        + phi_2q)/((x_qp - xl)**2.0))*(x_q - x_qp) + Se*psi_qe*gqd)/T_q0p
     F[dp + 2] = ( e_qp - i_d*(x_dp - xl) - phi_1d)/T_d0dp
     F[dp + 3] = (-e_dp - i_q*(x_qp - xl) - phi_2q)/T_q0dp
     F[dp + 4] = (p_m - psi_de*i_q + psi_qe*i_d - D*w)/(2.0*H)
@@ -772,6 +784,7 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     sat_a, sat_b = sat_coefficients_nb(S1, S2)
     psi2 = np.sqrt(psi_de*psi_de + psi_qe*psi_qe)
     Se = sat_se_nb(psi2, sat_a, sat_b)
+    gqd = (x_q - xl)/(x_d - xl)
 
     if sat_b == 0.0 or psi2 <= sat_a or psi2 == 0.0:
         dSe_dpsi = 0.0
@@ -801,6 +814,14 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     dT_dphi1d = dT_dpsi_de * dpsi_de_phi1d
     dT_dedp = dT_dpsi_qe * dpsi_qe_dedp
     dT_dphi2q = dT_dpsi_qe * dpsi_qe_phi2q
+
+    dTq_dpsi_de = gqd * dSe_dpsi_de * psi_qe
+    dTq_dpsi_qe = gqd * (dSe_dpsi_qe * psi_qe + Se)
+
+    dTq_deqp = dTq_dpsi_de * dpsi_de_deqp
+    dTq_dphi1d = dTq_dpsi_de * dpsi_de_phi1d
+    dTq_dedp = dTq_dpsi_qe * dpsi_qe_dedp
+    dTq_dphi2q = dTq_dpsi_qe * dpsi_qe_phi2q
 
     # indexes
     e_qp_idx = dp
@@ -840,15 +861,19 @@ def jac_genrou(z, v, theta, idxs, J_data, J_ptr, J_idx, power_injection):
     vals[5] = 1.0/T_d0p
     csr_set_row(J_data, J_ptr, J_idx, 6, dp, cols, vals)
 
-    cols = np.empty(3, dtype=np.int32)
-    vals = np.empty(3, dtype=np.float64)
-    cols[0] = e_dp_idx
-    vals[0] = (-(x_q - x_qp)*(-x_qdp + x_qp)*(x_qp - xl)**(-2.0) - 1)/T_q0p
-    cols[1] = phi_2q_idx
-    vals[1] = -(x_q - x_qp)*(-x_qdp + x_qp)*(x_qp - xl)**(-2.0)/T_q0p
-    cols[2] = i_q_idx
-    vals[2] = (x_q - x_qp)*(-(-x_qdp + x_qp)*(x_qp - xl)**(-1.0) + 1)/T_q0p
-    csr_set_row(J_data, J_ptr, J_idx, 3, dp + 1, cols, vals)
+    cols = np.empty(5, dtype=np.int32)
+    vals = np.empty(5, dtype=np.float64)
+    cols[0] = e_qp_idx
+    vals[0] = dTq_deqp / T_q0p
+    cols[1] = e_dp_idx
+    vals[1] = (-(x_q - x_qp)*(-x_qdp + x_qp)*(x_qp - xl)**(-2.0) - 1)/T_q0p + dTq_dedp / T_q0p
+    cols[2] = phi_1d_idx
+    vals[2] = dTq_dphi1d / T_q0p
+    cols[3] = phi_2q_idx
+    vals[3] = -(x_q - x_qp)*(-x_qdp + x_qp)*(x_qp - xl)**(-2.0)/T_q0p + dTq_dphi2q / T_q0p
+    cols[4] = i_q_idx
+    vals[4] = (x_q - x_qp)*(-(-x_qdp + x_qp)*(x_qp - xl)**(-1.0) + 1)/T_q0p
+    csr_set_row(J_data, J_ptr, J_idx, 5, dp + 1, cols, vals)
 
     cols = np.empty(3, dtype=np.int32)
     vals = np.empty(3, dtype=np.float64)

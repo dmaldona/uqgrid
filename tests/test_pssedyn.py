@@ -2,6 +2,7 @@ import os
 import pytest
 import numpy as np
 from uqgrid.core.psydef import Psystem
+from uqgrid.core.psydef import Bus
 from uqgrid.models import GenGENROU, GenGENSAL, GovTGOV1
 from uqgrid.models.esdc1a_imp import esdc1a_sat_coefficients
 from uqgrid.simulation.dynamics import initialize_system, integrate_system, preallocate_jacobian
@@ -139,12 +140,12 @@ def test_tgov1_dt_uses_machine_to_system_base_scaling(data_dir, tmp_path):
     machine_to_system = mbase / sbase
 
     assert gov.R == pytest.approx(0.05 * system_to_machine)
-    assert gov.VMAX == pytest.approx(1.2 * system_to_machine)
-    assert gov.VMIN == pytest.approx(-0.1 * system_to_machine)
+    assert gov.VMAX == pytest.approx(1.2 * machine_to_system)
+    assert gov.VMIN == pytest.approx(-0.1 * machine_to_system)
     assert gov.DT == pytest.approx(0.3 * machine_to_system)
 
 
-def test_tgov1_limits_are_stored_but_disabled_by_default():
+def test_tgov1_constructor_limits_are_disabled_until_parser_enables_them():
     gov = GovTGOV1("1", R=0.05, T1=0.1, VMAX=1.2, VMIN=-0.1, T2=0.2, T3=10.0, DT=0.3)
     gov.par_ptr = 0
     gov.pref = 0.7
@@ -257,6 +258,31 @@ def test_static_generator_initialization_and_jacobian(data_dir, tmp_path):
         psys, sysvec, theta, jacobian, eps=1e-6, top_k=10, tol=1e-5,
     )
 
+    assert np.linalg.norm(residual, np.inf) < 1e-8
+    assert mismatches == []
+
+
+def test_q_limited_static_generator_initialization_and_jacobian(data_dir, tmp_path):
+    psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
+    psys.gens[1].qgub = 0.02
+    dyr_path = tmp_path / "empty.dyr"
+    dyr_path.write_text("")
+
+    add_dyr(psys, str(dyr_path))
+    psys.createYbusComplex()
+    pf_solution = runpf(psys, verbose=False, enforce_q_limits=True)
+    sysvec, theta = initialize_system(psys, pf_solution)
+    residual = np.zeros_like(sysvec)
+    residual_function(residual, sysvec, theta, psys)
+    jacobian = preallocate_jacobian(psys)
+    residual_jacobian(jacobian, sysvec, theta, psys)
+    mismatches = compare_jacobians(
+        psys, sysvec, theta, jacobian, eps=1e-6, top_k=10, tol=1e-5,
+    )
+
+    static_gen = next(gen for gen in psys.static_gens if gen.bus == 1)
+    assert static_gen.q_limited
+    assert pf_solution.bus_types[1] == Bus.PQ
     assert np.linalg.norm(residual, np.inf) < 1e-8
     assert mismatches == []
 

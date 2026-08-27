@@ -74,6 +74,7 @@ class StaticGenerator(DeviceModel):
         self.aset = aset
         self.pmin, self.pmax, self.qmin, self.qmax = limits
         self.enable_limits = False
+        self.q_limited = False
         self.p0 = 0.0
         self.q0 = 0.0
 
@@ -102,7 +103,13 @@ class StaticGenerator(DeviceModel):
         bus_vi = bus_vr + 1
         rows = []
 
-        if self.bus_type == BUS_PV:
+        if self.q_limited:
+            rows.extend([
+                [ap, [ap]],
+                [bus_vr, [ap]],
+                [bus_vi, [ap]],
+            ])
+        elif self.bus_type == BUS_PV:
             rows.extend([
                 [ap, [bus_vr, bus_vi]],
                 [bus_vr, [ap]],
@@ -125,7 +132,9 @@ class StaticGenerator(DeviceModel):
         pp = idxs[2]
         vr = v[2 * self.bus]
         vi = v[2 * self.bus + 1]
-        if self.bus_type == BUS_PV:
+        if self.q_limited:
+            F[ap] += z[ap] - theta[pp + 1]
+        elif self.bus_type == BUS_PV:
             F[ap] += vr * vr + vi * vi - theta[pp + 2] ** 2
         elif self.bus_type == BUS_SLACK:
             aset = theta[pp + 3]
@@ -159,7 +168,12 @@ class StaticGenerator(DeviceModel):
         col = np.zeros(2, dtype=np.int64)
         val = np.zeros(2)
 
-        if self.bus_type == BUS_PV:
+        if self.q_limited:
+            col[0] = ap
+            val[0] = 1.0
+            csr_set_row(J.data, J.indptr, J.indices, 1, ap, col, val)
+            self._add_power_jacobian(J, dev, ap, vr, vi, p, q, include_p=False)
+        elif self.bus_type == BUS_PV:
             col[0] = bus_vr
             col[1] = bus_vi
             val[0] = 2.0 * vr

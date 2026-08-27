@@ -5,7 +5,7 @@ from uqgrid.utils.tools import csr_set_row
 
 
 @jit(nopython=True, cache=True)
-def sexs_resdiff(F, z, v, theta, idxs, bus, TA_TB, TB, K, TE):
+def sexs_resdiff(F, z, v, theta, idxs, bus, TA_TB, TB, K, TE, pss_input=0.0):
     dp = idxs[0]
     pp = idxs[2]
 
@@ -19,14 +19,17 @@ def sexs_resdiff(F, z, v, theta, idxs, bus, TA_TB, TB, K, TE):
         vm = 1e-12
 
     vref = theta[pp + 7]
-    y1 = x1 + TA_TB * (vref - vm)
+    voltage_error = vref - vm + pss_input
+    y1 = x1 + TA_TB * voltage_error
 
-    F[dp] = (-x1 + (1.0 - TA_TB) * (vref - vm)) / TB
+    F[dp] = (-x1 + (1.0 - TA_TB) * voltage_error) / TB
     F[dp + 1] = (-e_fd + K * y1) / TE
 
 
 @jit(nopython=True, cache=True)
-def sexs_jac(data, indptr, indices, v, idxs, bus, TA_TB, TB, K, TE):
+def sexs_jac(
+    data, indptr, indices, v, idxs, bus, TA_TB, TB, K, TE, pss_input_idx=-1
+):
     dp = idxs[0]
     dev = idxs[2]
 
@@ -44,27 +47,47 @@ def sexs_jac(data, indptr, indices, v, idxs, bus, TA_TB, TB, K, TE):
     dvm_dvi = vi / vm
 
     row = dp
-    col = np.empty(4, dtype=np.int64)
-    val = np.empty(4, dtype=np.float64)
+    col = np.empty(5, dtype=np.int64)
+    val = np.empty(5, dtype=np.float64)
 
     col[0] = x1_idx
     val[0] = -1.0 / TB
-    col[1] = vr_idx
-    val[1] = -(1.0 - TA_TB) * dvm_dvr / TB
-    col[2] = vi_idx
-    val[2] = -(1.0 - TA_TB) * dvm_dvi / TB
-    csr_set_row(data, indptr, indices, 3, row, col, val)
+    nvalues = 3
+    if pss_input_idx >= 0:
+        col[1] = pss_input_idx
+        val[1] = (1.0 - TA_TB) / TB
+        col[2] = vr_idx
+        val[2] = -(1.0 - TA_TB) * dvm_dvr / TB
+        col[3] = vi_idx
+        val[3] = -(1.0 - TA_TB) * dvm_dvi / TB
+        nvalues = 4
+    else:
+        col[1] = vr_idx
+        val[1] = -(1.0 - TA_TB) * dvm_dvr / TB
+        col[2] = vi_idx
+        val[2] = -(1.0 - TA_TB) * dvm_dvi / TB
+    csr_set_row(data, indptr, indices, nvalues, row, col, val)
 
     row = dp + 1
     col[0] = x1_idx
     val[0] = K / TE
     col[1] = e_fd_idx
     val[1] = -1.0 / TE
-    col[2] = vr_idx
-    val[2] = -(K * TA_TB) * dvm_dvr / TE
-    col[3] = vi_idx
-    val[3] = -(K * TA_TB) * dvm_dvi / TE
-    csr_set_row(data, indptr, indices, 4, row, col, val)
+    nvalues = 4
+    if pss_input_idx >= 0:
+        col[2] = pss_input_idx
+        val[2] = K * TA_TB / TE
+        col[3] = vr_idx
+        val[3] = -(K * TA_TB) * dvm_dvr / TE
+        col[4] = vi_idx
+        val[4] = -(K * TA_TB) * dvm_dvi / TE
+        nvalues = 5
+    else:
+        col[2] = vr_idx
+        val[2] = -(K * TA_TB) * dvm_dvr / TE
+        col[3] = vi_idx
+        val[3] = -(K * TA_TB) * dvm_dvi / TE
+    csr_set_row(data, indptr, indices, nvalues, row, col, val)
 
 
 class ExcSEXS(Exciter):
@@ -140,9 +163,10 @@ class ExcSEXS(Exciter):
         return vm
 
     def residual_diff(self, F, z, v, theta, idxs, power_injection):
+        pss_input = z[self.pss_input_idx] if self.pss_input_idx >= 0 else 0.0
         sexs_resdiff(
             F, z, v, theta, idxs, self.bus,
-            self.TA_TB, self.TB, self.K, self.TE,
+            self.TA_TB, self.TB, self.K, self.TE, pss_input,
         )
         return None
 
@@ -164,11 +188,17 @@ class ExcSEXS(Exciter):
         vi = dev + 2 * self.bus + 1
 
         # row for x1
-        self._jac_cols_x1 = sorted([x1, vr, vi])
+        self._jac_cols_x1 = [x1, vr, vi]
+        if self.pss_input_idx >= 0:
+            self._jac_cols_x1.append(self.pss_input_idx)
+        self._jac_cols_x1.sort()
         coord.append([dp, self._jac_cols_x1])
 
         # row for e_fd
-        self._jac_cols_efd = sorted([x1, e_fd, vr, vi])
+        self._jac_cols_efd = [x1, e_fd, vr, vi]
+        if self.pss_input_idx >= 0:
+            self._jac_cols_efd.append(self.pss_input_idx)
+        self._jac_cols_efd.sort()
         coord.append([dp + 1, self._jac_cols_efd])
 
         return coord
@@ -176,5 +206,5 @@ class ExcSEXS(Exciter):
     def residual_jac(self, J, z, v, theta, idxs, power_injection):
         sexs_jac(
             J.data, J.indptr, J.indices, v, idxs, self.bus,
-            self.TA_TB, self.TB, self.K, self.TE,
+            self.TA_TB, self.TB, self.K, self.TE, self.pss_input_idx,
         )
