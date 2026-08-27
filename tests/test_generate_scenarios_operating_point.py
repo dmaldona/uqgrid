@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -83,6 +84,36 @@ def test_integration_config_adapter_preserves_q_limit_controls(gs):
     assert cfg.power_flow_validation.branch_loading_max == pytest.approx(1.0)
 
 
+def test_integration_config_adapter_preserves_jacobian_controls(gs):
+    cfg = gs._integration_config_from_dict({
+        "petsc": False,
+        "method": "beuler",
+        "jacobian_mode": "finite_difference",
+        "finite_difference_epsilon": 2e-6,
+    })
+
+    assert cfg.jacobian_mode == "finite_difference"
+    assert cfg.finite_difference_epsilon == pytest.approx(2e-6)
+
+
+@pytest.mark.parametrize(
+    "integration",
+    (
+        {"jacobian_mode": "invalid"},
+        {
+            "petsc": True,
+            "method": "beuler",
+            "jacobian_mode": "finite_difference",
+        },
+    ),
+)
+def test_integration_config_adapter_rejects_invalid_jacobian_controls(
+    gs, integration
+):
+    with pytest.raises(ValueError, match="jacobian_mode|native backward Euler"):
+        gs._integration_config_from_dict(integration)
+
+
 def test_default_scenario_config_includes_q_limit_controls(gs):
     integration = gs.get_default_config("IEEE-9")["integration"]
 
@@ -94,6 +125,8 @@ def test_default_scenario_config_includes_q_limit_controls(gs):
     assert integration["dynamic_limit_tolerance"] == pytest.approx(1e-8)
     assert integration["dynamic_limit_release_tolerance"] == pytest.approx(1e-10)
     assert integration["max_dynamic_limit_iterations"] == 20
+    assert integration["jacobian_mode"] == "analytical"
+    assert integration["finite_difference_epsilon"] == pytest.approx(1e-7)
     validation = integration["power_flow_validation"]
     assert validation["enabled"] is False
     assert validation["residual_tolerance"] == pytest.approx(1e-8)
@@ -107,6 +140,8 @@ def test_default_scenario_config_includes_q_limit_controls(gs):
     assert adapted.enforce_q_limits is True
     assert adapted.enforce_dynamic_limits is True
     assert adapted.power_flow_validation.enabled is False
+    assert adapted.jacobian_mode == "analytical"
+    assert adapted.finite_difference_epsilon == pytest.approx(1e-7)
 
     legacy = gs._integration_config_from_dict({"enforce_q_limits": False})
     assert legacy.enforce_q_limits is False
@@ -160,16 +195,18 @@ def test_fault_worker_preserves_successful_pf_validation(
     dynamic_limits = {"enabled": True, "initialization": {"valid": True}}
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(gs, "_load_power_system", lambda *args: _fake_fault_psys())
-    monkeypatch.setattr(
-        gs,
-        "integrate_system",
-        lambda *args: {
+    captured = {}
+
+    def fake_integrate_system(_psys, config):
+        captured["config"] = config
+        return {
             "history": np.zeros((2, 2)),
             "tvec": np.array([0.0, 0.1]),
             "power_flow_diagnostics": validation,
             "dynamic_limit_diagnostics": dynamic_limits,
-        },
-    )
+        }
+
+    monkeypatch.setattr(gs, "integrate_system", fake_integrate_system)
 
     result = gs._run_fault_with_operating_point_worker(
         "case.raw",
@@ -177,12 +214,55 @@ def test_fault_worker_preserves_successful_pf_validation(
         scenario,
         "scenario-0",
         operating_point,
-        {"power_flow_validation": {"enabled": True}},
+        {
+            "petsc": False,
+            "method": "beuler",
+            "jacobian_mode": "finite_difference",
+            "finite_difference_epsilon": 2e-6,
+            "power_flow_validation": {"enabled": True},
+        },
     )
 
     assert result["diverged"] is False
     assert result["diagnostics"]["power_flow_validation"] == validation
     assert result["diagnostics"]["dynamic_limit_diagnostics"] == dynamic_limits
+    assert captured["config"].jacobian_mode == "finite_difference"
+    assert captured["config"].finite_difference_epsilon == pytest.approx(2e-6)
+
+
+def test_main_forwards_json_jacobian_controls(gs, tmp_path, monkeypatch):
+    config = gs.get_default_config("IEEE-9")
+    config["model"].update({"raw": "case.raw", "dyr": "case.dyr", "n_bus": 1})
+    config["scenarios"].update({
+        "samples_per_fault_location": 1,
+        "fault_locations": [0],
+        "fault_impedances": [1e-4],
+        "target_accepted_scenarios": None,
+    })
+    config["integration"].update({
+        "petsc": False,
+        "method": "beuler",
+        "jacobian_mode": "finite_difference",
+        "finite_difference_epsilon": 3e-6,
+    })
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config))
+    captured = {}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["generate_scenarios.py"])
+    monkeypatch.setattr(gs, "generate_metadata", lambda _scenarios: {})
+    monkeypatch.setattr(
+        gs,
+        "run_simulation_driver_batched",
+        lambda *args, **kwargs: captured.update(kwargs),
+    )
+
+    gs.main(str(config_path))
+
+    integration = captured["integration_config"]
+    assert integration["jacobian_mode"] == "finite_difference"
+    assert integration["finite_difference_epsilon"] == pytest.approx(3e-6)
 
 
 def test_fault_worker_preserves_failed_pf_validation(

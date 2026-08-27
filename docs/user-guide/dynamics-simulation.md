@@ -78,6 +78,8 @@ config = IntegrationConfig(
         "active_set_voltage_tolerance": 1e-6,
     },
     check_jacobian=False,
+    jacobian_mode="analytical",
+    finite_difference_epsilon=1e-7,
     jacobian_check_tol=1e-6,
     jacobian_check_top_k=10,
     jacobian_check_csv=None,
@@ -111,6 +113,11 @@ Key fields:
 - **max_dynamic_limit_iterations**: Maximum active-set iterations reserved for
   implicit hard-limit solves.
 - **check_jacobian**: Run a finite-difference Jacobian check (non-PETSc only).
+- **jacobian_mode**: Use `"analytical"` assembly or sparse
+  `"finite_difference"` assembly. Finite-difference assembly requires native
+  backward Euler.
+- **finite_difference_epsilon**: Perturbation size used by finite-difference
+  Jacobian assembly.
 - **jacobian_check_tol**: Absolute tolerance for reporting FD mismatches.
 - **jacobian_check_top_k**: Number of mismatches to report.
 - **jacobian_check_csv**: Optional CSV file path for mismatch report.
@@ -291,6 +298,11 @@ Successful backward Euler, PETSc, HERK2, and HERK4 runs include the JSON-safe
 diagnostics under `results["power_flow_diagnostics"]`.
 
 ### Jacobian diagnostics (optional)
+
+Set `jacobian_mode="finite_difference"` to use sparse finite-difference
+assembly during native backward Euler integration. This mode requires
+`method="beuler"` and `petsc=False`; incompatible combinations are rejected by
+`IntegrationConfig`.
 
 When running without PETSc, you can enable a finite-difference Jacobian check:
 

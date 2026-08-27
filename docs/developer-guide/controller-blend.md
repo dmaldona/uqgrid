@@ -72,6 +72,10 @@ Controllers (e.g. IEESGO, ESDC1A) now write only their own rows:
 They never mutate generator rows directly. Any generator/controller coupling is
 mediated via the blend equations above.
 
+DYR controller dispatch normalizes quoted model names to uppercase and then
+matches exact supported names. Unsupported model names raise a `ValueError`
+rather than being redirected or partially parsed as a similarly named model.
+
 ## Assembly changes
 
 The residual and Jacobian assemblers iterate through devices once to let each

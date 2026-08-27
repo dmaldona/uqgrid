@@ -29,6 +29,33 @@ import math
 logger = logging.getLogger(__name__)
 
 
+_SUPPORTED_DYR_MODELS = frozenset(
+    {
+        "CIM5BL",
+        "ESAC1A",
+        "ESAC6A",
+        "ESDC1A",
+        "ESDC2A",
+        "ESST4B",
+        "EXAC1",
+        "EXAC2",
+        "EXPIC1",
+        "GAST",
+        "GENROU",
+        "GENSAL",
+        "GGOV1",
+        "HYGOV",
+        "IEEEG1",
+        "IEEEST",
+        "IEEET1",
+        "IEESGO",
+        "SCRX",
+        "SEXS",
+        "TGOV1",
+    }
+)
+
+
 def _generator_power_ratios(psys, bus, gen_id):
     for gen in psys.gens:
         static_id = gen.idx.replace("'", "").strip()
@@ -487,8 +514,13 @@ def add_dyr(
         pending_ieeest[:] = remaining
 
     for device in devices:
+        model_name = str(device[1]).strip().strip("'\"").upper()
+        if model_name not in _SUPPORTED_DYR_MODELS:
+            raise ValueError(
+                f"Unsupported DYR model {model_name!r} at bus {device[0]}."
+            )
 
-        if 'GENROU' in device[1]:
+        if model_name == "GENROU":
             bus = psys.ext2int[int(device[0])]
             idx = str(device[2]).strip().replace("'", "")
             
@@ -545,7 +577,7 @@ def add_dyr(
                     idx,
                 )
 
-        if 'GENSAL' in device[1]:
+        if model_name == "GENSAL":
             bus = psys.ext2int[int(device[0])]
             idx = str(device[2]).strip().replace("'", "")
 
@@ -602,7 +634,7 @@ def add_dyr(
                     idx,
                 )
 
-        if 'IEESGO' in device[1]:
+        if model_name == "IEESGO":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -630,7 +662,7 @@ def add_dyr(
                         K1, K2, K3))
                     break
 
-        if 'TGOV1' in device[1]:
+        if model_name == "TGOV1":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -683,7 +715,7 @@ def add_dyr(
                     gen_id,
                 )
 
-        if 'GGOV1' in device[1]:
+        if model_name == "GGOV1":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -730,12 +762,18 @@ def add_dyr(
                     }
                 )
 
-        if 'GAST' in device[1]:
+        if model_name == "GAST":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
                 continue
-            values = [float(value) for value in device[3:12]]
+            source_parameters = device[3:-1]
+            if len(source_parameters) != 9:
+                raise ValueError(
+                    f"GAST at bus {int(device[0])}, generator {gen_id} "
+                    f"requires 9 parameters; got {len(source_parameters)}."
+                )
+            values = [float(value) for value in source_parameters]
             R, T1, T2, T3, AT, KT, VMAX, VMIN, DT = values
             power_ratio, inverse_power_ratio = _generator_power_ratios(
                 psys, bus, gen_id
@@ -760,12 +798,18 @@ def add_dyr(
                     ),
                 )
 
-        if 'HYGOV' in device[1]:
+        if model_name == "HYGOV":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
                 continue
-            values = [float(value) for value in device[3:15]]
+            source_parameters = device[3:-1]
+            if len(source_parameters) != 12:
+                raise ValueError(
+                    f"HYGOV at bus {int(device[0])}, generator {gen_id} "
+                    f"requires 12 parameters; got {len(source_parameters)}."
+                )
+            values = [float(value) for value in source_parameters]
             R, r, Tr, Tf, Tg, VELM, GMAX, GMIN, Tw, At, DT, qNL = values
             power_ratio, inverse_power_ratio = _generator_power_ratios(
                 psys, bus, gen_id
@@ -793,14 +837,21 @@ def add_dyr(
                     ),
                 )
 
-        if 'IEEEG1' in device[1]:
+        if model_name == "IEEEG1":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
                 continue
-            bus2_external = int(float(device[3]))
-            id2 = str(device[4]).strip().replace("'", "")
-            values = [float(value) for value in device[5:25]]
+            source_parameters = device[3:-1]
+            if len(source_parameters) != 22:
+                raise ValueError(
+                    f"IEEEG1 at bus {int(device[0])}, generator {gen_id} "
+                    "requires 22 parameters including secondary bus and id; "
+                    f"got {len(source_parameters)}."
+                )
+            bus2_external = int(float(source_parameters[0]))
+            id2 = str(source_parameters[1]).strip().replace("'", "")
+            values = [float(value) for value in source_parameters[2:]]
             (
                 K, T1, T2, T3, UO, UC, PMAX, PMIN, T4, K1, K2, T5,
                 K3, K4, T6, K5, K6, T7, K7, K8,
@@ -837,7 +888,7 @@ def add_dyr(
             )
             psys.add_gov(primary, governor, secondary_gen=secondary)
 
-        if 'EXAC1' in device[1]:
+        if model_name == "EXAC1":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -859,7 +910,7 @@ def add_dyr(
                     logger.info("Adding EXAC1 at bus %d. GENID %s.", int(device[0]), gen_id)
                 psys.add_exc(gen, ExcEXAC1(gen_id, gen, *values))
 
-        if 'EXAC2' in device[1]:
+        if model_name == "EXAC2":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -881,7 +932,7 @@ def add_dyr(
                     logger.info("Adding EXAC2 at bus %d. GENID %s.", int(device[0]), gen_id)
                 psys.add_exc(gen, ExcEXAC2(gen_id, gen, *values))
 
-        if 'ESAC1A' in device[1]:
+        if model_name == "ESAC1A":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -914,7 +965,7 @@ def add_dyr(
                     ),
                 )
 
-        if 'ESST4B' in device[1]:
+        if model_name == "ESST4B":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -941,11 +992,11 @@ def add_dyr(
                     int(device[0]), gen_id,
                 )
 
-        if 'IEEEST' in device[1]:
+        if model_name == "IEEEST":
             if not attach_ieeest(device):
                 pending_ieeest.append(device)
 
-        if 'ESDC2A' in device[1]:
+        if model_name == "ESDC2A":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -978,7 +1029,7 @@ def add_dyr(
                     ),
                 )
 
-        if 'ESDC1A' in device[1]:
+        if model_name == "ESDC1A":
 
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
@@ -1026,7 +1077,7 @@ def add_dyr(
                     )
                     break
 
-        if 'SEXS' in device[1]:
+        if model_name == "SEXS":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -1084,7 +1135,7 @@ def add_dyr(
                     gen_id,
                 )
 
-        if 'EXPIC1' in device[1]:
+        if model_name == "EXPIC1":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -1118,7 +1169,7 @@ def add_dyr(
                     }
                 )
 
-        source_model = device[1].strip().replace("'", "")
+        source_model = model_name
         if source_model in {"SCRX", "ESAC6A"}:
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
@@ -1155,7 +1206,7 @@ def add_dyr(
                     }
                 )
 
-        if 'IEEET1' in device[1]:
+        if model_name == "IEEET1":
             bus = psys.ext2int[int(device[0])]
             gen_id = str(device[2]).strip().replace("'", "")
             if hasattr(psys, 'inactive_gens') and (bus, gen_id) in psys.inactive_gens:
@@ -1185,7 +1236,7 @@ def add_dyr(
                 )
 
 
-        if 'CIM5BL' in device[1]:
+        if model_name == "CIM5BL":
             bus = psys.ext2int[int(device[0])]
             load_id = str(device[2])
             if verbose:
@@ -1220,7 +1271,7 @@ def add_dyr(
                         x1, Hin, Damp))
                     break
 
-        if pending_ieeest and 'IEEEST' not in device[1]:
+        if pending_ieeest and model_name != "IEEEST":
             retry_pending_ieeest()
 
     retry_pending_ieeest(final=True)

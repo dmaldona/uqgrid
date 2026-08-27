@@ -25,6 +25,71 @@ def _write_dyr(tmp_path, governor_record):
     return path
 
 
+@pytest.mark.parametrize(
+    "model_name",
+    ("GAST2A", "HYGOVX", "IEEEG1D", "IEEEG1_GE", "EXAC1A"),
+)
+def test_parser_rejects_unsupported_model_variants(
+    data_dir, tmp_path, model_name
+):
+    dyr = _write_dyr(tmp_path, f"1 '{model_name}' 1 /")
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+
+    with pytest.raises(
+        ValueError,
+        match=rf"Unsupported DYR model '{model_name}'.*bus 1",
+    ):
+        add_dyr(psys, str(dyr))
+
+
+@pytest.mark.parametrize("model_token", ("'gast'", '"GaSt"'))
+def test_parser_normalizes_exact_model_name(data_dir, tmp_path, model_token):
+    dyr = _write_dyr(
+        tmp_path,
+        f"1 {model_token} 1 0.05 0.4 0.1 3 1 2 1 0 0 /",
+    )
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+
+    add_dyr(psys, str(dyr))
+
+    assert len(psys.gov) == 1
+    assert isinstance(psys.gov[0], GovGAST)
+
+
+@pytest.mark.parametrize(
+    ("model_name", "parameters", "expected_count"),
+    (
+        ("GAST", "0.05 0.4 0.1 3 1 2 1 0 0", 9),
+        ("HYGOV", "0.05 0.4 5.0 0.2 0.5 0.167 1 0 1.2 1.25 0.2 0.08", 12),
+        (
+            "IEEEG1",
+            "0 0 20 0.2 0 0.1 0.3 -0.3 1.2 0 0.4 0.5 0 1.0 0.5 0 0 0 0 0 0 0",
+            22,
+        ),
+    ),
+)
+@pytest.mark.parametrize("count_delta", (-1, 1))
+def test_parser_rejects_incorrect_governor_parameter_count(
+    data_dir, tmp_path, model_name, parameters, expected_count, count_delta
+):
+    values = parameters.split()
+    if count_delta < 0:
+        values.pop()
+    else:
+        values.append("999")
+    dyr = _write_dyr(
+        tmp_path,
+        f"1 '{model_name}' 1 {' '.join(values)} /",
+    )
+    psys = load_psse(os.path.join(data_dir, "2bus_33.raw"))
+
+    with pytest.raises(
+        ValueError,
+        match=rf"{model_name}.*requires {expected_count} parameters.*got",
+    ):
+        add_dyr(psys, str(dyr))
+
+
 def test_ggov1_redirect_uses_source_r_and_frozen_tgov1_defaults(
     data_dir, tmp_path, caplog
 ):

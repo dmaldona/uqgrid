@@ -248,7 +248,9 @@ baseline config may omit those optional fields and still run.
         "ton": 0.25,
         "toff": 0.4,
         "verbose": false,
-        "petsc": true
+        "petsc": true,
+        "jacobian_mode": "analytical",
+        "finite_difference_epsilon": 1e-7
     }
 }
 ```
@@ -312,6 +314,8 @@ baseline config may omit those optional fields and still run.
 | | `toff` | Fault clearing time [s] |
 | | `verbose` | Enable verbose solver output |
 | | `petsc` | Use PETSc solver |
+| | `jacobian_mode` | `"analytical"` or sparse `"finite_difference"`; finite differences require native backward Euler |
+| | `finite_difference_epsilon` | Perturbation size for finite-difference Jacobian assembly |
 | | `enforce_dynamic_limits` | Enable hard dynamic-state limit handling |
 | | `dynamic_limit_tolerance` | State-bound tolerance for hard dynamic limits |
 | | `dynamic_limit_release_tolerance` | Complementarity release tolerance |
