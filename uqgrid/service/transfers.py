@@ -9,6 +9,7 @@ import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 from typing import AsyncIterable, Dict
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -113,6 +114,9 @@ class UploadManager:
         self.signer = signer
         self.public_base_url = public_base_url.rstrip("/")
         self.max_file_bytes = max_file_bytes
+        self._lock = RLock()
+        self._active_slots = set()
+        self._active_completions = set()
 
     def create(self, owner_id: str, request: CreateCaseUploadRequest) -> UploadSession:
         if any(item.size_bytes > self.max_file_bytes for item in request.files):
@@ -157,59 +161,89 @@ class UploadManager:
             "expires_at": expires_at.isoformat(),
             "slots": slots,
         }
-        self._record_path(upload_id).write_text(json.dumps(record, indent=2), encoding="utf-8")
+        with self._lock:
+            self._write(record)
         return UploadSession(upload_id=upload_id, targets=targets, expires_at=expires_at)
 
     async def receive(self, upload_id: str, slot_id: str, token: str, stream: AsyncIterable[bytes]):
         claims = self.signer.verify(token, "upload")
         if claims.get("upload_id") != upload_id or claims.get("slot_id") != slot_id:
             raise TransferAuthorizationError("capability does not match upload path")
-        record = self._read(claims["owner_id"], upload_id)
-        slot = next((item for item in record["slots"] if item["slot_id"] == slot_id), None)
-        if slot is None:
-            raise UploadNotFoundError(slot_id)
-        if slot["status"] != "pending":
-            raise UploadConflictError("upload slot is already complete")
-        temporary = self.root / upload_id / f".{slot_id}.partial"
-        ready_directory = self.root / upload_id / slot_id
-        ready_directory.mkdir(exist_ok=True)
-        ready = ready_directory / slot["name"]
-        digest = hashlib.sha256()
-        size = 0
+        owner_id = claims["owner_id"]
+        reservation = (upload_id, slot_id)
+        with self._lock:
+            record = self._read(owner_id, upload_id)
+            slot = next((item for item in record["slots"] if item["slot_id"] == slot_id), None)
+            if slot is None:
+                raise UploadNotFoundError(slot_id)
+            if slot["status"] != "pending":
+                raise UploadConflictError("upload slot is already complete")
+            if reservation in self._active_slots:
+                raise UploadConflictError("upload slot is already in progress")
+            self._active_slots.add(reservation)
+            slot_name = slot["name"]
+            slot_size = slot["size_bytes"]
+            slot_sha256 = slot["sha256"]
         try:
+            temporary = self.root / upload_id / f".{slot_id}.partial"
+            ready_directory = self.root / upload_id / slot_id
+            ready = ready_directory / slot_name
+            digest = hashlib.sha256()
+            size = 0
+            ready_directory.mkdir(exist_ok=True)
             descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(descriptor, "wb") as target:
                 async for chunk in stream:
                     size += len(chunk)
-                    if size > slot["size_bytes"] or size > self.max_file_bytes:
+                    if size > slot_size or size > self.max_file_bytes:
                         raise UploadValidationError("uploaded file exceeds declared size")
                     digest.update(chunk)
                     target.write(chunk)
-            if size != slot["size_bytes"] or digest.hexdigest() != slot["sha256"]:
+            if size != slot_size or digest.hexdigest() != slot_sha256:
                 raise UploadValidationError("uploaded file size or SHA-256 does not match")
             os.replace(temporary, ready)
+            with self._lock:
+                record = self._read(owner_id, upload_id)
+                slot = next(
+                    (item for item in record["slots"] if item["slot_id"] == slot_id),
+                    None,
+                )
+                if slot is None:
+                    raise UploadNotFoundError(slot_id)
+                slot["status"] = "ready"
+                slot["path"] = str(ready)
+                self._write(record)
         finally:
-            temporary.unlink(missing_ok=True)
-        slot["status"] = "ready"
-        slot["path"] = str(ready)
-        self._write(record)
+            try:
+                temporary.unlink(missing_ok=True)
+            finally:
+                with self._lock:
+                    self._active_slots.discard(reservation)
         return {"upload_id": upload_id, "slot_id": slot_id, "size_bytes": size, "sha256": digest.hexdigest()}
 
     def complete(self, owner_id: str, upload_id: str):
-        record = self._read(owner_id, upload_id)
-        if record["status"] == "complete":
-            raise UploadConflictError("upload session is already complete")
-        if any(slot["status"] != "ready" for slot in record["slots"]):
-            raise UploadConflictError("all upload slots must be completed first")
-        manifest = self.cases.import_files(
-            owner_id,
-            record["name"],
-            [Path(slot["path"]) for slot in record["slots"]],
-        )
-        record["status"] = "complete"
-        record["case_id"] = manifest.case_id
-        self._write(record)
-        return manifest
+        with self._lock:
+            record = self._read(owner_id, upload_id)
+            if record["status"] == "complete":
+                raise UploadConflictError("upload session is already complete")
+            if upload_id in self._active_completions:
+                raise UploadConflictError("upload session completion is already in progress")
+            if any(slot["status"] != "ready" for slot in record["slots"]):
+                raise UploadConflictError("all upload slots must be completed first")
+            self._active_completions.add(upload_id)
+        try:
+            name = record["name"]
+            paths = [Path(slot["path"]) for slot in record["slots"]]
+            manifest = self.cases.import_files(owner_id, name, paths)
+            with self._lock:
+                record = self._read(owner_id, upload_id)
+                record["status"] = "complete"
+                record["case_id"] = manifest.case_id
+                self._write(record)
+            return manifest
+        finally:
+            with self._lock:
+                self._active_completions.discard(upload_id)
 
     def _read(self, owner_id: str, upload_id: str):
         try:

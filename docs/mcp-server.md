@@ -22,6 +22,14 @@ uqgrid-mcp --transport stdio
 An MCP host can launch the same command directly. Stdio is intended for local,
 single-user use and obtains trust from the process environment.
 
+The stdio server exposes `import_local_case`, which accepts a case name and
+absolute paths to one `.m` file or one `.raw` file with an optional `.dyr`
+file. The server process reads those paths directly. This tool is available
+only when the CLI runs with `--transport stdio`; it is deliberately absent
+from HTTP and default programmatic servers so remote clients cannot request
+arbitrary server-side files. The `uqgrid-remote upload` command remains the
+case-ingestion path for HTTP deployments.
+
 ## Remote HTTP
 
 Set secrets and network allowlists before starting HTTP:
@@ -74,8 +82,14 @@ The following environment variables protect shared compute and storage:
 | `UQGRID_MAX_CONCURRENT_JOBS` | `2` |
 | `UQGRID_MAX_SIMULATION_SECONDS` | `60` |
 | `UQGRID_MAX_SIMULATION_STEPS` | `100000` |
+| `UQGRID_MAX_JOB_RUNTIME_SECONDS` | `300` |
 | Upload size | 512 MiB per declared file |
 | Trace query points | 1000 maximum |
+
+`UQGRID_MAX_SIMULATION_SECONDS` limits the simulated `end_s` requested by a
+dynamics job. `UQGRID_MAX_JOB_RUNTIME_SECONDS` is a separate wall-clock
+deadline for every power-flow or dynamics worker. A worker that exceeds the
+deadline is terminated and the job fails with `worker_timeout`.
 
 ## Current Durability Boundary
 

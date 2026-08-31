@@ -61,13 +61,19 @@ def create_server(
     max_concurrent_jobs=None,
     max_simulation_seconds=None,
     max_simulation_steps=None,
+    max_job_runtime_seconds=None,
+    enable_local_case_import=False,
 ):
     """Create an MCP server backed by an isolated service data directory."""
 
     root = Path(data_root or os.environ.get("UQGRID_SERVICE_DATA", ".uqgrid-service"))
     owner = owner_id or os.environ.get("UQGRID_OWNER_ID", "local-user")
     base_url = public_base_url or os.environ.get("UQGRID_PUBLIC_BASE_URL", "http://127.0.0.1:8000")
-    configured_secret = signing_secret or os.environ.get("UQGRID_ARTIFACT_SIGNING_SECRET")
+    configured_secret = (
+        signing_secret
+        if signing_secret is not None
+        else os.environ.get("UQGRID_ARTIFACT_SIGNING_SECRET")
+    )
     secret = (
         configured_secret.encode("utf-8")
         if isinstance(configured_secret, str)
@@ -75,13 +81,18 @@ def create_server(
     )
     if secret is None:
         secret = os.urandom(32)
-    token = api_token or os.environ.get("UQGRID_API_TOKEN")
+    token = api_token if api_token is not None else os.environ.get("UQGRID_API_TOKEN")
     concurrency = int(max_concurrent_jobs or os.environ.get("UQGRID_MAX_CONCURRENT_JOBS", "2"))
     maximum_seconds = float(
         max_simulation_seconds or os.environ.get("UQGRID_MAX_SIMULATION_SECONDS", "60")
     )
     maximum_steps = int(
         max_simulation_steps or os.environ.get("UQGRID_MAX_SIMULATION_STEPS", "100000")
+    )
+    maximum_job_runtime = float(
+        max_job_runtime_seconds
+        if max_job_runtime_seconds is not None
+        else os.environ.get("UQGRID_MAX_JOB_RUNTIME_SECONDS", "300")
     )
     artifacts = LocalArtifactStore(root / "artifacts")
     cases = LocalCaseRepository(root / "cases", artifacts)
@@ -98,9 +109,10 @@ def create_server(
         simulations,
         repository=jobs,
         max_concurrent_jobs=concurrency,
+        max_job_runtime_seconds=maximum_job_runtime,
     )
     server_options = {}
-    if token:
+    if token is not None:
         server_options.update(
             token_verifier=StaticTokenVerifier(token, f"{base_url}/mcp", owner),
             auth=AuthSettings(
@@ -124,6 +136,17 @@ def create_server(
         """List cases available to the current UQGrid user."""
 
         return CaseList(cases=cases.list(owner))
+
+    if enable_local_case_import:
+
+        @server.tool()
+        def import_local_case(name: str, paths: list[str]) -> CaseManifest:
+            """Import a case from absolute paths readable by this local server."""
+
+            case_paths = [Path(path) for path in paths]
+            if any(not path.is_absolute() for path in case_paths):
+                raise ValueError("local case paths must be absolute")
+            return cases.import_files(owner, name, case_paths)
 
     @server.tool()
     def create_case_upload(
@@ -379,19 +402,20 @@ def main():
     parser.add_argument("--port", type=int, default=int(os.environ.get("UQGRID_MCP_PORT", "8000")))
     args = parser.parse_args()
     if args.transport == "streamable-http":
-        if "UQGRID_ARTIFACT_SIGNING_SECRET" not in os.environ:
+        if not os.environ.get("UQGRID_ARTIFACT_SIGNING_SECRET"):
             parser.error("streamable-http requires UQGRID_ARTIFACT_SIGNING_SECRET")
-        if "UQGRID_API_TOKEN" not in os.environ:
+        if not os.environ.get("UQGRID_API_TOKEN"):
             parser.error("streamable-http requires UQGRID_API_TOKEN")
+    server = create_server(enable_local_case_import=args.transport == "stdio")
     kwargs = {}
     if args.transport == "streamable-http":
         kwargs.update(
             host=args.host,
             port=args.port,
             streamable_http_path="/mcp",
-            transport_security=mcp._uqgrid_services["transport_security"],
+            transport_security=server._uqgrid_services["transport_security"],
         )
-    mcp.run(transport=args.transport, **kwargs)
+    server.run(transport=args.transport, **kwargs)
 
 
 if __name__ == "__main__":
