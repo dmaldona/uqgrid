@@ -1,0 +1,15 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY . /app
+RUN python -m pip install --no-cache-dir ".[mcp]"
+
+RUN useradd --create-home --uid 10001 uqgrid \
+    && mkdir -p /var/lib/uqgrid \
+    && chown -R uqgrid:uqgrid /var/lib/uqgrid
+
+USER uqgrid
+ENV UQGRID_SERVICE_DATA=/var/lib/uqgrid
+EXPOSE 8000
+
+CMD ["uqgrid-mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
