@@ -250,6 +250,10 @@ The timeout defaults to `300` seconds.
 `acopf_probability` defaults to `1.0`, preserving ACOPF-only behavior.
 `source_seed` defaults to `1234` and makes mixed-source row selection
 deterministic by `sample_idx`.
+Add `--use-source-seed-for-samples` to use that seed for load and generator
+perturbations too, in both production and smoke modes. Without this flag,
+perturbations keep the historical seed `1234`. For independent parallel
+experiments, use different seeds and separate output directories.
 
 ## Startup Preflight
 
@@ -440,6 +444,14 @@ interpreted as Q-limit enforcement enabled with final validation disabled.
 Contracts without dynamic-limit fields are interpreted as
 `enforce_dynamic_limits=false` with default tolerances. Existing ML readers
 remain compatible because the established NPZ arrays and shapes are unchanged.
+
+Keep `--source-seed` and `--use-source-seed-for-samples` unchanged on restart.
+Progress records their values in `sampling_config`; `--continue` rejects a
+different seed or flag before generating new samples, and `--status` shows the
+saved settings. Older outputs without this field are checked against any source
+seed in their diagnostics, then resumed with a warning: their original sampling
+flag cannot be verified. For those runs, supply the original settings; they are
+recorded at the next checkpoint and validated on subsequent resumes.
 
 Read status without running ACOPF, candidate generation, or replay:
 

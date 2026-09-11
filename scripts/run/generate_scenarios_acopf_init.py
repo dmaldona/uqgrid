@@ -3106,6 +3106,7 @@ def run_acopf_replay_smoke(
     sample_idx_start: int = 0,
     uqgrid_root: str | Path | None = None,
     pf_verbose: bool = False,
+    use_source_seed_for_samples: bool = False,
     fault_locations: Sequence[int] | str | None = None,
     fault_impedances: Sequence[float] | str | None = None,
     n_jobs: int | None = None,
@@ -3154,6 +3155,7 @@ def run_acopf_replay_smoke(
             sample_idx_start=sample_idx_start,
             uqgrid_root=uqgrid_root,
             pf_verbose=pf_verbose,
+            use_source_seed_for_samples=use_source_seed_for_samples,
         )
     )
     records = list(context.get("records", []))
@@ -3422,6 +3424,7 @@ def read_acopf_production_status(
             "integration_contract",
             resume.get("integration_contract"),
         ),
+        "sampling_config": progress.get("sampling_config"),
         "resume_error": resume_error,
         "progress_path": str(state_paths["progress"]),
         "diagnostics_path": str(state_paths["diagnostics"]),
@@ -3442,6 +3445,7 @@ def _production_progress(
     reject_reason: str | None = None,
     source_counts: Mapping[str, int] | None = None,
     integration_contract: Mapping[str, Any] | None = None,
+    sampling_config: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     progress = {
         "stage": "stage_4_production",
@@ -3466,6 +3470,8 @@ def _production_progress(
         progress["integration_contract"] = _normalize_integration_contract(
             integration_contract
         )
+    if sampling_config is not None:
+        progress["sampling_config"] = dict(sampling_config)
     return progress
 
 
@@ -3494,6 +3500,7 @@ def _load_production_resume_state(
     fault_locations: Sequence[int],
     fault_impedances: Sequence[float],
     expected_integration_contract: Mapping[str, Any],
+    expected_sampling_config: Mapping[str, Any],
 ) -> dict[str, Any]:
     state_paths = _production_state_paths(output_dir)
     managed_paths = [final_path, min_path, *state_paths.values()]
@@ -3568,11 +3575,44 @@ def _load_production_resume_state(
             "directory by restoring matching metadata or removing partial outputs."
         )
 
+    records = _read_jsonl(state_paths["diagnostics"])
+    saved_sampling = progress.get("sampling_config")
+    if saved_sampling is not None:
+        if saved_sampling != dict(expected_sampling_config):
+            raise ValueError(
+                "Resume rejected: sampling settings changed: "
+                f"saved={saved_sampling}, requested={dict(expected_sampling_config)}. "
+                "Use the original --source-seed and --use-source-seed-for-samples "
+                "settings, or choose a new output directory."
+            )
+    elif progress or records or resume["accepted_count"]:
+        # Older runs logged the source seed but not the sampling flag.
+        logged_seeds = {
+            int(record["source_seed"])
+            for record in records
+            if record.get("record_type") == "initialization_source_selection"
+            and "source_seed" in record
+        }
+        if logged_seeds and logged_seeds != {expected_sampling_config["source_seed"]}:
+            raise ValueError(
+                "Resume rejected: --source-seed disagrees with existing diagnostics "
+                f"(saved={sorted(logged_seeds)}, "
+                f"requested={expected_sampling_config['source_seed']}). "
+                "Use the original seed or choose a new output directory."
+            )
+        print(
+            "Warning: legacy output has no saved sampling_config; the original "
+            "--use-source-seed-for-samples setting cannot be verified. "
+            f"Continuing with {dict(expected_sampling_config)}. These must match "
+            "the original run and will be saved in the next checkpoint.",
+            file=sys.stderr,
+        )
+
     return {
         "accepted_count": int(resume["accepted_count"]),
         "next_sample_idx": int(resume["next_sample_idx"]),
         "total_candidate_attempts": int(progress.get("total_candidate_attempts", 0)),
-        "records": _read_jsonl(state_paths["diagnostics"]),
+        "records": records,
         "scenario_metadata": dict(scenario_metadata),
         "simulation_log": dict(simulation_log),
         "progress": progress,
@@ -3763,6 +3803,10 @@ def run_acopf_production(
     resolved_source_seed = int(
         source_seed if source_seed is not None else getattr(acopf_config, "source_seed", 1234)
     )
+    sampling_config = {
+        "source_seed": resolved_source_seed,
+        "use_source_seed_for_samples": bool(use_source_seed_for_samples),
+    }
 
     basename = probml_basename or _default_probml_basename(config)
     final_path, min_path = _probml_output_paths(output_dir, basename)
@@ -3774,6 +3818,7 @@ def run_acopf_production(
         fault_locations=fault_locations_list,
         fault_impedances=fault_impedances_list,
         expected_integration_contract=integration_contract,
+        expected_sampling_config=sampling_config,
     )
     records = list(resume_state["records"])
     scenario_metadata = dict(resume_state["scenario_metadata"])
@@ -3815,6 +3860,7 @@ def run_acopf_production(
             probml_outputs=latest_probml_outputs,
             source_counts=source_counts,
             integration_contract=integration_contract,
+            sampling_config=sampling_config,
         )
         _write_production_state(
             output_dir,
@@ -3847,7 +3893,7 @@ def run_acopf_production(
                 "accepted_operating_point_index": int(accepted_index),
                 "initialization_source": initialization_source,
                 "acopf_probability": float(resolved_acopf_probability),
-                "source_seed": int(resolved_source_seed),
+                **sampling_config,
             }
         )
         context_kwargs: dict[str, Any] = {
@@ -3916,6 +3962,7 @@ def run_acopf_production(
                 reject_reason=last_reject_reason,
                 source_counts=source_counts,
                 integration_contract=integration_contract,
+                sampling_config=sampling_config,
             )
             _write_production_state(
                 output_dir,
@@ -4047,6 +4094,7 @@ def run_acopf_production(
                 reject_reason=last_reject_reason,
                 source_counts=source_counts,
                 integration_contract=integration_contract,
+                sampling_config=sampling_config,
             )
             _write_production_state(
                 output_dir,
@@ -4142,6 +4190,7 @@ def run_acopf_production(
             probml_outputs=latest_probml_outputs,
             source_counts=source_counts,
             integration_contract=integration_contract,
+            sampling_config=sampling_config,
         )
         _write_production_state(
             output_dir,
@@ -4175,6 +4224,7 @@ def run_acopf_production(
         reject_reason=last_reject_reason,
         source_counts=source_counts,
         integration_contract=integration_contract,
+        sampling_config=sampling_config,
     )
     _write_production_state(
         output_dir,
@@ -4367,6 +4417,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sample_idx_start=args.sample_idx_start,
             uqgrid_root=args.uqgrid_root,
             pf_verbose=args.pf_verbose,
+            use_source_seed_for_samples=args.use_source_seed_for_samples,
             fault_locations=args.fault_locations,
             fault_impedances=args.fault_impedances,
             n_jobs=args.n_jobs,
@@ -4384,6 +4435,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sample_idx_start=args.sample_idx_start,
             uqgrid_root=args.uqgrid_root,
             pf_verbose=args.pf_verbose,
+            use_source_seed_for_samples=args.use_source_seed_for_samples,
         )
     else:
         progress = run_acopf_production(

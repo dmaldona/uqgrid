@@ -2381,6 +2381,124 @@ def test_production_resume_rejects_changed_integration_method(acopf, tmp_path):
 
 
 @pytest.mark.parametrize(
+    "resume_settings",
+    [
+        {"source_seed": 9877, "use_source_seed_for_samples": True},
+        {"source_seed": 9876},
+    ],
+)
+def test_production_resume_rejects_sampling_changes(acopf, tmp_path, resume_settings):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, target=1)
+    output_dir = tmp_path / "out"
+    common = dict(
+        config_path=config_path,
+        output_dir=output_dir,
+        acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+        acopf_probability=0.0,
+        probml_basename="prod",
+        direct_context_func=_accepted_direct_production_context(tmp_path),
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=_successful_fault_runner([]),
+    )
+    acopf.run_acopf_production(
+        **common, source_seed=9876, use_source_seed_for_samples=True
+    )
+    original_files = {path.name: path.read_bytes() for path in output_dir.iterdir()}
+    common["state_metadata_func"] = lambda **kwargs: pytest.fail("resume must fail before work")
+    # Omitting the flag is equivalent to changing it from True to False.
+    with pytest.raises(ValueError, match="sampling settings changed"):
+        acopf.run_acopf_production(
+            **common, **resume_settings, continue_run=True, target_accepted_scenarios=2
+        )
+    assert {path.name: path.read_bytes() for path in output_dir.iterdir()} == original_files
+
+
+def test_production_resume_preserves_sampling_settings_and_rows(acopf, tmp_path):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, target=1)
+    output_dir = tmp_path / "out"
+    seen = []
+    direct_context = _accepted_direct_production_context(tmp_path)
+
+    def context(**kwargs):
+        seen.append(
+            (kwargs["sample_idx"], kwargs["source_seed"], kwargs["use_source_seed_for_samples"])
+        )
+        return direct_context(**kwargs)
+
+    common = dict(
+        config_path=config_path,
+        output_dir=output_dir,
+        acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+        acopf_probability=0.0,
+        source_seed=9876,
+        use_source_seed_for_samples=True,
+        probml_basename="prod",
+        direct_context_func=context,
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=_successful_fault_runner([]),
+    )
+    acopf.run_acopf_production(**common)
+    original = acopf._load_npz_dict(output_dir / "prod_final.npz")
+    progress = acopf.run_acopf_production(
+        **common, continue_run=True, target_accepted_scenarios=2
+    )
+    expected = {"source_seed": 9876, "use_source_seed_for_samples": True}
+    assert progress["sampling_config"] == expected
+    assert seen == [(0, 9876, True), (1, 9876, True)]
+    data = acopf._load_npz_dict(output_dir / "prod_final.npz")
+    assert data["sample_idx"].tolist() == [0, 1]
+    for key in ("X", "Y", "scenario_ids"):
+        np.testing.assert_array_equal(data[key][:1], original[key])
+    status = acopf.read_acopf_production_status(output_dir=output_dir, probml_basename="prod")
+    assert status["sampling_config"] == expected
+    records = acopf._read_jsonl(output_dir / "acopf_init_diagnostics.jsonl")
+    selections = [r for r in records if r["record_type"] == "initialization_source_selection"]
+    assert all({key: r[key] for key in expected} == expected for r in selections)
+
+
+def test_legacy_resume_checks_logged_seed_and_warns_before_adopting_flag(acopf, tmp_path, capsys):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, target=1)
+    output_dir = tmp_path / "out"
+    common = dict(
+        config_path=config_path,
+        output_dir=output_dir,
+        acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+        acopf_probability=0.0,
+        probml_basename="prod",
+        direct_context_func=_accepted_direct_production_context(tmp_path),
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=_successful_fault_runner([]),
+    )
+    acopf.run_acopf_production(**common, source_seed=9876, use_source_seed_for_samples=True)
+    progress_path = output_dir / "acopf_init_progress.json"
+    progress = json.loads(progress_path.read_text())
+    progress.pop("sampling_config")
+    progress_path.write_text(json.dumps(progress))
+    records_path = output_dir / "acopf_init_diagnostics.jsonl"
+    records = acopf._read_jsonl(records_path)
+    for record in records:
+        record.pop("use_source_seed_for_samples", None)
+    acopf._write_jsonl(records_path, records)
+
+    with pytest.raises(ValueError, match="--source-seed disagrees with existing diagnostics"):
+        acopf.run_acopf_production(**common, source_seed=9877, continue_run=True)
+    capsys.readouterr()
+    acopf.run_acopf_production(
+        **common, source_seed=9876, use_source_seed_for_samples=True, continue_run=True
+    )
+    assert (
+        "original --use-source-seed-for-samples setting cannot be verified"
+        in capsys.readouterr().err
+    )
+    expected = {"source_seed": 9876, "use_source_seed_for_samples": True}
+    assert json.loads(progress_path.read_text())["sampling_config"] == expected
+    acopf.run_acopf_production(
+        **common, source_seed=9876, use_source_seed_for_samples=True, continue_run=True
+    )
+    assert "legacy output" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
     "context",
     [
         {
@@ -2726,3 +2844,35 @@ def test_status_skips_startup_preflight(acopf, tmp_path, monkeypatch, capsys):
     assert rc == 0
     assert "Startup preflight" not in captured.err
     assert json.loads(captured.out)["accepted_count"] == 0
+
+
+@pytest.mark.parametrize("mode", ["--smoke-acopf", "--smoke-replay"])
+@pytest.mark.parametrize("use_source_seed", [False, True])
+def test_smoke_cli_forwards_sampling_seed_to_candidate(
+    acopf, tmp_path, monkeypatch, capsys, mode, use_source_seed
+):
+    config_path, _, _, _, _, _ = _smoke_config(tmp_path)
+    seen = []
+
+    def candidate(*args, **kwargs):
+        seen.append(kwargs["global_seed"])
+        return {"rejected": True, "diagnostics": {"attempts": 1}}
+
+    monkeypatch.setattr(acopf, "collect_startup_preflight_checks", lambda **kwargs: [])
+    monkeypatch.setattr(
+        acopf,
+        "_load_generate_scenarios_module",
+        lambda: SimpleNamespace(
+            _prepare_operating_point_candidate=candidate,
+            _resolve_operating_point_config=dict,
+        ),
+    )
+    args = [
+        str(config_path), "--output-dir", str(tmp_path / "out"), mode,
+        "--source-seed", "9876",
+    ]
+    if use_source_seed:
+        args.append("--use-source-seed-for-samples")
+    assert acopf.main(args) == 1
+    assert seen == [9876 if use_source_seed else 1234]
+    assert json.loads(capsys.readouterr().out)["accepted"] is False
