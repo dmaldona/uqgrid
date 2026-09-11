@@ -2200,6 +2200,7 @@ def run_acopf_smoke(
     sample_idx_start: int = 0,
     uqgrid_root: str | Path | None = None,
     pf_verbose: bool = False,
+    use_source_seed_for_samples: bool = False,
     candidate_func: Callable[..., Mapping[str, Any]] | None = None,
     op_config_resolver: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     acopf_runner_func: Callable[..., Mapping[str, Any]] = run_exajugo_acopf,
@@ -2236,6 +2237,8 @@ def run_acopf_smoke(
     }
 
     records: list[Mapping[str, Any]] = []
+    # Use source_seed for sample generation if requested, otherwise use default 1234
+    effective_global_seed = acopf_config.source_seed if use_source_seed_for_samples else 1234
     prep = candidate_func(
         str(raw_path),
         str(dyr_path),
@@ -2243,7 +2246,7 @@ def run_acopf_smoke(
         scenario["operating_point_id"],
         noise_type=pert_cfg.get("load_noise_type", config.get("noise_type", "normal")),
         noise_var=pert_cfg.get("load_noise_var", config.get("noise_var", 0.1)),
-        global_seed=1234,
+        global_seed=effective_global_seed,
         balance_generation=pert_cfg.get("balance_generation", True),
         perturb_loads=pert_cfg.get("perturb_loads", True),
         perturb_gens=pert_cfg.get("perturb_gens", True),
@@ -2350,6 +2353,7 @@ def prepare_acopf_replay_context(
     sample_idx_start: int = 0,
     uqgrid_root: str | Path | None = None,
     pf_verbose: bool = False,
+    use_source_seed_for_samples: bool = False,
     smoke_func: Callable[..., Mapping[str, Any]] = run_acopf_smoke,
 ) -> dict[str, Any]:
     """Run ACOPF smoke and reconstruct the accepted context for replay."""
@@ -2363,6 +2367,7 @@ def prepare_acopf_replay_context(
             sample_idx_start=sample_idx_start,
             uqgrid_root=uqgrid_root,
             pf_verbose=pf_verbose,
+            use_source_seed_for_samples=use_source_seed_for_samples,
         )
     )
     records = _read_jsonl(output_dir / "acopf_init_diagnostics.jsonl")
@@ -2444,6 +2449,8 @@ def prepare_uqgrid_candidate_context(
     target_accepted_scenarios: int,
     max_total_attempts: int,
     remaining_attempts: int,
+    source_seed: int = 1234,
+    use_source_seed_for_samples: bool = False,
     uqgrid_root: str | Path | None = None,
     pf_verbose: bool = False,
     candidate_func: Callable[..., Mapping[str, Any]] | None = None,
@@ -2484,6 +2491,8 @@ def prepare_uqgrid_candidate_context(
         "accepted_operating_point_index": int(accepted_operating_point_index),
     }
     records: list[Mapping[str, Any]] = []
+    # Use source_seed for sample generation if requested, otherwise use default 1234
+    effective_global_seed = source_seed if use_source_seed_for_samples else 1234
     prep = candidate_func(
         str(raw_path),
         str(dyr_path),
@@ -2491,7 +2500,7 @@ def prepare_uqgrid_candidate_context(
         operating_point_id,
         noise_type=pert_cfg.get("load_noise_type", config.get("noise_type", "normal")),
         noise_var=pert_cfg.get("load_noise_var", config.get("noise_var", 0.1)),
-        global_seed=1234,
+        global_seed=effective_global_seed,
         balance_generation=pert_cfg.get("balance_generation", True),
         perturb_loads=pert_cfg.get("perturb_loads", True),
         perturb_gens=pert_cfg.get("perturb_gens", True),
@@ -2590,8 +2599,10 @@ def prepare_acopf_candidate_context(
     target_accepted_scenarios: int,
     max_total_attempts: int,
     remaining_attempts: int,
+    source_seed: int = 1234,
     uqgrid_root: str | Path | None = None,
     pf_verbose: bool = False,
+    use_source_seed_for_samples: bool = False,
     case_root: str = "acopf_cases",
     candidate_func: Callable[..., Mapping[str, Any]] | None = None,
     op_config_resolver: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
@@ -2632,6 +2643,8 @@ def prepare_acopf_candidate_context(
         "accepted_operating_point_index": int(accepted_operating_point_index),
     }
     records: list[Mapping[str, Any]] = []
+    # Use source_seed for sample generation if requested, otherwise use default 1234
+    effective_global_seed = source_seed if use_source_seed_for_samples else 1234
     prep = candidate_func(
         str(raw_path),
         str(dyr_path),
@@ -2639,7 +2652,7 @@ def prepare_acopf_candidate_context(
         operating_point_id,
         noise_type=pert_cfg.get("load_noise_type", config.get("noise_type", "normal")),
         noise_var=pert_cfg.get("load_noise_var", config.get("noise_var", 0.1)),
-        global_seed=1234,
+        global_seed=effective_global_seed,
         balance_generation=pert_cfg.get("balance_generation", True),
         perturb_loads=pert_cfg.get("perturb_loads", True),
         perturb_gens=pert_cfg.get("perturb_gens", True),
@@ -3668,6 +3681,7 @@ def run_acopf_production(
     acopf_config: AcopfInitializationConfig,
     acopf_probability: float | None = None,
     source_seed: int | None = None,
+    use_source_seed_for_samples: bool = False,
     target_accepted_scenarios: int | None = None,
     max_total_attempts: int | None = None,
     continue_run: bool = False,
@@ -3846,6 +3860,8 @@ def run_acopf_production(
             "remaining_attempts": remaining_attempts,
             "uqgrid_root": uqgrid_root,
             "pf_verbose": pf_verbose,
+            "source_seed": resolved_source_seed,
+            "use_source_seed_for_samples": use_source_seed_for_samples,
         }
         if candidate_func is not None:
             context_kwargs["candidate_func"] = candidate_func
@@ -4214,6 +4230,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Seed for deterministic production ACOPF/UQGrid source selection",
     )
     parser.add_argument(
+        "--use-source-seed-for-samples",
+        action="store_true",
+        help="Use source_seed as global_seed for sample generation (diverse samples per folder)",
+    )
+    parser.add_argument(
         "--target-accepted-scenarios",
         type=int,
         default=None,
@@ -4371,6 +4392,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             acopf_config=acopf_config,
             acopf_probability=args.acopf_probability,
             source_seed=args.source_seed,
+            use_source_seed_for_samples=args.use_source_seed_for_samples,
             target_accepted_scenarios=args.target_accepted_scenarios,
             max_total_attempts=args.max_total_attempts,
             continue_run=args.continue_run,
