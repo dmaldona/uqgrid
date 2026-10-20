@@ -1,3 +1,6 @@
+import json
+from collections import UserDict
+
 import numpy as np
 import pytest
 
@@ -5,37 +8,83 @@ from uqgrid.simulation import dynamics
 from uqgrid.simulation.config import IntegrationConfig
 
 
-def test_integration_config_accepts_slow_partition():
-    cfg = IntegrationConfig(
-        petsc=True,
-        arkimex=True,
-        enforce_dynamic_limits=False,
-        arkimex_slow_differential=[0, 2, 4],
-    )
-    assert cfg.arkimex_slow_differential == [0, 2, 4]
-    assert cfg.arkimex_fast_differential is None
+def test_integration_config_defaults_and_schema_after_arkimex_removal():
+    cfg = IntegrationConfig()
+    removed = {
+        "arkimex", "arkimex_slow_differential", "arkimex_fast_differential",
+    }
+
+    assert cfg.method == "beuler"
+    assert cfg.petsc is False
+    assert removed.isdisjoint(IntegrationConfig.model_fields)
+    assert removed.isdisjoint(IntegrationConfig.model_json_schema()["properties"])
+    assert removed.isdisjoint(cfg.model_dump())
+    assert all(not hasattr(cfg, name) for name in removed)
 
 
-def test_integration_config_accepts_fast_partition():
-    cfg = IntegrationConfig(
-        petsc=True,
-        arkimex=True,
-        enforce_dynamic_limits=False,
-        arkimex_fast_differential=[1, 3],
-    )
-    assert cfg.arkimex_fast_differential == [1, 3]
-    assert cfg.arkimex_slow_differential is None
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("arkimex", True),
+        ("arkimex", False),
+        ("arkimex", None),
+        ("arkimex_slow_differential", None),
+        ("arkimex_slow_differential", []),
+        ("arkimex_slow_differential", [0, 2]),
+        ("arkimex_fast_differential", None),
+        ("arkimex_fast_differential", []),
+        ("arkimex_fast_differential", [1, 3]),
+    ],
+)
+@pytest.mark.parametrize("petsc", [False, True])
+def test_integration_config_rejects_removed_arkimex_keys(key, value, petsc):
+    with pytest.raises(ValueError, match=rf"ARKIMEX has been removed.*{key}"):
+        IntegrationConfig(petsc=petsc, **{key: value})
 
 
-def test_integration_config_rejects_both_fast_and_slow_lists():
-    with pytest.raises(ValueError):
-        IntegrationConfig(
-            petsc=True,
-            arkimex=True,
-            enforce_dynamic_limits=False,
-            arkimex_fast_differential=[1, 3],
-            arkimex_slow_differential=[0, 2],
-        )
+def test_integration_config_rejects_removed_arkimex_keys_in_mapping():
+    with pytest.raises(ValueError, match="ARKIMEX has been removed.*arkimex"):
+        IntegrationConfig.model_validate(UserDict({"arkimex": False}))
+
+
+def test_integration_config_rejects_serialized_removed_arkimex_keys():
+    payload = {"arkimex": False, "arkimex_slow_differential": None}
+
+    with pytest.raises(ValueError, match="ARKIMEX has been removed.*arkimex_slow_differential"):
+        IntegrationConfig.model_validate(payload)
+    with pytest.raises(ValueError, match="ARKIMEX has been removed.*arkimex_slow_differential"):
+        IntegrationConfig.model_validate_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize(
+    "petsc_args",
+    [
+        ["-ts_arkimex_type", "a2"],
+        ["-ts_arkimex_type=a2"],
+        ["--ts_arkimex_type=a2"],
+        ["-ts_arkimex_fastslowsplit"],
+        ["-ts_arkimex_fully_implicit", "true"],
+        ["-ts_arkimex"],
+    ],
+)
+@pytest.mark.parametrize("petsc", [False, True])
+def test_integration_config_rejects_removed_arkimex_petsc_options(petsc_args, petsc):
+    with pytest.raises(ValueError, match="ARKIMEX has been removed.*PETSc options"):
+        IntegrationConfig(petsc=petsc, petsc_args=petsc_args)
+
+
+@pytest.mark.parametrize(
+    "method,petsc",
+    [("beuler", False), ("beuler", True), ("cn", True), ("herk2", False), ("herk4", False)],
+)
+def test_integration_config_preserves_supported_methods_and_solver_options(method, petsc):
+    options = ["-ksp_type", "gmres", "-snes_rtol=1e-9", "-ts_monitor"]
+    cfg = IntegrationConfig(method=method, petsc=petsc, petsc_args=options)
+
+    assert cfg.method == method
+    assert cfg.petsc is petsc
+    assert cfg.petsc_args == options
+    assert IntegrationConfig(unrelated_option=True).method == "beuler"
 
 
 def test_integration_config_q_limit_defaults():
@@ -80,6 +129,7 @@ def test_herk_resets_cached_jacobian_mode(monkeypatch):
         ({"steps": -2}, "positive integer"),
         ({"ton": 0.2, "toff": 0.1}, "toff"),
         ({"method": "bogus"}, "method"),
+        ({"method": "arkimex", "petsc": True}, "method"),
         ({"method": "cn"}, "requires `petsc=True`"),
         ({"method": "herk2", "petsc": True}, "requires `petsc=False`"),
         ({"jacobian_mode": "invalid"}, "jacobian_mode"),
@@ -99,24 +149,19 @@ def test_herk_resets_cached_jacobian_mode(monkeypatch):
             "petsc=True",
         ),
         (
-            {"arkimex": True, "enforce_dynamic_limits": False},
-            "requires `petsc=True`",
-        ),
-        (
-            {
-                "arkimex": True,
-                "petsc": True,
-                "method": "cn",
-                "enforce_dynamic_limits": False,
-            },
-            "cannot be combined",
-        ),
-        (
             {"petsc": True, "petsc_args": ["-ts_type", "cn"]},
             "cannot override",
         ),
         (
             {"petsc": True, "petsc_args": ["-ts_dt=0.01"]},
+            "cannot override",
+        ),
+        (
+            {"petsc": True, "petsc_args": ["-ts_type", "arkimex"]},
+            "cannot override",
+        ),
+        (
+            {"petsc": True, "petsc_args": ["-ts_type=arkimex"]},
             "cannot override",
         ),
     ],
@@ -164,7 +209,7 @@ def test_integration_config_rejects_invalid_dynamic_limit_controls(kwargs):
         IntegrationConfig(**kwargs)
 
 
-@pytest.mark.parametrize("option", ["arkimex", "comp_sens", "fsolve"])
+@pytest.mark.parametrize("option", ["comp_sens", "fsolve"])
 def test_dynamic_limits_reject_unsupported_legacy_paths(option):
     with pytest.raises(
         ValueError,
@@ -179,11 +224,11 @@ def test_petsc_method_mapping_is_explicit():
             class Type:
                 BEULER = "beuler"
                 CN = "cn"
-                ARKIMEX = "arkimex"
 
-    assert dynamics._petsc_ts_type(FakePETSc, "beuler", False) == "beuler"
-    assert dynamics._petsc_ts_type(FakePETSc, "cn", False) == "cn"
-    assert dynamics._petsc_ts_type(FakePETSc, "beuler", True) == "arkimex"
+    assert dynamics._petsc_ts_type(FakePETSc, "beuler") == "beuler"
+    assert dynamics._petsc_ts_type(FakePETSc, "cn") == "cn"
+    with pytest.raises(ValueError, match="Unsupported PETSc integration method"):
+        dynamics._petsc_ts_type(FakePETSc, "arkimex")
 
 
 @pytest.mark.parametrize(

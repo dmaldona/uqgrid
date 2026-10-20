@@ -334,8 +334,7 @@ Set `method="cn"` explicitly for PETSc Crank-Nicolson. It uses `TSCN` when hard
 limits are disabled or no enabled limited states exist, and an explicit
 per-interval ordinary-SNES trapezoidal solve otherwise. Omitting `method`
 selects backward Euler, including when `petsc=true`. Native HERK2/HERK4 require
-`petsc=false`; PETSc ARKIMEX is selected separately with
-`arkimex=true` and requires `enforce_dynamic_limits=false`. PETSc options
+`petsc=false`. PETSc options
 cannot override the configured method or time grid. Histories generated before
 this normalized contract have different time axes and should not be appended
 to corrected dense-history datasets.

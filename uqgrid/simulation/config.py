@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -86,7 +87,6 @@ class IntegrationConfig(BaseModel):
         description="Maximum active-set iterations for hard dynamic limits.",
     )
     solve_powerflow_dynamics: bool = Field(True, description="Solve power flow before dynamics.")
-    arkimex: bool = Field(False, description="Use ARKIMEX integrator.")
     check_jacobian: bool = Field(False, description="Run FD Jacobian check (non-PETSc only).")
     jacobian_mode: str = Field(
         "analytical", description="Residual Jacobian assembly: analytical | finite_difference."
@@ -95,26 +95,28 @@ class IntegrationConfig(BaseModel):
     jacobian_check_tol: float = Field(1e-6, description="Absolute tolerance for Jacobian FD checks.")
     jacobian_check_top_k: int = Field(10, description="Number of Jacobian mismatches to report.")
     jacobian_check_csv: Optional[str] = Field(None, description="Optional CSV path for Jacobian mismatch report.")
-    arkimex_slow_differential: Optional[List[int]] = Field(
-        default=None,
-        description=(
-            "Optional list with the global indexes of differential equations that"
-            " must be treated as slow in the ARKIMEX fast/slow split."
-        ),
-    )
-    arkimex_fast_differential: Optional[List[int]] = Field(
-        default=None,
-        description=(
-            "Optional list with the global indexes of differential equations that"
-            " must be treated as fast in the ARKIMEX fast/slow split."
-        ),
-    )
     method: str = Field(
         "beuler",
         description="Integrator method: beuler | cn | herk2 | herk4.",
     )
     herk_alg_tol: float = Field(1e-10, gt=0.0, description="HERK stage algebraic tolerance.")
     herk_alg_max_iter: int = Field(50, gt=0, description="HERK stage Newton max iterations.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_arkimex_options(cls, values):
+        if isinstance(values, Mapping):
+            removed = sorted({
+                "arkimex",
+                "arkimex_slow_differential",
+                "arkimex_fast_differential",
+            }.intersection(values))
+            if removed:
+                raise ValueError(
+                    "ARKIMEX has been removed; unsupported options: "
+                    + ", ".join(removed)
+                )
+        return values
 
     @field_validator('steps', mode='after')
     def steps_non_negative(cls, v, info: Any):
@@ -138,13 +140,10 @@ class IntegrationConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_integration_contract(self):
-        slow = self.arkimex_slow_differential
-        fast = self.arkimex_fast_differential
         if self.enforce_dynamic_limits:
             conflicts = [
                 name
                 for name, enabled in (
-                    ("arkimex", self.arkimex),
                     ("comp_sens", self.comp_sens),
                     ("fsolve", self.fsolve),
                 )
@@ -157,10 +156,6 @@ class IntegrationConfig(BaseModel):
                     f"{formatted}. Set `enforce_dynamic_limits=False` to use "
                     "these legacy integration paths."
                 )
-        if slow is not None and fast is not None:
-            raise ValueError(
-                "Specify only one of `arkimex_slow_differential` or `arkimex_fast_differential`."
-            )
         if self.toff < self.ton:
             raise ValueError("`toff` must be greater than or equal to `ton`.")
         if self.method == "cn" and not self.petsc:
@@ -181,13 +176,20 @@ class IntegrationConfig(BaseModel):
             raise ValueError(
                 "`comp_sens=True` requires `petsc=True` and `method='cn'`."
             )
-        if self.arkimex:
-            if not self.petsc:
-                raise ValueError("`arkimex=True` requires `petsc=True`.")
-            if self.method != "beuler":
-                raise ValueError(
-                    "`arkimex=True` cannot be combined with `cn`, `herk2`, or `herk4`."
-                )
+        petsc_options = {
+            arg.lstrip("-").split("=", 1)[0]
+            for arg in self.petsc_args
+            if arg.startswith("-")
+        }
+        removed_petsc_options = sorted(
+            name for name in petsc_options
+            if name == "ts_arkimex" or name.startswith("ts_arkimex_")
+        )
+        if removed_petsc_options:
+            raise ValueError(
+                "ARKIMEX has been removed; unsupported PETSc options: "
+                + ", ".join(f"-{name}" for name in removed_petsc_options)
+            )
 
         reserved_petsc_options = {
             "ts_type",
@@ -200,12 +202,7 @@ class IntegrationConfig(BaseModel):
             "ts_time_span",
             "ts_adapt_type",
         }
-        conflicts = sorted({
-            arg.lstrip("-").split("=", 1)[0]
-            for arg in self.petsc_args
-            if arg.startswith("-")
-            and arg.lstrip("-").split("=", 1)[0] in reserved_petsc_options
-        })
+        conflicts = sorted(petsc_options & reserved_petsc_options)
         if conflicts:
             raise ValueError(
                 "PETSc options cannot override IntegrationConfig method or time grid: "

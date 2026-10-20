@@ -48,9 +48,7 @@ def _get_petsc_for_config(config):
     return _initialize_petsc(config.petsc_args)
 
 
-def _petsc_ts_type(PETSc, method, arkimex):
-    if arkimex:
-        return PETSc.TS.Type.ARKIMEX
+def _petsc_ts_type(PETSc, method):
     if method == "beuler":
         return PETSc.TS.Type.BEULER
     if method == "cn":
@@ -2485,36 +2483,6 @@ class DAE_petsc(object):
             self.theta = theta
             self.J = J
 
-            # ARKIMEX INFORMATION
-            self.slow_indices = None
-            self.fast_indices = None
-            self.fast_indices_alg = None
-            self.fast_indices_dif = None
-            self.current_step = -1
-            self.jfast_frozen = None # frozen Jacobian for fast system
-            self.ff_arkimex = None
-
-            # Pre-computed indices and structures for fast operations
-            self._jfrozen_data_indices = None
-            self._jfrozen_csr = None
-            self._jfast_data_indices = None
-            self._jfast_csr = None
-            self._jfast_diag_indices_in_data = None
-            self._indices_precomputed = False
-
-        def set_ndiffeq_fast(self, ndiffeq_fast):
-            self.ndiffeq_fast = ndiffeq_fast
-
-        def set_fast_indices_split(self, fast_indices_alg, fast_indices_dif):
-            self.fast_indices_alg = fast_indices_alg
-            self.fast_indices_dif = fast_indices_dif
-
-            if not self._indices_precomputed and self.J.nnz > 0:
-                self._precompute_submatrix_indices()        
-
-        def set_ts_ref(self, ts):
-            self.ts_ref = ts
-        
         def evalFunction(self, ts, t, x, xdot, f):
             start, end = x.getOwnershipRange()
             NDIFFEQ = self.psys.num_dof_dif
@@ -2547,170 +2515,6 @@ class DAE_petsc(object):
             
             P.setValuesCSR(Jp_temp.indptr, Jp_temp.indices, -Jp_temp.data)
             P.assemble()
-            return True
-
-        #####################
-        # ARKIMEX callbacks #
-        #####################
-
-        def _precompute_submatrix_indices(self):
-            """
-            Performs one-time computation of indices and CSR structures for submatrices.
-            This avoids expensive sparse matrix slicing inside the time-stepper.
-            """            
-            # 1. Create a map where data contains its own index
-            J_idx_map = self.J.copy()
-            J_idx_map.data = np.arange(self.J.nnz, dtype=np.int32)
-
-            # 2. Pre-compute for jfast_frozen = J[fast_indices_dif, fast_indices_dif]
-            jfrozen_map = J_idx_map[self.fast_indices_dif][:, self.fast_indices_dif]
-            self._jfrozen_data_indices = jfrozen_map.data.copy()
-            self._jfrozen_csr = (jfrozen_map.indices.copy(), jfrozen_map.indptr.copy(), jfrozen_map.shape)
-
-            # 3. Pre-compute for J_temp = J[fast_indices, fast_indices]
-            jfast_map = J_idx_map[self.fast_indices][:, self.fast_indices]
-            self._jfast_data_indices = jfast_map.data.copy()
-            self._jfast_csr = (jfast_map.indices.copy(), jfast_map.indptr.copy(), jfast_map.shape)
-            
-            # Pre-allocate the temporary Jacobian for fast subsystem
-            self._jfast_temp_data = np.zeros(len(self._jfast_data_indices), dtype=np.float64)
-
-            # 4. Find the locations of the diagonal entries in J_temp's data array
-            diag_indices = []
-            for i in range(self.ndiffeq_fast):
-                start, end = jfast_map.indptr[i], jfast_map.indptr[i+1]
-                cols_in_row = jfast_map.indices[start:end]
-                
-                if i in cols_in_row:
-                    loc_in_row = np.where(cols_in_row == i)[0][0]
-                    diag_indices.append(start + loc_in_row)
-            
-            self._jfast_diag_indices_in_data = np.array(diag_indices, dtype=np.int32)
-            
-            # 5. NEW: Precompute indices for the differential-differential block
-            # This is the [:ndiffeq_fast, :ndiffeq_fast] submatrix of jfast
-            diff_diff_indices = []
-            off_diag_indices = []  # For the [:ndiffeq_fast, ndiffeq_fast:] block
-            
-            for i in range(len(self.fast_indices)):
-                start, end = jfast_map.indptr[i], jfast_map.indptr[i+1]
-                cols_in_row = jfast_map.indices[start:end]
-                
-                if i < self.ndiffeq_fast:
-                    # This is a differential equation row
-                    for idx, col in enumerate(cols_in_row):
-                        data_idx = start + idx
-                        if col < self.ndiffeq_fast:
-                            # This entry is in the diff-diff block
-                            diff_diff_indices.append(data_idx)
-                        else:
-                            # This entry is in the off-diagonal block (diff-alg)
-                            off_diag_indices.append(data_idx)
-            
-            self._jfast_diff_diff_indices = np.array(diff_diff_indices, dtype=np.int32)
-            self._jfast_off_diag_indices = np.array(off_diag_indices, dtype=np.int32)
-            
-            # 6. Create mapping from jfrozen data indices to jfast data indices
-            # Since both come from the same original matrix, we need to map between them
-            jfrozen_indices, jfrozen_indptr, jfrozen_shape = self._jfrozen_csr
-            jfast_indices, jfast_indptr, jfast_shape = self._jfast_csr
-            
-            jfrozen_to_jfast_map = []
-            for i in range(self.ndiffeq_fast):
-                # Find entries in jfrozen row i
-                jfrozen_start, jfrozen_end = jfrozen_indptr[i], jfrozen_indptr[i+1]
-                jfrozen_cols = jfrozen_indices[jfrozen_start:jfrozen_end]
-                
-                # Find corresponding entries in jfast row i  
-                jfast_start, jfast_end = jfast_indptr[i], jfast_indptr[i+1]
-                jfast_cols = jfast_indices[jfast_start:jfast_end]
-                
-                for idx, col in enumerate(jfrozen_cols):
-                    if col < self.ndiffeq_fast:  # Only map entries in the diff-diff block
-                        jfast_idx = np.where(jfast_cols == col)[0]
-                        if len(jfast_idx) > 0:
-                            jfrozen_to_jfast_map.append((jfrozen_start + idx, jfast_start + jfast_idx[0]))
-            
-            self._jfrozen_to_jfast_data_map = np.array(jfrozen_to_jfast_map, dtype=np.int32)
-            
-            self._indices_precomputed = True
-
-        def evalRHSFunctionSlow(self, ts, t, x, f):
-            start, end = x.getOwnershipRange()
-            xx = np.array(x[start:end])
-            ff = self.ff_arkimex
-            f.setArray(ff[self.slow_indices])
-            f.assemble()
-        
-        def evalIFunctionFast_split(self, ts, t, x, xdot, f):
-            tstep = self.ts_ref.getStepNumber()
-            ndiffeq_fast = self.ndiffeq_fast
-            start, end = x.getOwnershipRange()
-            xx = np.array(x[start:end])
-            ff = np.zeros_like(xx)
-
-            # We compute Jacobian once at the beginning of the time step
-            if tstep != self.current_step:
-                residual_jacobian(self.J, xx, self.theta, self.psys)
-                # Extract data using pre-computed indices
-                jfrozen_data = self.J.data[self._jfrozen_data_indices]
-                # Reconstruct the sparse matrix from pre-computed CSR structure
-                indices, indptr, shape = self._jfrozen_csr
-                self.jfast_frozen = csr_matrix((jfrozen_data, indices, indptr), shape=shape)
-                self.current_step = tstep
-
-            residual_function(ff, xx, self.theta, self.psys)
-
-            # Store residual for evalRHS
-            self.ff_arkimex = ff
-
-            f.setArray(-ff[self.fast_indices])
-            f[:ndiffeq_fast] = np.zeros(len(self.fast_indices_dif))
-            f[:ndiffeq_fast] += xdot[:ndiffeq_fast]
-            f[:ndiffeq_fast] -= self.jfast_frozen.dot(xx[self.fast_indices_dif])
-            f.assemble()
-
-        def evalRHSFunctionFast_split(self, ts, t, x, f):
-            start, end = x.getOwnershipRange()
-            ndiffeq_fast = self.ndiffeq_fast
-            xx = np.array(x[start:end])
-            
-            ff = self.ff_arkimex
-            f.setArray(ff[self.fast_indices])
-            f[ndiffeq_fast:] = np.zeros(len(self.fast_indices_alg))
-            f[:ndiffeq_fast] -= self.jfast_frozen.dot(xx[self.fast_indices_dif])
-            f.assemble()
-
-        def evalIJacobianFast_split(self, ts, t, x, xdot, a, Jfast, Pfast):
-            start, end = x.getOwnershipRange()
-            xx = np.array(x[start:end])
-            ndiffeq_fast = self.ndiffeq_fast
-            
-            # Compute full Jacobian
-            residual_jacobian(self.J, xx, self.theta, self.psys)
-            
-            # Extract data for fast subsystem directly using precomputed indices
-            # This replaces: J_temp = self.J[self.fast_indices][:, self.fast_indices]
-            self._jfast_temp_data[:] = self.J.data[self._jfast_data_indices]
-            
-            # Zero out the off-diagonal block (differential-algebraic coupling)
-            self._jfast_temp_data[self._jfast_off_diag_indices] = 0.0
-            
-            # Copy the frozen Jacobian values to the differential-differential block
-            # This replaces: J_temp[:ndiffeq_fast, :ndiffeq_fast] = self.jfast_frozen[:, :]
-            if self._jfrozen_to_jfast_data_map.size > 0:
-                jfrozen_data_vals = self.jfast_frozen.data[self._jfrozen_to_jfast_data_map[:, 0]]
-                self._jfast_temp_data[self._jfrozen_to_jfast_data_map[:, 1]] = jfrozen_data_vals
-            
-            # Add -a*I to the diagonal of the differential part
-            self._jfast_temp_data[self._jfast_diag_indices_in_data] -= a
-            
-            # Set the values in the PETSc matrix using precomputed CSR structure
-            indices, indptr, shape = self._jfast_csr
-            Pfast.setValuesCSR(indptr, indices, -self._jfast_temp_data)
-            Pfast.assemble()
-            if Jfast != Pfast: 
-                Jfast.assemble()
             return True
 
 class ALG_petsc(object):
@@ -2838,64 +2642,6 @@ def compute_initial_state_sensitivity(psys, lambda_adjoint, nominal_params, eps=
     
     return sensitivity
 
-def generate_default_partition_indices(psys, slow_diff_indices=None, fast_diff_indices=None):
-    """Generate fast/slow index sets for ARKIMEX.
-
-    Args:
-        psys: Power system object with sizing information.
-        slow_diff_indices: Optional iterable with the global indexes of
-            differential equations that must belong to the slow subsystem.
-        fast_diff_indices: Optional iterable with the global indexes of
-            differential equations that must belong to the fast subsystem.
-
-    Returns:
-        Tuple containing the index lists expected by the ARKIMEX callbacks.
-    """
-
-    dif_size = psys.num_dof_dif
-    alg_size = psys.num_dof_alg
-    pow_size = 2 * psys.nbuses
-
-    all_diff = list(range(dif_size))
-
-    if slow_diff_indices is not None and fast_diff_indices is not None:
-        raise ValueError("Specify only one of slow or fast differential index sets.")
-
-    def _validate_diff_indices(indices, label):
-        if indices is None:
-            return None
-        processed = [int(idx) for idx in indices]
-        if len(set(processed)) != len(processed):
-            raise ValueError(f"Duplicate entries detected in {label} indices.")
-        for idx in processed:
-            if idx < 0 or idx >= dif_size:
-                raise ValueError(
-                    f"{label.capitalize()} index {idx} is outside the valid range [0, {dif_size - 1}]."
-                )
-        return sorted(processed)
-
-    slow_validated = _validate_diff_indices(slow_diff_indices, "slow differential")
-    fast_validated = _validate_diff_indices(fast_diff_indices, "fast differential")
-
-    if fast_validated is not None:
-        fast_diff = fast_validated
-        slow_indices = [idx for idx in all_diff if idx not in fast_diff]
-        fast_diff_indices = fast_diff
-    elif slow_validated is not None:
-        slow_indices = slow_validated
-        fast_diff_indices = [idx for idx in all_diff if idx not in slow_indices]
-    else:
-        midpoint = dif_size // 2
-        slow_indices = list(range(midpoint))
-        fast_diff_indices = list(range(midpoint, dif_size))
-
-    fast_indices_alg = list(range(dif_size, dif_size + alg_size + pow_size))
-    fast_indices = fast_diff_indices + fast_indices_alg
-    fast_indices_dif = fast_diff_indices
-    ndiff_fast = len(fast_diff_indices)
-
-    return slow_indices, fast_indices, fast_indices_alg, fast_indices_dif, ndiff_fast
-
 def integrate_system(
     psys: Psystem, config: IntegrationConfig, ctx: Optional[IntegrationCtx] = None
 ) -> dict:
@@ -2925,7 +2671,6 @@ def integrate_system(
     jacobian_check_csv = config.jacobian_check_csv
     power_injection = config.power_injection
     solve_power_flow = config.solve_powerflow_dynamics
-    arkimex = config.arkimex
     method = config.method
     psys.power_injection = power_injection
     psys.jacobian_mode = config.jacobian_mode
@@ -2937,10 +2682,6 @@ def integrate_system(
         return integrate_system_herk(psys, config, ctx)
     else:
         raise ValueError(f"Unknown integration method: {method}")
-
-    # check for arkimex enabled
-    if arkimex and petsc:
-        logger.info("ARKIMEX activated.")
 
     results = {}
     # retrieve parameters
@@ -3100,52 +2841,10 @@ def integrate_system(
         opts = PETSc.Options()
         opts.setValue("ts_adapt_type", "none")
 
-        if arkimex:
-            slow_indices, fast_indices, fast_indices_alg, fast_indices_dif, ndiff_fast = generate_default_partition_indices(
-                psys,
-                slow_diff_indices=config.arkimex_slow_differential,
-                fast_diff_indices=config.arkimex_fast_differential,
-            )
-            
-            # Set the optional fields in the DAE object
-            dae.slow_indices = slow_indices
-            dae.fast_indices = fast_indices
-            dae.set_ndiffeq_fast(ndiff_fast)
-            dae.set_fast_indices_split(fast_indices_alg, fast_indices_dif)
-            dae.set_ts_ref(ts)
-
-            # Provide stable default PETSc options for ARKIMEX unless the user overrides them.
-            if not opts.hasName("ts_arkimex_type"):
-                opts.setValue("ts_arkimex_type", "a2")
-
-            # Preallocate the Jacobian for the fast variables
-            nfast = len(fast_indices)
-            jac_fast = PETSc.Mat()
-            jac_fast.create(PETSc.COMM_WORLD)
-            jac_fast.setSizes([nfast, nfast])
-            jac_fast.setType('seqaij')
-
-            # Extract the fast part of the rhs Jacobian
-            j_fast_pattern = jacobian[fast_indices][:, fast_indices]
-            jac_fast.setPreallocationCSR([j_fast_pattern.indptr, j_fast_pattern.indices, j_fast_pattern.data])
-            jac_fast.assemblyBegin()
-            jac_fast.assemblyEnd()
-
-            iss = PETSc.IS().createGeneral(slow_indices, comm=PETSc.COMM_WORLD)
-            isf = PETSc.IS().createGeneral(fast_indices, comm=PETSc.COMM_WORLD)
-            ts.setType(ts.Type.ARKIMEX)
-            ts.setARKIMEXFastSlowSplit(True)
-            ts.setRHSSplitIS("slow", iss)
-            ts.setRHSSplitIS("fast", isf)
-            ts.setRHSSplitRHSFunction("slow", dae.evalRHSFunctionSlow, None)
-            ts.setRHSSplitIFunction("fast", dae.evalIFunctionFast_split, None)
-            ts.setRHSSplitRHSFunction("fast", dae.evalRHSFunctionFast_split, None)
-            ts.setRHSSplitIJacobian("fast", dae.evalIJacobianFast_split, jac_fast, jac_fast)
-        else:
-            ts.setType(_petsc_ts_type(PETSc, method, arkimex=False))
-            ts.setIFunction(dae.evalFunction, rhs_vec)
-            ts.setIJacobian(dae.evalJacobian, jac_rhs)
-            ts.setIJacobianP(dae.evalJacobianP, jac_par)
+        ts.setType(_petsc_ts_type(PETSc, method))
+        ts.setIFunction(dae.evalFunction, rhs_vec)
+        ts.setIJacobian(dae.evalJacobian, jac_rhs)
+        ts.setIJacobianP(dae.evalJacobianP, jac_par)
 
         # create adjoint integrator
         if comp_sens:
@@ -3166,7 +2865,7 @@ def integrate_system(
             ts.setCostGradients(v_lambda, v_mu)
             ts.setSaveTrajectory()
 
-        expected_ts_type = _petsc_ts_type(PETSc, method, arkimex)
+        expected_ts_type = _petsc_ts_type(PETSc, method)
         ts.setFromOptions()
         if ts.getType() != expected_ts_type:
             raise ValueError(

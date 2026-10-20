@@ -419,68 +419,6 @@ def test_petsc_uses_exact_off_grid_fault_transitions(data_dir, method):
     assert fault.active is False
 
 
-def test_petsc_arkimex_uses_common_grid_without_fault(data_dir):
-    pytest.importorskip("petsc4py")
-
-    psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
-    add_dyr(psys, os.path.join(data_dir, "GENROU.dyr"))
-    psys.createYbusComplex()
-    config = IntegrationConfig(
-        petsc=True,
-        arkimex=True,
-        enforce_dynamic_limits=False,
-        steps=2,
-        dt=0.01,
-        ton=10.0,
-        toff=11.0,
-        power_injection=True,
-    )
-
-    result = integrate_system(psys, config)
-
-    np.testing.assert_allclose(result["tvec"], [0.0, 0.01, 0.02])
-    assert result["history"].shape[1] == 3
-
-
-def test_petsc_arkimex_uses_exact_off_grid_fault_transitions(data_dir):
-    pytest.importorskip("petsc4py")
-
-    psys = load_psse(raw_filename=os.path.join(data_dir, "2bus_33.raw"))
-    add_dyr(psys, os.path.join(data_dir, "GENROU.dyr"))
-    psys.add_busfault(1, 1.0)
-    psys.createYbusComplex()
-    pf_solution = runpf(psys, verbose=False)
-    z0, theta = initialize_system(psys, pf_solution)
-    ctx = IntegrationCtx()
-    ctx.set_initial_conditions(z0.copy())
-    ctx.set_theta(theta.copy())
-    config = IntegrationConfig(
-        petsc=True,
-        arkimex=True,
-        enforce_dynamic_limits=False,
-        steps=4,
-        dt=0.01,
-        ton=0.015,
-        toff=0.027,
-        power_injection=True,
-    )
-
-    result = integrate_system(psys, config, ctx)
-
-    np.testing.assert_allclose(
-        result["tvec"], [0.0, 0.01, 0.015, 0.02, 0.027, 0.03, 0.04]
-    )
-    residual = np.zeros_like(z0)
-    fault = psys.fault_events[0]
-    fault.apply()
-    residual_function(residual, result["history"][:, 2], theta, psys)
-    assert np.linalg.norm(residual[psys.num_dof_dif:], np.inf) < 1e-8
-    fault.remove()
-    residual_function(residual, result["history"][:, 4], theta, psys)
-    assert np.linalg.norm(residual[psys.num_dof_dif:], np.inf) < 1e-8
-    assert fault.active is False
-
-
 def test_static_generators_reject_inconsistent_voltage_setpoints(data_dir, tmp_path):
     psys = load_psse(raw_filename=os.path.join(data_dir, "ieee9_v33.raw"))
     psys.add_gen(bus=1, idx_name="extra", psch=0.0, qsch=0.0, vset=0.95)
