@@ -24,6 +24,7 @@ from uqgrid.simulation.residual import residual_function
 
 METHODS = (
     pytest.param("beuler", False, id="native-be"),
+    pytest.param("cn", False, id="native-cn"),
     pytest.param("herk2", False, id="herk2"),
     pytest.param("herk4", False, id="herk4"),
     pytest.param("beuler", True, id="petsc-be"),
@@ -31,6 +32,7 @@ METHODS = (
 )
 IMPLICIT_METHODS = (
     pytest.param("beuler", False, id="native-be"),
+    pytest.param("cn", False, id="native-cn"),
     pytest.param("beuler", True, id="petsc-be"),
     pytest.param("cn", True, id="petsc-cn"),
 )
@@ -462,10 +464,13 @@ def test_implicit_endpoint_equations_and_complementarity(
         ) < 1e-8
 
 
-def test_native_and_petsc_be_match_on_the_common_fault_case(data_dir):
+@pytest.mark.parametrize("method", ["beuler", "cn"])
+def test_native_and_petsc_implicit_methods_match_on_the_common_fault_case(
+    data_dir, method
+):
     native = _run_two_bus(
         data_dir,
-        "beuler",
+        method,
         False,
         fault=True,
         biased=True,
@@ -476,7 +481,7 @@ def test_native_and_petsc_be_match_on_the_common_fault_case(data_dir):
     )
     petsc = _run_two_bus(
         data_dir,
-        "beuler",
+        method,
         True,
         fault=True,
         biased=True,
@@ -591,6 +596,7 @@ def test_all_integrators_converge_toward_one_faulted_limited_trajectory(data_dir
     ndiff = reference_run[0].num_dof_dif
     errors = {f"{method}:{petsc}": [] for method, petsc in [
         ("beuler", False),
+        ("cn", False),
         ("herk2", False),
         ("herk4", False),
         ("beuler", True),
@@ -607,6 +613,7 @@ def test_all_integrators_converge_toward_one_faulted_limited_trajectory(data_dir
 
     for method, petsc in [
         ("beuler", False),
+        ("cn", False),
         ("herk2", False),
         ("herk4", False),
         ("beuler", True),

@@ -158,15 +158,14 @@ class IntegrationConfig(BaseModel):
                 )
         if self.toff < self.ton:
             raise ValueError("`toff` must be greater than or equal to `ton`.")
-        if self.method == "cn" and not self.petsc:
-            raise ValueError("`method='cn'` requires `petsc=True`.")
         if self.method in {"herk2", "herk4"} and self.petsc:
             raise ValueError(f"`method='{self.method}'` requires `petsc=False`.")
         if self.jacobian_mode == "finite_difference" and (
-            self.petsc or self.method != "beuler"
+            self.petsc or self.method not in {"beuler", "cn"}
         ):
             raise ValueError(
-                "`jacobian_mode='finite_difference'` requires native backward Euler."
+                "`jacobian_mode='finite_difference'` requires native backward Euler "
+                "or Crank-Nicolson."
             )
         if self.jacobian_mode == "finite_difference" and self.check_jacobian:
             raise ValueError(

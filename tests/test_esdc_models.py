@@ -158,7 +158,7 @@ def test_native_be_solves_active_voltage_scaled_constraint(esdc_case):
     assert endpoint[descriptor.state_index] == pytest.approx(upper, abs=1e-10)
 
 
-@pytest.mark.parametrize("method", ["beuler", "herk2"])
+@pytest.mark.parametrize("method", ["beuler", "cn", "herk2"])
 def test_esdc_unperturbed_native_steps_are_flat(esdc_case, method):
     psys, state, theta = esdc_case
     context = IntegrationCtx()
@@ -175,7 +175,7 @@ def test_esdc_unperturbed_native_steps_are_flat(esdc_case, method):
     np.testing.assert_allclose(result["history"][:, -1], state, atol=2e-8)
 
 
-@pytest.mark.parametrize("method", ["beuler", "herk2"])
+@pytest.mark.parametrize("method", ["beuler", "cn", "herk2"])
 def test_esdc2_fault_samples_respect_voltage_scaled_bounds(esdc_case, method):
     psys, state, theta = esdc_case
     exc = psys.exc[0]
@@ -406,6 +406,7 @@ def test_herk_topology_algebraic_failure_is_structured(monkeypatch):
     "method,petsc",
     [
         ("beuler", False),
+        ("cn", False),
         ("herk2", False),
     ],
 )

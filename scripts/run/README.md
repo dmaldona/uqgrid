@@ -314,14 +314,14 @@ baseline config may omit those optional fields and still run.
 | | `toff` | Fault clearing time [s] |
 | | `verbose` | Enable verbose solver output |
 | | `petsc` | Use PETSc solver |
-| | `jacobian_mode` | `"analytical"` or sparse `"finite_difference"`; finite differences require native backward Euler |
+| | `jacobian_mode` | `"analytical"` or sparse `"finite_difference"`; finite differences require native backward Euler or Crank-Nicolson |
 | | `finite_difference_epsilon` | Perturbation size for finite-difference Jacobian assembly |
 | | `enforce_dynamic_limits` | Enable hard dynamic-state limit handling |
 | | `dynamic_limit_tolerance` | State-bound tolerance for hard dynamic limits |
 | | `dynamic_limit_release_tolerance` | Complementarity release tolerance |
 | | `max_dynamic_limit_iterations` | Maximum hard-limit active-set iterations |
 
-### Time Grid and PETSc Method
+### Time Grid and Integration Method
 
 `steps=N` means N integration advances and N+1 base samples, including the
 initialized state at `t=0`. With `steps=-1`, the final sample is exactly at
@@ -330,7 +330,9 @@ application and clearing times are inserted into the stored grid. Event samples
 contain the post-switch algebraic state, and the fault is active on
 `[ton, toff)`.
 
-Set `method="cn"` explicitly for PETSc Crank-Nicolson. It uses `TSCN` when hard
+Set `method="cn", petsc=false` in the integration configuration for native
+Crank-Nicolson. Set
+`method="cn", petsc=true` for PETSc Crank-Nicolson: it uses `TSCN` when hard
 limits are disabled or no enabled limited states exist, and an explicit
 per-interval ordinary-SNES trapezoidal solve otherwise. Omitting `method`
 selects backward Euler, including when `petsc=true`. Native HERK2/HERK4 require
@@ -529,7 +531,7 @@ configured separately under `integration`:
 
 `operating_point.q_limit_mitigation` controls candidate preparation and
 screening. `integration.enforce_q_limits` controls the final initialization PF
-used by backward Euler, PETSc, HERK2, or HERK4 and defaults to `true`. Set it to
+used by native BE/CN, PETSc, HERK2, or HERK4 and defaults to `true`. Set it to
 `false` only when an unconstrained legacy operating point is required. These
 limits apply only to the initial operating point. Hard dynamic limits are a
 separate contract. Finite, strictly ordered SEXS Efd limits parsed from DYR are
@@ -540,16 +542,25 @@ derivatives. Native backward Euler uses repeated fixed-active-set Newton solves:
 active Efd rows are bound equations, and discarded free BE residuals control
 directional release. All algebraic equations remain in the coupled endpoint
 solve. PETSc BE uses the same equations and active-set controller through an
-ordinary per-interval SNES solve. PETSc CN explicitly assembles trapezoidal
-endpoint equations and fixes the directionally blocked starting derivative for
-all active-set retries within that interval. Neither limited PETSc path uses TS
+ordinary per-interval SNES solve. Native and PETSc CN explicitly assemble
+trapezoidal endpoint equations and fix the directionally blocked starting
+derivative for all active-set retries within that interval; native CN reuses
+the sparse Newton solver. Algebraic rows remain endpoint equations. Neither
+limited PETSc path uses TS
 or SNESVI. PETSc VI SNES types are rejected, while ordinary KSP, preconditioner,
 monitor, tolerance, and line-search options remain available. Limiter crossings
 are not localized and add no timestamps, so BE has expected O(dt) switching-time
 error. CN remains second order on smooth intervals but is locally first order
 around endpoint-only activation or release. PETSc CN with limits disabled or no
 enabled states continues to use TSCN. Set `enforce_dynamic_limits=false` for
-legacy unconstrained behavior.
+legacy unconstrained behavior. Native BE/CN support the legacy `fsolve` path
+only with hard dynamic limits disabled.
+
+Native CN samples injectors once at each interval start, preserving the same
+noise draws and parameter hold as native BE. Its second-order accuracy applies
+to smooth dynamics under held forcing, rather than across sampled input jumps
+or endpoint-only switching events. Scenario-generation defaults remain PETSc
+CN; selecting native CN requires `petsc=false` explicitly.
 
 Every limiter event uses the same required keys: `device_type`, `device_id`,
 `bus`, `state_index`, `side`, `action`, `time`, `stage_or_endpoint`,

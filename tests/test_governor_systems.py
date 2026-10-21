@@ -47,6 +47,7 @@ def test_parsed_governor_full_system_jacobian_matches_finite_difference(data_dir
     ("method", "petsc"),
     [
         pytest.param("beuler", False, id="native-be"),
+        pytest.param("cn", False, id="native-cn"),
         pytest.param("herk2", False, id="herk2"),
         pytest.param("herk4", False, id="herk4"),
         pytest.param("beuler", True, id="petsc-be"),
@@ -112,6 +113,7 @@ def test_governor_position_limits_use_shared_integrator_path(
     ("method", "petsc"),
     [
         pytest.param("beuler", False, id="native-be"),
+        pytest.param("cn", False, id="native-cn"),
         pytest.param("herk2", False, id="herk2"),
         pytest.param("herk4", False, id="herk4"),
         pytest.param("beuler", True, id="petsc-be"),

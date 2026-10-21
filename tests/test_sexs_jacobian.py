@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from scipy.sparse import csr_matrix
 
 from uqgrid.io.parse import add_dyr, load_psse
@@ -98,7 +99,8 @@ def test_sexs_limits_are_stored_but_disabled_by_default():
     assert theta[6] == 0.0
 
 
-def test_finite_difference_jacobian_mode_matches_analytical_trajectory(tmp_path):
+@pytest.mark.parametrize("method", ["beuler", "cn"])
+def test_finite_difference_jacobian_mode_matches_analytical_trajectory(tmp_path, method):
     import os
 
     data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
@@ -112,7 +114,7 @@ def test_finite_difference_jacobian_mode_matches_analytical_trajectory(tmp_path)
             psys,
             IntegrationConfig(
                 steps=3, dt=1.0 / 120.0, ton=1.0 / 120.0,
-                toff=2.0 / 120.0, jacobian_mode=jacobian_mode,
+                toff=2.0 / 120.0, jacobian_mode=jacobian_mode, method=method,
             ),
         )["history"]
 

@@ -282,6 +282,7 @@ def _runtime_signals(exc, psys, state, theta):
     "method,petsc",
     [
         ("beuler", False),
+        ("cn", False),
         ("herk2", False),
         ("herk4", False),
         ("beuler", True),

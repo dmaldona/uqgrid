@@ -70,7 +70,7 @@ def test_beuler_regression_unchanged(data_dir):
     assert np.allclose(res_default["history"], res_explicit["history"])
 
 
-@pytest.mark.parametrize("method", ["beuler", "herk2", "herk4"])
+@pytest.mark.parametrize("method", ["beuler", "cn", "herk2", "herk4"])
 def test_fixed_step_drivers_store_initial_state_and_common_grid(data_dir, method):
     psys = _build_two_bus_no_fault(data_dir)
     pf_solution = runpf(psys, verbose=False)
@@ -95,7 +95,7 @@ def test_fixed_step_drivers_store_initial_state_and_common_grid(data_dir, method
     assert result["history"].shape[1] == 4
 
 
-@pytest.mark.parametrize("method", ["beuler", "herk2", "herk4"])
+@pytest.mark.parametrize("method", ["beuler", "cn", "herk2", "herk4"])
 def test_fixed_step_fault_transitions_use_exact_post_switch_states(
         data_dir, method):
     psys = _build_two_bus_psys(data_dir)

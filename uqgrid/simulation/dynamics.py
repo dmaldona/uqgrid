@@ -778,6 +778,15 @@ def _assemble_cn_residual(
     )
 
 
+def _assemble_native_implicit_residual(
+    F, z, zold, h, psys, theta, *, method, start_derivative
+):
+    if method == "cn" and h != 0.0:
+        _assemble_cn_residual(F, z, zold, h, start_derivative, psys, theta)
+    else:
+        _assemble_beuler_residual(F, z, zold, h, psys, theta)
+
+
 def _effective_cn_start_derivative(
     zold,
     theta,
@@ -1005,6 +1014,68 @@ def _dynamic_limit_runtime_error(
     )
 
 
+def _solve_native_fixed_active_set(
+    zold,
+    theta,
+    h,
+    psys,
+    F,
+    J,
+    *,
+    descriptors,
+    modes,
+    newton_tol,
+    newton_max_iter,
+    verbose=False,
+    method="beuler",
+    start_derivative=None,
+):
+    """Solve one smooth native implicit system for a fixed active set."""
+    z = np.array(zold, dtype=float, copy=True)
+    for descriptor in descriptors:
+        bound = _active_limit_bound(
+            descriptor, modes[descriptor.state_index], z
+        )
+        if bound is not None:
+            z[descriptor.state_index] = bound
+
+    _assemble_native_implicit_residual(
+        F, z, zold, h, psys, theta,
+        method=method, start_derivative=start_derivative,
+    )
+    _apply_beuler_active_rows(F, None, z, descriptors, modes)
+    residual_norm = np.linalg.norm(F)
+    iteration = 0
+    if not np.isfinite(residual_norm):
+        return z, iteration, residual_norm, False
+    if verbose:
+        logger.info("Iteration %d. Residual norm: %g", iteration, residual_norm)
+
+    while residual_norm > newton_tol and iteration < newton_max_iter:
+        iteration += 1
+        residual_jacobian(J, z, theta, psys)
+        jacobian_beuler(J, psys.num_dof_dif, 0.5 * h if method == "cn" else h)
+        _apply_beuler_active_rows(F, J, z, descriptors, modes)
+        delta = spsolve(J, F)
+        if not np.all(np.isfinite(delta)):
+            return z, iteration, np.inf, False
+        z = z - delta
+        _assemble_native_implicit_residual(
+            F, z, zold, h, psys, theta,
+            method=method, start_derivative=start_derivative,
+        )
+        _apply_beuler_active_rows(F, None, z, descriptors, modes)
+        residual_norm = np.linalg.norm(F)
+        if not np.isfinite(residual_norm):
+            return z, iteration, residual_norm, False
+        if verbose:
+            logger.info(
+                "Iteration %d. Residual norm: %g", iteration, residual_norm
+            )
+
+    return z, iteration, residual_norm, residual_norm <= newton_tol
+
+
 def _solve_beuler_fixed_active_set(
     zold,
     theta,
@@ -1020,41 +1091,12 @@ def _solve_beuler_fixed_active_set(
     verbose=False,
 ):
     """Solve one smooth BE system for a fixed dynamic-limit active set."""
-    z = np.array(zold, dtype=float, copy=True)
-    for descriptor in descriptors:
-        bound = _active_limit_bound(
-            descriptor, modes[descriptor.state_index], z
-        )
-        if bound is not None:
-            z[descriptor.state_index] = bound
-
-    _assemble_beuler_residual(F, z, zold, h, psys, theta)
-    _apply_beuler_active_rows(F, None, z, descriptors, modes)
-    residual_norm = np.linalg.norm(F)
-    iteration = 0
-    if verbose:
-        logger.info("Iteration %d. Residual norm: %g", iteration, residual_norm)
-
-    while residual_norm > newton_tol and iteration < newton_max_iter:
-        iteration += 1
-        residual_jacobian(J, z, theta, psys)
-        jacobian_beuler(J, psys.num_dof_dif, h)
-        _apply_beuler_active_rows(F, J, z, descriptors, modes)
-        delta = spsolve(J, F)
-        if not np.all(np.isfinite(delta)):
-            return z, iteration, np.inf, False
-        z = z - delta
-        _assemble_beuler_residual(F, z, zold, h, psys, theta)
-        _apply_beuler_active_rows(F, None, z, descriptors, modes)
-        residual_norm = np.linalg.norm(F)
-        if not np.isfinite(residual_norm):
-            return z, iteration, residual_norm, False
-        if verbose:
-            logger.info(
-                "Iteration %d. Residual norm: %g", iteration, residual_norm
-            )
-
-    return z, iteration, residual_norm, residual_norm <= newton_tol
+    return _solve_native_fixed_active_set(
+        zold, theta, h, psys, F, J,
+        descriptors=descriptors, modes=modes,
+        newton_tol=newton_tol, newton_max_iter=newton_max_iter,
+        verbose=verbose,
+    )
 
 
 def _integrate_implicit_active_set(
@@ -1297,6 +1339,107 @@ def _integrate_beuler_with_dynamic_limits(
         method="beuler",
         operation="beuler_active_set",
         failure_message="Backward-Euler dynamic-limit solve failed",
+        backend="native",
+        nonlinear_solver="scipy_sparse_newton",
+        prior_events=prior_events,
+    )
+
+
+def _integrate_cn_with_dynamic_limits(
+    zold,
+    theta,
+    h,
+    psys,
+    F,
+    J,
+    *,
+    descriptors,
+    modes,
+    state_tolerance,
+    release_tolerance,
+    max_active_set_iterations,
+    endpoint_time,
+    newton_tol,
+    newton_max_iter,
+    prior_events=(),
+    verbose=False,
+):
+    """Advance one native CN interval with a directional active set."""
+    start_time = endpoint_time - h
+    try:
+        start_derivative = _effective_cn_start_derivative(
+            zold,
+            theta,
+            psys,
+            descriptors,
+            modes,
+            tolerance=state_tolerance,
+            time=start_time,
+        )
+    except DynamicLimitError as exc:
+        raise _contextualize_dynamic_limit_runtime_error(
+            exc,
+            method="cn",
+            backend="native",
+            time=start_time,
+            stage_or_endpoint="start",
+            prior_events=prior_events,
+        ) from exc
+    if not np.all(np.isfinite(start_derivative)):
+        raise DynamicLimitError({
+            "enabled": True,
+            "phase": "runtime",
+            "method": "cn",
+            "backend": "native",
+            "operation": "cn_start_derivative",
+            "message": "Crank-Nicolson start derivative is not finite",
+            "failure_reasons": ["non_finite_derivative"],
+            "time": _json_finite(start_time),
+            "stage_or_endpoint": "start",
+            "events": list(prior_events),
+        })
+    start_derivative.setflags(write=False)
+
+    def solve_fixed_set(current_modes):
+        return _solve_native_fixed_active_set(
+            zold, theta, h, psys, F, J,
+            descriptors=descriptors,
+            modes=current_modes,
+            newton_tol=newton_tol,
+            newton_max_iter=newton_max_iter,
+            verbose=verbose,
+            method="cn",
+            start_derivative=start_derivative,
+        )
+
+    def assemble_free_residual(free_residual, endpoint):
+        _assemble_cn_residual(
+            free_residual,
+            endpoint,
+            zold,
+            h,
+            start_derivative,
+            psys,
+            theta,
+        )
+
+    return _integrate_implicit_active_set(
+        zold,
+        theta,
+        h,
+        psys,
+        F,
+        descriptors=descriptors,
+        modes=modes,
+        state_tolerance=state_tolerance,
+        release_tolerance=release_tolerance,
+        max_active_set_iterations=max_active_set_iterations,
+        endpoint_time=endpoint_time,
+        fixed_set_solver=solve_fixed_set,
+        assemble_free_residual=assemble_free_residual,
+        method="cn",
+        operation="cn_active_set",
+        failure_message="Crank-Nicolson dynamic-limit solve failed",
         backend="native",
         nonlinear_solver="scipy_sparse_newton",
         prior_events=prior_events,
@@ -1987,11 +2130,14 @@ def integrate(zold,
               mold=None,
               fsolve=False,
               newton_tol=1e-10,
-              newton_max_iter=500):
+              newton_max_iter=500,
+              *,
+              method="beuler",
+              start_derivative=None):
     """
     Name: integrate
-    Description: implements backward euler for the OMIB,
-        returns x_{t + 1} given x_{t}, h and parameters.
+    Description: implements native backward Euler or Crank-Nicolson,
+        returning the endpoint given the state, step and parameters.
 
     Notes:
 
@@ -2006,6 +2152,36 @@ def integrate(zold,
         x (numpy array): state vector at (t+1)
     """
 
+    if method not in {"beuler", "cn"}:
+        raise ValueError("Native implicit method must be 'beuler' or 'cn'.")
+    if method == "cn":
+        if any(value is not None for value in (uold, vold, mold)):
+            raise ValueError("Native CN sensitivities are not supported.")
+        if h != 0.0:
+            if start_derivative is None:
+                start_derivative = _effective_cn_start_derivative(
+                    zold, theta, psys, (), {}, tolerance=0.0,
+                )
+            start_derivative = np.array(start_derivative, copy=True)
+            if not np.all(np.isfinite(start_derivative)):
+                raise RuntimeError(
+                    "Non-finite start derivative (method='cn', backend='native')."
+                )
+            start_derivative.setflags(write=False)
+
+    def assemble_residual(target, endpoint):
+        _assemble_native_implicit_residual(
+            target, endpoint, zold, h, psys, theta,
+            method=method, start_derivative=start_derivative,
+        )
+
+    def cn_function(endpoint, *args):
+        target = np.empty_like(endpoint)
+        assemble_residual(target, endpoint)
+        return target
+
+    function = cn_function if method == "cn" else function_beuler_wrapper
+
     eps = newton_tol
     max_iter = newton_max_iter
     iteration = 0
@@ -2017,25 +2193,41 @@ def integrate(zold,
     sys_size = alg_size + dif_size + 2*psys.nbuses
     NDIFFEQ = dif_size
 
-    residual_function(F, z, theta, psys)
-    F[:NDIFFEQ] = z[:NDIFFEQ] - zold[:NDIFFEQ] - h*F[:NDIFFEQ]
+    assemble_residual(F, z)
     norm_res = np.linalg.norm(F)
+    if method == "cn" and not np.isfinite(norm_res):
+        raise RuntimeError(
+            "Non-finite residual (method='cn', backend='native')."
+        )
 
     if TEST_JACOBIAN:
-        jac = nd.Jacobian(function_beuler_wrapper)
+        jac = nd.Jacobian(function)
 
     if fsolve:
-        sol, info, ier, msg = optimize.fsolve(function_beuler_wrapper,
+        sol, info, ier, msg = optimize.fsolve(function,
                                               zold,
                                               args=(zold, h, psys, theta),
                                               full_output=True,
                                               epsfcn=1e-9)
 
-        if ier == 1:
+        converged = ier == 1
+        if method == "cn":
+            assemble_residual(F, sol)
+            if not np.all(np.isfinite(sol)) or not np.all(np.isfinite(F)):
+                raise RuntimeError(
+                    "Non-finite fsolve result (method='cn', backend='native')."
+                )
+            # MINPACK can report stagnation at a root with roundoff residuals.
+            converged = np.linalg.norm(F) <= eps
+        if converged:
             if verbose:
                 logger.info("Fsolve converged.")
             z = sol
         else:
+            if method == "cn":
+                raise RuntimeError(
+                    "Fsolve did not converge (method='cn', backend='native')."
+                )
             raise NameError('Fsolve did not converge')
 
     else:
@@ -2049,7 +2241,7 @@ def integrate(zold,
 
             # Form sparse jacobian matrix
             residual_jacobian(J, z, theta, psys)
-            jacobian_beuler(J, NDIFFEQ, h)
+            jacobian_beuler(J, NDIFFEQ, 0.5 * h if method == "cn" else h)
 
             if TEST_JACOBIAN:
                 Jnd = jac(z, zold, h, psys, theta)
@@ -2060,19 +2252,31 @@ def integrate(zold,
 
             # step
             zdelta = spsolve(J, F)
+            if method == "cn" and not np.all(np.isfinite(zdelta)):
+                raise RuntimeError(
+                    "Non-finite Newton update (method='cn', backend='native')."
+                )
             z = z - zdelta
 
             # calculate new residual
-            residual_function(F, z, theta, psys)
-            F[:NDIFFEQ] = z[:NDIFFEQ] - zold[:NDIFFEQ] - h*F[:NDIFFEQ]
+            assemble_residual(F, z)
 
             # print residual norm
             norm_res = np.linalg.norm(F)
+            if method == "cn" and not np.isfinite(norm_res):
+                raise RuntimeError(
+                    "Non-finite residual (method='cn', backend='native')."
+                )
 
             if verbose:
                 logger.info("Iteration %d. Residual norm: %g", iteration, norm_res)
 
-        if iteration >= max_iter:
+        if method == "cn":
+            if norm_res > eps:
+                raise RuntimeError(
+                    "N-R solver did not converge (method='cn', backend='native')."
+                )
+        elif iteration >= max_iter:
             raise NameError('N-R solver did not converge.')
 
     if uold is not None:
@@ -3019,6 +3223,10 @@ def integrate_system(
     else:
         history = np.zeros((system_size, len(tvec)))
         history[:, 0] = np.copy(z)
+        interval_stepper = (
+            _integrate_cn_with_dynamic_limits
+            if method == "cn" else _integrate_beuler_with_dynamic_limits
+        )
         try:
             for i in range(1, len(tvec)):
                 t_start = tvec[i - 1]
@@ -3030,7 +3238,7 @@ def integrate_system(
                         inj.update(t_start, theta, psys)
                 if limit_descriptors:
                     z, limit_modes, limit_events = (
-                        _integrate_beuler_with_dynamic_limits(
+                        interval_stepper(
                             z,
                             theta,
                             h_step,
@@ -3070,6 +3278,7 @@ def integrate_system(
                         uold=None,
                         vold=None,
                         mold=None,
+                        method=method,
                     )
 
                 if i == schedule.fault_on_index:
@@ -3102,7 +3311,7 @@ def integrate_system(
                             )
                         except DynamicLimitError as exc:
                             raise _contextualize_dynamic_limit_runtime_error(
-                                exc, method="beuler", backend="native",
+                                exc, method=method, backend="native",
                                 time=tvec[i], stage_or_endpoint="fault_on",
                                 prior_events=(
                                     dynamic_limit_diagnostics["events"]
@@ -3146,7 +3355,7 @@ def integrate_system(
                             )
                         except DynamicLimitError as exc:
                             raise _contextualize_dynamic_limit_runtime_error(
-                                exc, method="beuler", backend="native",
+                                exc, method=method, backend="native",
                                 time=tvec[i], stage_or_endpoint="fault_off",
                                 prior_events=(
                                     dynamic_limit_diagnostics["events"]
@@ -3161,6 +3370,13 @@ def integrate_system(
                             uold=None, vold=None, mold=None,
                         )
                 history[:, i] = np.copy(z)
+        except (NameError, RuntimeError) as exc:
+            if method == "cn" and not isinstance(exc, DynamicLimitError):
+                raise RuntimeError(
+                    "Integration failed (method='cn', backend='native'): "
+                    + str(exc)
+                ) from exc
+            raise
         finally:
             if fault is not None:
                 fault.remove()
