@@ -660,16 +660,3 @@ def test_all_integrators_converge_toward_one_faulted_limited_trajectory(data_dir
     assert spreads[-1] < 0.75 * spreads[0]
     for activation, fine_activation, dt in activation_times:
         assert abs(activation - fine_activation) <= dt + 1e-12
-
-
-def test_arkimex_requires_legacy_unconstrained_dynamic_limits():
-    with pytest.raises(ValueError, match="enforce_dynamic_limits=False"):
-        IntegrationConfig(petsc=True, arkimex=True)
-
-    config = IntegrationConfig(
-        petsc=True,
-        arkimex=True,
-        enforce_dynamic_limits=False,
-    )
-    assert config.arkimex is True
-    assert config.enforce_dynamic_limits is False

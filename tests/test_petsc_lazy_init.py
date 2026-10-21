@@ -5,6 +5,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 from uqgrid.simulation import dynamics
 from uqgrid.simulation.config import IntegrationConfig
 
@@ -109,33 +111,47 @@ def test_dynamics_driver_preserves_sys_argv_and_stores_petsc_args(monkeypatch):
     assert config.petsc_args == ["-ts_monitor", "-ksp_type", "gmres"]
 
 
-def test_partition_driver_preserves_sys_argv_and_stores_petsc_args(monkeypatch):
+@pytest.mark.parametrize(
+    "arguments,exit_code,message",
+    [
+        (["--arkimex"], 2, "unrecognized arguments: --arkimex"),
+        (["--slow-diff", "0,1"], 2, "unrecognized arguments: --slow-diff"),
+        (["--fast-diff", "0,1"], 2, "unrecognized arguments: --fast-diff"),
+        (["--method", "arkimex"], 2, "invalid choice"),
+        (["--", "-ts_arkimex_type", "a2"], 1, "ARKIMEX has been removed"),
+        (["--", "-ts_arkimex_type=a2"], 1, "ARKIMEX has been removed"),
+        (["--", "-ts_type", "arkimex"], 1, "cannot override"),
+        (["--", "-ts_type=arkimex"], 1, "cannot override"),
+    ],
+)
+def test_dynamics_driver_rejects_removed_arkimex_requests(
+    monkeypatch, capsys, arguments, exit_code, message,
+):
     repo_root = Path(__file__).resolve().parents[1]
-    module = _load_module(
-        repo_root / "bin" / "dynamics_partition_driver.py",
-        "test_dynamics_partition_driver",
+    module = _load_module(repo_root / "bin" / "dynamics_driver.py", "test_dynamics_driver")
+    argv = ["dynamics_driver.py", "--raw", "case.raw", "--dyr", "case.dyr", "--petsc"]
+    monkeypatch.setattr(sys, "argv", argv + arguments)
+
+    def unexpected_initialization(*args, **kwargs):
+        raise AssertionError("Rejected requests must not initialize PETSc")
+
+    monkeypatch.setattr(dynamics, "_initialize_petsc", unexpected_initialization)
+    with pytest.raises(SystemExit) as error:
+        module.parse_args()
+
+    assert error.value.code == exit_code
+    captured = capsys.readouterr()
+    assert message in captured.out + captured.err
+
+
+def test_dynamics_driver_preserves_default_native_backward_euler(monkeypatch):
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_module(repo_root / "bin" / "dynamics_driver.py", "test_dynamics_driver")
+    monkeypatch.setattr(
+        sys, "argv", ["dynamics_driver.py", "--raw", "case.raw", "--dyr", "case.dyr"],
     )
-    argv = [
-        "dynamics_partition_driver.py",
-        "--raw",
-        "case.raw",
-        "--dyr",
-        "case.dyr",
-        "--petsc",
-        "--arkimex",
-        "--no-enforce-dynamic-limits",
-        "--",
-        "-log_view",
-        ":petsc.log",
-    ]
-    outer_argv = ["pytest", "--some-option"]
-    monkeypatch.setattr(sys, "argv", outer_argv.copy())
 
-    args, config = module.parse_args(argv)
+    _, _, _, config, _ = module.parse_args()
 
-    assert sys.argv == outer_argv
-    assert args.raw == "case.raw"
-    assert args.dyr == "case.dyr"
-    assert config.petsc is True
-    assert config.enforce_dynamic_limits is False
-    assert config.petsc_args == ["-log_view", ":petsc.log"]
+    assert config.method == "beuler"
+    assert config.petsc is False

@@ -37,7 +37,6 @@ def parse_args():
     parser.add_argument('--ton', type=float, default=0.25, help='Fault activation time.')
     parser.add_argument('--toff', type=float, default=0.4, help='Fault deactivation time.')
     parser.add_argument('--petsc', action='store_true', help='Enable PETSc integration.')
-    parser.add_argument('--arkimex', action='store_true', help='Use ARKIMEX integrator.')
     parser.add_argument(
         '--enforce-dynamic-limits',
         action=argparse.BooleanOptionalAction,
@@ -66,7 +65,6 @@ def parse_args():
             fsolve=args.fsolve,
             petsc=args.petsc,
             petsc_args=petsc_args,
-            arkimex=args.arkimex,
             enforce_dynamic_limits=args.enforce_dynamic_limits,
             dynamic_limit_tolerance=args.dynamic_limit_tolerance,
             dynamic_limit_release_tolerance=(

@@ -131,7 +131,6 @@ Key fields:
 | `method="cn", petsc=True` | PETSc `TSCN`, or ordinary SNES when hard limits are active |
 | `method="herk2", petsc=False` | HERK2 |
 | `method="herk4", petsc=False` | HERK4 |
-| `arkimex=True, petsc=True, enforce_dynamic_limits=False` | PETSc ARKIMEX |
 
 Without enabled hard-limit states, `cn` is explicitly mapped to PETSc `TSCN`.
 This is not the same as selecting the midpoint form of `TSTHETA`; PETSc
@@ -139,9 +138,9 @@ distinguishes endpoint Crank-Nicolson from its theta-method midpoint
 formulation for DAEs. See the
 [PETSc TSTHETA documentation](https://petsc.org/release/manualpages/TS/TSTHETA/).
 
-`cn` requires PETSc, HERK requires the native backend, and ARKIMEX cannot be
-combined with `cn` or HERK. Hard dynamic limits do not support ARKIMEX,
-sensitivities, or the legacy fsolve path; set `enforce_dynamic_limits=False`
+`cn` requires PETSc, and HERK requires the native backend. Hard dynamic limits
+do not support sensitivities or the legacy fsolve path; set
+`enforce_dynamic_limits=False`
 explicitly to use those paths. The library default remains `method="beuler"`.
 Configurations that previously omitted `method` therefore select backward
 Euler. PETSc command-line options may tune solver internals, but options that

@@ -322,7 +322,7 @@ def herk_step(z_old, theta, h, psys, A, b, c, F, J, tol, max_iter):
 def integrate_system_herk(psys, config, ctx=None):
     """HERK driver mirroring the non-PETSc branch of ``integrate_system``.
 
-    Only the no-PETSc, no-sensitivity, no-fsolve, no-ARKIMEX,
+    Only the no-PETSc, no-sensitivity, no-fsolve,
     no-Jacobian-check path is supported. Fault on/off events are handled
     between steps via an algebraic resolve. Enabled hard limits are enforced
     at RK stages and weighted endpoints without changing the time grid.
@@ -341,8 +341,6 @@ def integrate_system_herk(psys, config, ctx=None):
             "HERK driver does not support config.fsolve; it uses sparse "
             "Newton solves for algebraic stages."
         )
-    if config.arkimex:
-        raise ValueError("HERK driver does not support ARKIMEX.")
     if config.check_jacobian:
         raise ValueError("HERK driver does not support Jacobian checking.")
 
