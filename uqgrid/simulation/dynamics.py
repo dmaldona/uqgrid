@@ -879,6 +879,7 @@ def _resolve_limited_topology_change(
     newton_max_iter,
     max_dynamic_limit_iterations,
     verbose,
+    method="beuler",
 ):
     """Resolve topology algebraics and any voltage-scaled bound movement."""
     events = []
@@ -901,6 +902,7 @@ def _resolve_limited_topology_change(
                 uold=None,
                 vold=None,
                 mold=None,
+                method=method,
             )
         except (NameError, RuntimeError) as exc:
             raise DynamicLimitError(
@@ -1980,6 +1982,7 @@ def _integrate_system_petsc_implicit_limits(
                             config.max_dynamic_limit_iterations
                         ),
                         verbose=config.verbose,
+                        method=method,
                     )
                     dynamic_limit_diagnostics["events"].extend(events)
                 except DynamicLimitError as exc:
@@ -2009,6 +2012,7 @@ def _integrate_system_petsc_implicit_limits(
                             config.max_dynamic_limit_iterations
                         ),
                         verbose=config.verbose,
+                        method=method,
                     )
                     dynamic_limit_diagnostics["events"].extend(events)
                 except DynamicLimitError as exc:
@@ -3304,6 +3308,7 @@ def integrate_system(
                                         config.max_dynamic_limit_iterations
                                     ),
                                     verbose=verbose,
+                                    method=method,
                                 )
                             )
                             dynamic_limit_diagnostics["events"].extend(
@@ -3324,6 +3329,7 @@ def integrate_system(
                             newton_tol=newton_tol,
                             newton_max_iter=newton_max_iter,
                             uold=None, vold=None, mold=None,
+                            method=method,
                         )
                 if i == schedule.fault_off_index:
                     if verbose:
@@ -3348,6 +3354,7 @@ def integrate_system(
                                         config.max_dynamic_limit_iterations
                                     ),
                                     verbose=verbose,
+                                    method=method,
                                 )
                             )
                             dynamic_limit_diagnostics["events"].extend(
@@ -3368,6 +3375,7 @@ def integrate_system(
                             newton_tol=newton_tol,
                             newton_max_iter=newton_max_iter,
                             uold=None, vold=None, mold=None,
+                            method=method,
                         )
                 history[:, i] = np.copy(z)
         except (NameError, RuntimeError) as exc:

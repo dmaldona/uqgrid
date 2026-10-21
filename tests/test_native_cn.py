@@ -440,6 +440,112 @@ def test_native_cn_refreshes_start_after_fault_algebraic_projection(
     assert not fault.active
 
 
+def _prepare_final_fault_projection(monkeypatch, psys, stage, limited, *, nonfinite=False):
+    class Fault:
+        active = False
+        invalid = False
+
+        def apply(self):
+            self.active = True
+            if stage == "fault_on":
+                psys.rate = 3.0
+                self.invalid = nonfinite
+
+        def remove(self):
+            changing = self.active and stage == "fault_off"
+            self.active = False
+            psys.rate = 3.0 if changing else 1.0
+            if changing:
+                self.invalid = nonfinite
+
+    fault = Fault()
+
+    def residual(output, state, theta, system):
+        output[0] = -state[0]
+        output[1] = np.nan if fault.invalid else state[1] - system.rate * state[0]
+
+    def jacobian(matrix, state, theta, system):
+        matrix.data[:] = [-1.0, 0.0, -system.rate, 1.0]
+
+    monkeypatch.setattr(dynamics, "residual_function", residual)
+    monkeypatch.setattr(residual_module, "residual_function", residual)
+    monkeypatch.setattr(dynamics, "residual_jacobian", jacobian)
+    _prepare_system(monkeypatch, psys, np.asarray([1.0, 1.0]), np.asarray([0.0]))
+    if limited:
+        descriptor = LimitedStateDescriptor(
+            state_index=0,
+            lower_bound=-10.0,
+            upper_bound=10.0,
+            device_type="SEXS",
+            bus=1,
+            device_id="1",
+            enabled=True,
+        )
+        monkeypatch.setattr(
+            dynamics, "collect_limited_state_descriptors", lambda *args: [descriptor]
+        )
+    psys.fault_events = [fault]
+    # Change algebraics only at the final event, so the clearing case reaches
+    # fault_off without requiring a Newton update at the earlier fault_on.
+    config = IntegrationConfig(
+        method="cn",
+        dt=0.1,
+        steps=1 if stage == "fault_on" else 2,
+        ton=0.1,
+        toff=0.3 if stage == "fault_on" else 0.2,
+        newton_tol=1e-12,
+        newton_max_iter=1,
+    )
+    return fault, config
+
+
+@pytest.mark.parametrize("stage", ["fault_on", "fault_off"])
+@pytest.mark.parametrize("limited", [False, True], ids=["unlimited", "limited"])
+def test_native_cn_fault_projection_accepts_final_newton_iteration(
+    index_one, monkeypatch, stage, limited
+):
+    fault, config = _prepare_final_fault_projection(monkeypatch, index_one, stage, limited)
+
+    result = dynamics.integrate_system(index_one, config)
+
+    expected_x = (0.95 / 1.05) ** np.arange(config.steps + 1)
+    np.testing.assert_allclose(result["history"][0], expected_x, atol=1e-12)
+    np.testing.assert_allclose(result["history"][1, :-1], expected_x[:-1], atol=1e-12)
+    assert result["history"][1, -1] == pytest.approx(3.0 * expected_x[-1], abs=1e-12)
+    assert result["tvec"][-1] == pytest.approx(config.steps * config.dt)
+    assert not fault.active
+    assert index_one.rate == 1.0
+
+
+@pytest.mark.parametrize("stage", ["fault_on", "fault_off"])
+@pytest.mark.parametrize("limited", [False, True], ids=["unlimited", "limited"])
+def test_native_cn_final_fault_projection_rejects_nonfinite_algebraics(
+    index_one, monkeypatch, stage, limited
+):
+    fault, config = _prepare_final_fault_projection(
+        monkeypatch, index_one, stage, limited, nonfinite=True
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        dynamics.integrate_system(index_one, config)
+
+    if limited:
+        assert isinstance(error.value, DynamicLimitError)
+        diagnostics = error.value.diagnostics
+        assert diagnostics["phase"] == "runtime"
+        assert diagnostics["method"] == "cn"
+        assert diagnostics["backend"] == "native"
+        assert diagnostics["stage_or_endpoint"] == stage
+        assert diagnostics["time"] == pytest.approx(config.steps * config.dt)
+        assert diagnostics["failure_reasons"] == ["algebraic_nonconvergence"]
+        json.dumps(diagnostics, allow_nan=False)
+    else:
+        assert "method='cn'" in str(error.value)
+        assert "backend='native'" in str(error.value)
+    assert not fault.active
+    assert index_one.rate == 1.0
+
+
 def test_native_cn_samples_injectors_once_and_holds_parameters_for_interval(
     index_one, monkeypatch
 ):
