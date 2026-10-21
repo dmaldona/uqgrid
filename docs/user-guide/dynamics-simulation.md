@@ -59,7 +59,7 @@ config = IntegrationConfig(
     verbose=False,
     comp_sens=False,
     fsolve=False,
-    petsc=True,
+    petsc=False,
     enforce_q_limits=True,
     q_limit_tolerance=1e-8,
     max_q_limit_iterations=None,
@@ -92,12 +92,12 @@ Key fields:
 - **dt**: Integration step size (seconds).
 - **steps**: Number of nominal advances. A positive value overrides `tend` and
   produces `steps + 1` base samples, including `t=0`.
-- **method**: `"beuler"`, `"cn"`, `"herk2"`, or `"herk4"`.
+- **method**: `"beuler"`, `"cn"`, `"herk2"`, or `"herk4"` (default: `"cn"`).
 - **ton/toff**: Fault activation and removal times.
 - **comp_sens**: Enable adjoint-based sensitivities (requires PETSc and
   `method="cn"`).
 - **petsc**: Switch to PETSc-backed integrators for improved robustness and
-  adjoint capabilities.
+  adjoint capabilities (default: `False`).
 - **enforce_q_limits**: Enforce non-slack PV generator reactive-power limits
   during the power flow used for dynamic initialization.
 - **q_limit_tolerance**: Per-unit tolerance for activating a generator
@@ -133,11 +133,15 @@ Key fields:
 | `method="herk2", petsc=False` | HERK2 |
 | `method="herk4", petsc=False` | HERK4 |
 
-Select native Crank-Nicolson with `IntegrationConfig(method="cn", petsc=False)`
-or the dynamics CLI `--method cn` without `--petsc`. Native CN reuses the
-backward-Euler sparse Newton solver, schedule, initialization, and topology
-projection. Its differential rows use endpoint trapezoidal equations, while
-algebraic rows are evaluated only at the endpoint.
+The library and dynamics CLI default to native Crank-Nicolson
+(`method="cn", petsc=False`). `IntegrationConfig()` or a CLI invocation without
+`--method` or `--petsc` selects native CN. Passing `--petsc` without `--method`
+selects PETSc CN. Select backward Euler explicitly with `method="beuler"` or
+`--method beuler`, and choose its backend with `petsc` or `--petsc`.
+
+Native CN reuses the backward-Euler sparse Newton solver, schedule,
+initialization, and topology projection. Its differential rows use endpoint
+trapezoidal equations, while algebraic rows are evaluated only at the endpoint.
 
 Native CN retains the injector contract: update each signal once at the start
 of an interval and hold its parameters throughout that interval. The starting
@@ -155,10 +159,9 @@ formulation for DAEs. See the
 
 HERK requires the native backend. Native BE and CN support `fsolve=True` only
 with `enforce_dynamic_limits=False`. Sensitivities still require `petsc=True`,
-`method="cn"`, and `enforce_dynamic_limits=False`. The library default remains
-`method="beuler"`.
-Configurations that previously omitted `method` therefore select backward
-Euler. PETSc command-line options may tune solver internals, but options that
+`method="cn"`, and `enforce_dynamic_limits=False`. Configurations that omit
+`method` now select CN; specify `method="beuler"` to retain backward Euler.
+PETSc command-line options may tune solver internals, but options that
 override the configured TS type, time step, horizon, exact-final-time policy,
 or adaptivity are rejected.
 

@@ -121,7 +121,7 @@ def test_default_scenario_config_includes_q_limit_controls(gs):
     integration = gs.get_default_config("IEEE-9")["integration"]
 
     assert integration["method"] == "cn"
-    assert integration["petsc"] is True
+    assert integration["petsc"] is False
     assert integration["enforce_q_limits"] is True
     assert integration["q_limit_tolerance"] == pytest.approx(1e-8)
     assert integration["max_q_limit_iterations"] is None
@@ -140,7 +140,8 @@ def test_default_scenario_config_includes_q_limit_controls(gs):
     assert validation["branch_loading_max"] == pytest.approx(1.0)
 
     adapted = gs._integration_config_from_dict({})
-    assert adapted.method == "beuler"
+    assert adapted.method == "cn"
+    assert adapted.petsc is False
     assert adapted.enforce_q_limits is True
     assert adapted.enforce_dynamic_limits is True
     assert adapted.power_flow_validation.enabled is False
@@ -237,7 +238,7 @@ def test_fault_worker_preserves_successful_pf_validation(
     assert captured["config"].finite_difference_epsilon == pytest.approx(2e-6)
 
 
-@pytest.mark.parametrize("method", ["beuler", "cn"])
+@pytest.mark.parametrize("method", [None, "beuler", "cn"])
 def test_main_forwards_json_jacobian_controls(gs, tmp_path, monkeypatch, method):
     config = gs.get_default_config("IEEE-9")
     config["model"].update({"raw": "case.raw", "dyr": "case.dyr", "n_bus": 1})
@@ -249,10 +250,14 @@ def test_main_forwards_json_jacobian_controls(gs, tmp_path, monkeypatch, method)
     })
     config["integration"].update({
         "petsc": False,
-        "method": method,
         "jacobian_mode": "finite_difference",
         "finite_difference_epsilon": 3e-6,
     })
+    if method is None:
+        config["integration"].pop("method")
+        config["integration"].pop("petsc")
+    else:
+        config["integration"]["method"] = method
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(config))
     captured = {}
@@ -269,7 +274,7 @@ def test_main_forwards_json_jacobian_controls(gs, tmp_path, monkeypatch, method)
     gs.main(str(config_path))
 
     integration = captured["integration_config"]
-    assert integration["method"] == method
+    assert integration["method"] == (method or "cn")
     assert integration["petsc"] is False
     assert integration["jacobian_mode"] == "finite_difference"
     assert integration["finite_difference_epsilon"] == pytest.approx(3e-6)

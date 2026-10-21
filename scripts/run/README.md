@@ -248,7 +248,7 @@ baseline config may omit those optional fields and still run.
         "ton": 0.25,
         "toff": 0.4,
         "verbose": false,
-        "petsc": true,
+        "petsc": false,
         "jacobian_mode": "analytical",
         "finite_difference_epsilon": 1e-7
     }
@@ -308,12 +308,12 @@ baseline config may omit those optional fields and still run.
 | | `diagnostics_summary_file` | JSON path for aggregate diagnostics summary |
 | **integration** | `tend` | Simulation end time [s] |
 | | `dt` | Integration time step [s] (default: 1/120) |
-| | `method` | `"beuler"`, `"cn"`, `"herk2"`, or `"herk4"`; omitted values default to backward Euler |
+| | `method` | `"beuler"`, `"cn"`, `"herk2"`, or `"herk4"`; omitted values default to Crank-Nicolson |
 | | `power_injection` | Use power injection model |
 | | `ton` | Fault onset time [s] |
 | | `toff` | Fault clearing time [s] |
 | | `verbose` | Enable verbose solver output |
-| | `petsc` | Use PETSc solver |
+| | `petsc` | Use PETSc solver (default: `false`) |
 | | `jacobian_mode` | `"analytical"` or sparse `"finite_difference"`; finite differences require native backward Euler or Crank-Nicolson |
 | | `finite_difference_epsilon` | Perturbation size for finite-difference Jacobian assembly |
 | | `enforce_dynamic_limits` | Enable hard dynamic-state limit handling |
@@ -330,13 +330,18 @@ application and clearing times are inserted into the stored grid. Event samples
 contain the post-switch algebraic state, and the fault is active on
 `[ton, toff)`.
 
-Set `method="cn", petsc=false` in the integration configuration for native
-Crank-Nicolson. Set
-`method="cn", petsc=true` for PETSc Crank-Nicolson: it uses `TSCN` when hard
-limits are disabled or no enabled limited states exist, and an explicit
-per-interval ordinary-SNES trapezoidal solve otherwise. Omitting `method`
-selects backward Euler, including when `petsc=true`. Native HERK2/HERK4 require
-`petsc=false`. PETSc options
+The library, dynamics CLI, and scenario generator default to native
+Crank-Nicolson (`method="cn", petsc=false`), including generated configuration
+templates. Omitting `method` selects CN; omitting `petsc` selects the native
+backend. Select backward Euler explicitly with `method="beuler"` or the dynamics
+CLI `--method beuler`.
+
+Set `petsc=true` for PETSc Crank-Nicolson: it uses `TSCN` when hard limits are
+disabled or no enabled limited states exist, and an explicit per-interval
+ordinary-SNES trapezoidal solve otherwise. The dynamics CLI `--petsc` flag
+selects PETSc CN when `--method` is omitted. Existing configurations with
+`petsc=true` retain the PETSc backend. Native HERK2/HERK4 require `petsc=false`.
+PETSc options
 cannot override the configured method or time grid. Histories generated before
 this normalized contract have different time axes and should not be appended
 to corrected dense-history datasets.
@@ -559,8 +564,8 @@ only with hard dynamic limits disabled.
 Native CN samples injectors once at each interval start, preserving the same
 noise draws and parameter hold as native BE. Its second-order accuracy applies
 to smooth dynamics under held forcing, rather than across sampled input jumps
-or endpoint-only switching events. Scenario-generation defaults remain PETSc
-CN; selecting native CN requires `petsc=false` explicitly.
+or endpoint-only switching events. Scenario generation defaults to native CN;
+select `petsc=true` explicitly for the PETSc backend.
 
 Every limiter event uses the same required keys: `device_type`, `device_id`,
 `bus`, `state_index`, `side`, `action`, `time`, `stage_or_endpoint`,

@@ -73,7 +73,7 @@ def build_osl_case(
     extra_injectors: Optional[List[SignalInjector]] = None,
     tend: float = 90.0,
     dt: float = 1.0 / 240.0,
-    method: str = "beuler",
+    method: str = "cn",
     pmu: Optional[Union[PMUEmulator, Dict[str, Any]]] = None,
     extra_config: Optional[Dict[str, Any]] = None,
     label: Optional[str] = None,
@@ -94,6 +94,7 @@ def build_osl_case(
     extra_injectors : list[SignalInjector]
         Any additional custom injectors to attach.
     tend, dt, method : simulation controls passed to IntegrationConfig.
+        Defaults to native Crank-Nicolson (method="cn").
     pmu : PMUEmulator | dict | None
         Post-processor. A dict is treated as PMUEmulator(**dict). None
         uses defaults (30 Hz, all buses observed, no missing samples).

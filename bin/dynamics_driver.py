@@ -29,7 +29,7 @@ def parse_args():
     parser.add_argument('--steps', type=int, default=-1, help='Number of integration steps.')
     parser.add_argument(
         '--method', choices=['beuler', 'cn', 'herk2', 'herk4'],
-        default='beuler', help='Integration method.'
+        default='cn', help='Integration method (default: cn; native unless --petsc).'
     )
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
     parser.add_argument('--comp_sens', action='store_true', help='Compute sensitivities.')

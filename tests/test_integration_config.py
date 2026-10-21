@@ -14,7 +14,7 @@ def test_integration_config_defaults_and_schema_after_arkimex_removal():
         "arkimex", "arkimex_slow_differential", "arkimex_fast_differential",
     }
 
-    assert cfg.method == "beuler"
+    assert cfg.method == "cn"
     assert cfg.petsc is False
     assert removed.isdisjoint(IntegrationConfig.model_fields)
     assert removed.isdisjoint(IntegrationConfig.model_json_schema()["properties"])
@@ -84,7 +84,7 @@ def test_integration_config_preserves_supported_methods_and_solver_options(metho
     assert cfg.method == method
     assert cfg.petsc is petsc
     assert cfg.petsc_args == options
-    assert IntegrationConfig(unrelated_option=True).method == "beuler"
+    assert IntegrationConfig(unrelated_option=True).method == "cn"
 
 
 def test_integration_config_q_limit_defaults():
@@ -143,7 +143,7 @@ def test_herk_resets_cached_jacobian_mode(monkeypatch):
         ),
         ({"finite_difference_epsilon": float("inf")}, "finite number"),
         (
-            {"comp_sens": True, "petsc": True, "enforce_dynamic_limits": False},
+            {"method": "beuler", "comp_sens": True, "petsc": True, "enforce_dynamic_limits": False},
             "method='cn'",
         ),
         (
@@ -194,6 +194,17 @@ def test_integration_config_accepts_explicit_petsc_methods():
         comp_sens=True,
         enforce_dynamic_limits=False,
     ).comp_sens is True
+
+
+def test_integration_config_default_cn_accepts_petsc_sensitivities():
+    cfg = IntegrationConfig(
+        petsc=True,
+        comp_sens=True,
+        enforce_dynamic_limits=False,
+    )
+
+    assert cfg.method == "cn"
+    assert cfg.comp_sens is True
 
 
 def test_integration_config_dynamic_limit_defaults_and_opt_out():

@@ -170,6 +170,7 @@ def test_build_osl_case_shape_and_export(tmp_path):
         label="2bus_test_fo",
     )
 
+    assert case.metadata["simulation"]["method"] == "cn"
     pmu = case.pmu
     assert pmu["V_mag"].shape[0] == 2
     assert pmu["V_mag"].shape == pmu["V_ang"].shape
@@ -184,6 +185,7 @@ def test_build_osl_case_shape_and_export(tmp_path):
     assert "V_mag" in loaded.files
 
     meta = json.loads(json_path.read_text())
+    assert meta["simulation"]["method"] == "cn"
     assert meta["sources"][0]["kind"] == "load_p"
     assert meta["sources"][0]["freq_hz"] == 1.0
     assert meta["pmu"]["rate_hz"] == 30.0

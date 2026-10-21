@@ -96,8 +96,8 @@ class IntegrationConfig(BaseModel):
     jacobian_check_top_k: int = Field(10, description="Number of Jacobian mismatches to report.")
     jacobian_check_csv: Optional[str] = Field(None, description="Optional CSV path for Jacobian mismatch report.")
     method: str = Field(
-        "beuler",
-        description="Integrator method: beuler | cn | herk2 | herk4.",
+        "cn",
+        description="Integrator method: beuler | cn | herk2 | herk4 (default: cn).",
     )
     herk_alg_tol: float = Field(1e-10, gt=0.0, description="HERK stage algebraic tolerance.")
     herk_alg_max_iter: int = Field(50, gt=0, description="HERK stage Newton max iterations.")
