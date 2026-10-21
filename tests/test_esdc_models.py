@@ -158,7 +158,7 @@ def test_native_be_solves_active_voltage_scaled_constraint(esdc_case):
     assert endpoint[descriptor.state_index] == pytest.approx(upper, abs=1e-10)
 
 
-@pytest.mark.parametrize("method", ["beuler", "herk2"])
+@pytest.mark.parametrize("method", ["beuler", "cn", "herk2"])
 def test_esdc_unperturbed_native_steps_are_flat(esdc_case, method):
     psys, state, theta = esdc_case
     context = IntegrationCtx()
@@ -175,7 +175,7 @@ def test_esdc_unperturbed_native_steps_are_flat(esdc_case, method):
     np.testing.assert_allclose(result["history"][:, -1], state, atol=2e-8)
 
 
-@pytest.mark.parametrize("method", ["beuler", "herk2"])
+@pytest.mark.parametrize("method", ["beuler", "cn", "herk2"])
 def test_esdc2_fault_samples_respect_voltage_scaled_bounds(esdc_case, method):
     psys, state, theta = esdc_case
     exc = psys.exc[0]
@@ -406,6 +406,7 @@ def test_herk_topology_algebraic_failure_is_structured(monkeypatch):
     "method,petsc",
     [
         ("beuler", False),
+        ("cn", False),
         ("herk2", False),
     ],
 )
@@ -507,8 +508,9 @@ def test_topology_projection_failure_has_common_runtime_context(
 
 
 @pytest.mark.parametrize("method", ["beuler", "cn"])
+@pytest.mark.parametrize("stage", ["fault_on", "fault_off"])
 def test_petsc_topology_projection_failure_has_common_runtime_context(
-    method, monkeypatch,
+    method, stage, monkeypatch,
 ):
     descriptor = LimitedStateDescriptor(
         0,
@@ -529,7 +531,7 @@ def test_petsc_topology_projection_failure_has_common_runtime_context(
         "side": "upper",
         "action": "project",
         "time": 0.1,
-        "stage_or_endpoint": "fault_on",
+        "stage_or_endpoint": stage,
     }
     destroyed = []
 
@@ -550,6 +552,7 @@ def test_petsc_topology_projection_failure_has_common_runtime_context(
             self.active = False
 
     fault = Fault()
+    fault.active = stage == "fault_off"
     config = SimpleNamespace(
         newton_tol=1e-10,
         newton_max_iter=20,
@@ -559,11 +562,15 @@ def test_petsc_topology_projection_failure_has_common_runtime_context(
         verbose=False,
     )
     psys = SimpleNamespace(num_dof_dif=1)
-    schedule = SimpleNamespace(fault_on_index=1, fault_off_index=None)
+    schedule = SimpleNamespace(
+        fault_on_index=1 if stage == "fault_on" else None,
+        fault_off_index=1 if stage == "fault_off" else None,
+    )
     diagnostics = {"events": [{"action": "prior"}]}
 
     def fail_projection(*args, **kwargs):
         assert kwargs["max_dynamic_limit_iterations"] == 4
+        assert kwargs["method"] == method
         raise DynamicLimitError(
             {
                 "message": "forced topology projection failure",
@@ -609,7 +616,7 @@ def test_petsc_topology_projection_failure_has_common_runtime_context(
     assert error["method"] == method
     assert error["backend"] == "petsc"
     assert error["time"] == pytest.approx(0.1)
-    assert error["stage_or_endpoint"] == "fault_on"
+    assert error["stage_or_endpoint"] == stage
     assert error["events"] == [{"action": "prior"}, local_event]
     assert fault.active is False
     assert destroyed == [True]

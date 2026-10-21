@@ -96,8 +96,8 @@ class IntegrationConfig(BaseModel):
     jacobian_check_top_k: int = Field(10, description="Number of Jacobian mismatches to report.")
     jacobian_check_csv: Optional[str] = Field(None, description="Optional CSV path for Jacobian mismatch report.")
     method: str = Field(
-        "beuler",
-        description="Integrator method: beuler | cn | herk2 | herk4.",
+        "cn",
+        description="Integrator method: beuler | cn | herk2 | herk4 (default: cn).",
     )
     herk_alg_tol: float = Field(1e-10, gt=0.0, description="HERK stage algebraic tolerance.")
     herk_alg_max_iter: int = Field(50, gt=0, description="HERK stage Newton max iterations.")
@@ -158,15 +158,14 @@ class IntegrationConfig(BaseModel):
                 )
         if self.toff < self.ton:
             raise ValueError("`toff` must be greater than or equal to `ton`.")
-        if self.method == "cn" and not self.petsc:
-            raise ValueError("`method='cn'` requires `petsc=True`.")
         if self.method in {"herk2", "herk4"} and self.petsc:
             raise ValueError(f"`method='{self.method}'` requires `petsc=False`.")
         if self.jacobian_mode == "finite_difference" and (
-            self.petsc or self.method != "beuler"
+            self.petsc or self.method not in {"beuler", "cn"}
         ):
             raise ValueError(
-                "`jacobian_mode='finite_difference'` requires native backward Euler."
+                "`jacobian_mode='finite_difference'` requires native backward Euler "
+                "or Crank-Nicolson."
             )
         if self.jacobian_mode == "finite_difference" and self.check_jacobian:
             raise ValueError(

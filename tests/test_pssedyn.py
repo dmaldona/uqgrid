@@ -40,6 +40,7 @@ def test_two_bus_system(data_dir):
 
     # Define the integration configuration using IntegrationConfig
     config = IntegrationConfig(
+        method="beuler",          # Preserve the existing BE trace regression.
         tend=10.0,                 # Integration end time in seconds
         dt=1.0 / 120.0,            # Time step in seconds
         steps=-1,                # Number of integration steps (-1 for automatic)

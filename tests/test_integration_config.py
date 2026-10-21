@@ -14,7 +14,7 @@ def test_integration_config_defaults_and_schema_after_arkimex_removal():
         "arkimex", "arkimex_slow_differential", "arkimex_fast_differential",
     }
 
-    assert cfg.method == "beuler"
+    assert cfg.method == "cn"
     assert cfg.petsc is False
     assert removed.isdisjoint(IntegrationConfig.model_fields)
     assert removed.isdisjoint(IntegrationConfig.model_json_schema()["properties"])
@@ -75,7 +75,7 @@ def test_integration_config_rejects_removed_arkimex_petsc_options(petsc_args, pe
 
 @pytest.mark.parametrize(
     "method,petsc",
-    [("beuler", False), ("beuler", True), ("cn", True), ("herk2", False), ("herk4", False)],
+    [("beuler", False), ("beuler", True), ("cn", False), ("cn", True), ("herk2", False), ("herk4", False)],
 )
 def test_integration_config_preserves_supported_methods_and_solver_options(method, petsc):
     options = ["-ksp_type", "gmres", "-snes_rtol=1e-9", "-ts_monitor"]
@@ -84,7 +84,7 @@ def test_integration_config_preserves_supported_methods_and_solver_options(metho
     assert cfg.method == method
     assert cfg.petsc is petsc
     assert cfg.petsc_args == options
-    assert IntegrationConfig(unrelated_option=True).method == "beuler"
+    assert IntegrationConfig(unrelated_option=True).method == "cn"
 
 
 def test_integration_config_q_limit_defaults():
@@ -100,8 +100,9 @@ def test_integration_config_q_limit_defaults():
     assert IntegrationConfig().jacobian_mode == "analytical"
 
 
-def test_integration_config_accepts_native_finite_difference_jacobian():
-    cfg = IntegrationConfig(jacobian_mode="finite_difference")
+@pytest.mark.parametrize("method", ["beuler", "cn"])
+def test_integration_config_accepts_native_finite_difference_jacobian(method):
+    cfg = IntegrationConfig(method=method, jacobian_mode="finite_difference")
     assert cfg.finite_difference_epsilon == pytest.approx(1e-7)
 
 
@@ -130,22 +131,27 @@ def test_herk_resets_cached_jacobian_mode(monkeypatch):
         ({"ton": 0.2, "toff": 0.1}, "toff"),
         ({"method": "bogus"}, "method"),
         ({"method": "arkimex", "petsc": True}, "method"),
-        ({"method": "cn"}, "requires `petsc=True`"),
         ({"method": "herk2", "petsc": True}, "requires `petsc=False`"),
         ({"jacobian_mode": "invalid"}, "jacobian_mode"),
         ({"jacobian_mode": "finite_difference", "petsc": True}, "native backward Euler"),
+        ({"jacobian_mode": "finite_difference", "petsc": True, "method": "cn"}, "native backward Euler"),
         ({"jacobian_mode": "finite_difference", "method": "herk2"}, "native backward Euler"),
+        ({"jacobian_mode": "finite_difference", "method": "herk4"}, "native backward Euler"),
         (
             {"jacobian_mode": "finite_difference", "check_jacobian": True},
             "requires `jacobian_mode='analytical'`",
         ),
         ({"finite_difference_epsilon": float("inf")}, "finite number"),
         (
-            {"comp_sens": True, "petsc": True, "enforce_dynamic_limits": False},
+            {"method": "beuler", "comp_sens": True, "petsc": True, "enforce_dynamic_limits": False},
             "method='cn'",
         ),
         (
             {"comp_sens": True, "petsc": False, "enforce_dynamic_limits": False},
+            "petsc=True",
+        ),
+        (
+            {"method": "cn", "comp_sens": True, "enforce_dynamic_limits": False},
             "petsc=True",
         ),
         (
@@ -171,6 +177,14 @@ def test_integration_config_rejects_invalid_time_contract(kwargs, match):
         IntegrationConfig(**kwargs)
 
 
+def test_integration_config_accepts_native_cn_with_legacy_fsolve_opt_out():
+    cfg = IntegrationConfig(method="cn", fsolve=True, enforce_dynamic_limits=False)
+
+    assert cfg.method == "cn"
+    assert cfg.petsc is False
+    assert cfg.fsolve is True
+
+
 def test_integration_config_accepts_explicit_petsc_methods():
     assert IntegrationConfig(petsc=True, method="beuler").method == "beuler"
     assert IntegrationConfig(petsc=True, method="cn").method == "cn"
@@ -180,6 +194,17 @@ def test_integration_config_accepts_explicit_petsc_methods():
         comp_sens=True,
         enforce_dynamic_limits=False,
     ).comp_sens is True
+
+
+def test_integration_config_default_cn_accepts_petsc_sensitivities():
+    cfg = IntegrationConfig(
+        petsc=True,
+        comp_sens=True,
+        enforce_dynamic_limits=False,
+    )
+
+    assert cfg.method == "cn"
+    assert cfg.comp_sens is True
 
 
 def test_integration_config_dynamic_limit_defaults_and_opt_out():
@@ -209,13 +234,14 @@ def test_integration_config_rejects_invalid_dynamic_limit_controls(kwargs):
         IntegrationConfig(**kwargs)
 
 
+@pytest.mark.parametrize("method", ["beuler", "cn"])
 @pytest.mark.parametrize("option", ["comp_sens", "fsolve"])
-def test_dynamic_limits_reject_unsupported_legacy_paths(option):
+def test_dynamic_limits_reject_unsupported_legacy_paths(option, method):
     with pytest.raises(
         ValueError,
         match=rf"`{option}=True`.*`enforce_dynamic_limits=False`",
     ):
-        IntegrationConfig(**{option: True})
+        IntegrationConfig(method=method, **{option: True})
 
 
 def test_petsc_method_mapping_is_explicit():

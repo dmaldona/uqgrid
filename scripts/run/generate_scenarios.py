@@ -1565,12 +1565,12 @@ def _integration_config_from_dict(integration_config=None):
     return IntegrationConfig(
         tend=int_cfg.get("tend", 10.0),
         dt=int_cfg.get("dt", 1 / 120.0),
-        method=int_cfg.get("method", "beuler"),
+        method=int_cfg.get("method", "cn"),
         power_injection=int_cfg.get("power_injection", False),
         ton=int_cfg.get("ton", 0.25),
         toff=int_cfg.get("toff", 0.4),
         verbose=int_cfg.get("verbose", False),
-        petsc=int_cfg.get("petsc", True),
+        petsc=int_cfg.get("petsc", False),
         jacobian_mode=int_cfg.get("jacobian_mode", "analytical"),
         finite_difference_epsilon=int_cfg.get(
             "finite_difference_epsilon", 1e-7
@@ -2031,12 +2031,12 @@ def run_single_scenario_worker(
 
         - 'tend': Simulation end time in seconds (default: 10.0)
         - 'dt': Time step in seconds (default: 1/120.0)
-        - 'method': beuler, cn, herk2, or herk4 (default: beuler)
+        - 'method': beuler, cn, herk2, or herk4 (default: cn)
         - 'power_injection': Use power injection model (default: False)
         - 'ton': Fault onset time in seconds (default: 0.25)
         - 'toff': Fault clearing time in seconds (default: 0.4)
         - 'verbose': Enable verbose output (default: False)
-        - 'petsc': Use PETSc solver (default: True)
+        - 'petsc': Use PETSc solver (default: False)
 
     Returns
     -------
@@ -3471,7 +3471,7 @@ def get_default_config(model_name: str) -> dict:
             "ton": 0.25,               # Fault onset time [s]
             "toff": 0.4,               # Fault clearing time [s]
             "verbose": False,
-            "petsc": True,
+            "petsc": False,
             "jacobian_mode": "analytical",
             "finite_difference_epsilon": 1e-7,
             "enforce_q_limits": True,
@@ -3737,7 +3737,7 @@ def main(config_path: str = None):
                 "ton": 0.25,
                 "toff": 0.4,
                 "verbose": false,
-                "petsc": true,
+                "petsc": false,
                 "enforce_q_limits": true,
                 "q_limit_tolerance": 1e-8,
                 "max_q_limit_iterations": null,
@@ -3895,12 +3895,12 @@ Examples:
     integration_config = {
         "tend": integration_cfg.get("tend", 10.0),
         "dt": integration_cfg.get("dt", 1/120.0),
-        "method": integration_cfg.get("method", "beuler"),
+        "method": integration_cfg.get("method", "cn"),
         "power_injection": integration_cfg.get("power_injection", False),
         "ton": integration_cfg.get("ton", 0.25),
         "toff": integration_cfg.get("toff", 0.4),
         "verbose": integration_cfg.get("verbose", False),
-        "petsc": integration_cfg.get("petsc", True),
+        "petsc": integration_cfg.get("petsc", False),
         "jacobian_mode": integration_cfg.get("jacobian_mode", "analytical"),
         "finite_difference_epsilon": integration_cfg.get(
             "finite_difference_epsilon", 1e-7

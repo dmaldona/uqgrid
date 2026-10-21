@@ -144,14 +144,30 @@ def test_dynamics_driver_rejects_removed_arkimex_requests(
     assert message in captured.out + captured.err
 
 
-def test_dynamics_driver_preserves_default_native_backward_euler(monkeypatch):
+@pytest.mark.parametrize(
+    "arguments,method,petsc,petsc_args",
+    [
+        ([], "cn", False, []),
+        (["--method", "beuler"], "beuler", False, []),
+        (["--petsc", "--", "-ksp_type", "gmres"], "cn", True, ["-ksp_type", "gmres"]),
+    ],
+)
+def test_dynamics_driver_defaults_and_explicit_method_without_petsc_init(
+    monkeypatch, arguments, method, petsc, petsc_args,
+):
     repo_root = Path(__file__).resolve().parents[1]
     module = _load_module(repo_root / "bin" / "dynamics_driver.py", "test_dynamics_driver")
-    monkeypatch.setattr(
-        sys, "argv", ["dynamics_driver.py", "--raw", "case.raw", "--dyr", "case.dyr"],
-    )
+    argv = ["dynamics_driver.py", "--raw", "case.raw", "--dyr", "case.dyr"] + arguments
+    monkeypatch.setattr(sys, "argv", argv.copy())
+
+    def unexpected_initialization(*args, **kwargs):
+        pytest.fail("Parsing integration options must not initialize PETSc")
+
+    monkeypatch.setattr(dynamics, "_initialize_petsc", unexpected_initialization)
 
     _, _, _, config, _ = module.parse_args()
 
-    assert config.method == "beuler"
-    assert config.petsc is False
+    assert config.method == method
+    assert config.petsc is petsc
+    assert config.petsc_args == petsc_args
+    assert sys.argv == argv

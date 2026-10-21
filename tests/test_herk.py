@@ -31,10 +31,11 @@ def _build_two_bus_psys(data_dir):
     return psys
 
 
-def test_config_defaults_preserve_beuler():
+def test_config_defaults_use_native_cn_and_preserve_herk_controls():
     cfg = IntegrationConfig()
 
-    assert cfg.method == "beuler"
+    assert cfg.method == "cn"
+    assert cfg.petsc is False
     assert cfg.herk_alg_tol == pytest.approx(1e-10)
     assert cfg.herk_alg_max_iter == 50
 
@@ -58,19 +59,45 @@ def test_beuler_regression_unchanged(data_dir):
         toff=11.0,
     )
 
-    psys_default = _build_two_bus_psys(data_dir)
-    res_default = integrate_system(psys_default, IntegrationConfig(**base_config))
-
-    psys_explicit = _build_two_bus_psys(data_dir)
-    res_explicit = integrate_system(
-        psys_explicit, IntegrationConfig(method="beuler", **base_config)
+    psys = _build_two_bus_psys(data_dir)
+    result = integrate_system(
+        psys, IntegrationConfig(method="beuler", **base_config)
     )
 
-    assert np.array_equal(res_default["tvec"], res_explicit["tvec"])
-    assert np.allclose(res_default["history"], res_explicit["history"])
+    np.testing.assert_allclose(result["tvec"], np.arange(4) * base_config["dt"])
+    assert np.max(np.abs(result["history"] - result["history"][:, [0]])) < 1e-8
 
 
-@pytest.mark.parametrize("method", ["beuler", "herk2", "herk4"])
+def test_default_fault_trajectory_matches_native_cn_without_petsc(data_dir, monkeypatch):
+    def unexpected_initialization(*args, **kwargs):
+        pytest.fail("Native integration must not initialize PETSc")
+
+    monkeypatch.setattr(dynamics, "_initialize_petsc", unexpected_initialization)
+    results = {}
+    for method in (None, "cn", "beuler"):
+        psys = _build_two_bus_psys(data_dir)
+        kwargs = dict(
+            dt=0.01,
+            steps=10,
+            ton=0.025,
+            toff=0.075,
+            power_injection=True,
+        )
+        if method is not None:
+            kwargs["method"] = method
+        results[method] = integrate_system(psys, IntegrationConfig(**kwargs))
+
+    default = results[None]
+    np.testing.assert_array_equal(default["tvec"], results["cn"]["tvec"])
+    np.testing.assert_array_equal(default["history"], results["cn"]["history"])
+    differential = default["history"][:psys.num_dof_dif]
+    assert np.max(np.abs(differential - differential[:, [0]])) > 1e-6
+    assert np.max(np.abs(
+        differential - results["beuler"]["history"][:psys.num_dof_dif]
+    )) > 1e-8
+
+
+@pytest.mark.parametrize("method", ["beuler", "cn", "herk2", "herk4"])
 def test_fixed_step_drivers_store_initial_state_and_common_grid(data_dir, method):
     psys = _build_two_bus_no_fault(data_dir)
     pf_solution = runpf(psys, verbose=False)
@@ -95,7 +122,7 @@ def test_fixed_step_drivers_store_initial_state_and_common_grid(data_dir, method
     assert result["history"].shape[1] == 4
 
 
-@pytest.mark.parametrize("method", ["beuler", "herk2", "herk4"])
+@pytest.mark.parametrize("method", ["beuler", "cn", "herk2", "herk4"])
 def test_fixed_step_fault_transitions_use_exact_post_switch_states(
         data_dir, method):
     psys = _build_two_bus_psys(data_dir)

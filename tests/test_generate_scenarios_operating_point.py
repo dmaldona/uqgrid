@@ -84,14 +84,17 @@ def test_integration_config_adapter_preserves_q_limit_controls(gs):
     assert cfg.power_flow_validation.branch_loading_max == pytest.approx(1.0)
 
 
-def test_integration_config_adapter_preserves_jacobian_controls(gs):
+@pytest.mark.parametrize("method", ["beuler", "cn"])
+def test_integration_config_adapter_preserves_jacobian_controls(gs, method):
     cfg = gs._integration_config_from_dict({
         "petsc": False,
-        "method": "beuler",
+        "method": method,
         "jacobian_mode": "finite_difference",
         "finite_difference_epsilon": 2e-6,
     })
 
+    assert cfg.method == method
+    assert cfg.petsc is False
     assert cfg.jacobian_mode == "finite_difference"
     assert cfg.finite_difference_epsilon == pytest.approx(2e-6)
 
@@ -118,6 +121,7 @@ def test_default_scenario_config_includes_q_limit_controls(gs):
     integration = gs.get_default_config("IEEE-9")["integration"]
 
     assert integration["method"] == "cn"
+    assert integration["petsc"] is False
     assert integration["enforce_q_limits"] is True
     assert integration["q_limit_tolerance"] == pytest.approx(1e-8)
     assert integration["max_q_limit_iterations"] is None
@@ -136,7 +140,8 @@ def test_default_scenario_config_includes_q_limit_controls(gs):
     assert validation["branch_loading_max"] == pytest.approx(1.0)
 
     adapted = gs._integration_config_from_dict({})
-    assert adapted.method == "beuler"
+    assert adapted.method == "cn"
+    assert adapted.petsc is False
     assert adapted.enforce_q_limits is True
     assert adapted.enforce_dynamic_limits is True
     assert adapted.power_flow_validation.enabled is False
@@ -188,8 +193,9 @@ def _fake_fault_psys():
     )
 
 
+@pytest.mark.parametrize("method", ["beuler", "cn"])
 def test_fault_worker_preserves_successful_pf_validation(
-        gs, tmp_path, monkeypatch):
+        gs, tmp_path, monkeypatch, method):
     scenario, operating_point = _fault_worker_inputs()
     validation = {"valid": True, "failure_reasons": []}
     dynamic_limits = {"enabled": True, "initialization": {"valid": True}}
@@ -216,7 +222,7 @@ def test_fault_worker_preserves_successful_pf_validation(
         operating_point,
         {
             "petsc": False,
-            "method": "beuler",
+            "method": method,
             "jacobian_mode": "finite_difference",
             "finite_difference_epsilon": 2e-6,
             "power_flow_validation": {"enabled": True},
@@ -226,11 +232,14 @@ def test_fault_worker_preserves_successful_pf_validation(
     assert result["diverged"] is False
     assert result["diagnostics"]["power_flow_validation"] == validation
     assert result["diagnostics"]["dynamic_limit_diagnostics"] == dynamic_limits
+    assert captured["config"].method == method
+    assert captured["config"].petsc is False
     assert captured["config"].jacobian_mode == "finite_difference"
     assert captured["config"].finite_difference_epsilon == pytest.approx(2e-6)
 
 
-def test_main_forwards_json_jacobian_controls(gs, tmp_path, monkeypatch):
+@pytest.mark.parametrize("method", [None, "beuler", "cn"])
+def test_main_forwards_json_jacobian_controls(gs, tmp_path, monkeypatch, method):
     config = gs.get_default_config("IEEE-9")
     config["model"].update({"raw": "case.raw", "dyr": "case.dyr", "n_bus": 1})
     config["scenarios"].update({
@@ -241,10 +250,14 @@ def test_main_forwards_json_jacobian_controls(gs, tmp_path, monkeypatch):
     })
     config["integration"].update({
         "petsc": False,
-        "method": "beuler",
         "jacobian_mode": "finite_difference",
         "finite_difference_epsilon": 3e-6,
     })
+    if method is None:
+        config["integration"].pop("method")
+        config["integration"].pop("petsc")
+    else:
+        config["integration"]["method"] = method
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(config))
     captured = {}
@@ -261,8 +274,142 @@ def test_main_forwards_json_jacobian_controls(gs, tmp_path, monkeypatch):
     gs.main(str(config_path))
 
     integration = captured["integration_config"]
+    assert integration["method"] == (method or "cn")
+    assert integration["petsc"] is False
     assert integration["jacobian_mode"] == "finite_difference"
     assert integration["finite_difference_epsilon"] == pytest.approx(3e-6)
+
+
+def _short_native_cn_config(jacobian_mode="analytical"):
+    return {
+        "method": "cn",
+        "petsc": False,
+        "jacobian_mode": jacobian_mode,
+        "tend": 0.02,
+        "dt": 0.005,
+        "ton": 0.007,
+        "toff": 0.013,
+    }
+
+
+def _read_successful_scenario(result):
+    assert result["diverged"] is False, result
+    assert result["rejected"] is False
+    diagnostics = result["diagnostics"]
+    assert diagnostics["accepted"] is True
+    assert diagnostics["simulation_diverged"] is False
+    assert diagnostics["dynamic_limit_diagnostics"]["initialization"]["valid"]
+    json.dumps(result)
+    with np.load(result["file"], allow_pickle=False) as saved:
+        assert set(saved.files) == {
+            "history", "tvec", "p_load_scaled", "q_load_scaled",
+            "p_load_noise", "q_load_noise", "load_scale", "load_mean_shift",
+            "p_gen_scaled", "q_gen_scaled", "p_gen_noise", "q_gen_noise",
+        }
+        arrays = {key: saved[key].copy() for key in saved.files}
+    assert arrays["history"].ndim == 2
+    assert arrays["history"].shape[1] == arrays["tvec"].size
+    assert np.all(np.isfinite(arrays["history"]))
+    assert np.all(np.diff(arrays["tvec"]) > 0.0)
+    for time in (0.0, 0.007, 0.013, 0.02):
+        assert np.count_nonzero(np.isclose(
+            arrays["tvec"], time, rtol=0.0, atol=1e-12,
+        )) == 1
+    return arrays
+
+
+@pytest.mark.parametrize("jacobian_mode", ["finite_difference", "analytical"])
+def test_native_cn_scenario_worker_outputs_and_seed_reproducibility(
+    gs, data_dir, tmp_path, monkeypatch, jacobian_mode,
+):
+    monkeypatch.chdir(tmp_path)
+    raw = os.path.join(data_dir, "2bus_33.raw")
+    dyr = os.path.join(data_dir, "2bus_SEXS.dyr")
+    scenario = {"sample_idx": 7, "fault_location": 1, "fault_impedance": 1e-4}
+    integration = _short_native_cn_config(jacobian_mode)
+
+    outputs = []
+    for scenario_id, method in (("cn", "cn"), ("cn-repeat", "cn"), ("be", "beuler")):
+        result = gs.run_single_scenario_worker(
+            raw, dyr, scenario, scenario_id,
+            global_seed=9821,
+            noise_var=1e-4,
+            balance_generation=False,
+            clamp_gens=False,
+            integration_config={**integration, "method": method},
+        )
+        outputs.append(_read_successful_scenario(result))
+
+    cn, repeated_cn, be = outputs
+    for key, values in cn.items():
+        np.testing.assert_array_equal(repeated_cn[key], values)
+        if key != "history":
+            np.testing.assert_array_equal(be[key], values)
+
+
+def test_native_cn_scenario_checkpoint_resumes_without_repeating_completed_work(
+    gs, data_dir, tmp_path, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    raw = os.path.join(data_dir, "2bus_33.raw")
+    dyr = os.path.join(data_dir, "2bus_SEXS.dyr")
+    scenarios = {
+        key: {"sample_idx": index, "fault_location": 1, "fault_impedance": 1e-4}
+        for index, key in enumerate(("a", "b"))
+    }
+    driver_options = {
+        "n_jobs": 1,
+        "batch_size": 1,
+        "checkpoint_interval": 1,
+        "perturb_loads": False,
+        "perturb_gens": False,
+        "balance_generation": False,
+        "clamp_gens": False,
+        "integration_config": _short_native_cn_config(),
+    }
+    original_parallel = gs.Parallel
+    original_worker = gs.run_single_scenario_worker
+    called_ids = []
+    batch_count = 0
+
+    def record_worker(*args, **kwargs):
+        called_ids.append(args[3])
+        return original_worker(*args, **kwargs)
+
+    def interrupt_second_batch(*args, **kwargs):
+        nonlocal batch_count
+        batch_count += 1
+        if batch_count == 2:
+            raise KeyboardInterrupt("interrupted scenario generation")
+        return original_parallel(*args, **kwargs)
+
+    monkeypatch.setattr(gs, "run_single_scenario_worker", record_worker)
+    monkeypatch.setattr(gs, "Parallel", interrupt_second_batch)
+    with pytest.raises(KeyboardInterrupt, match="interrupted scenario generation"):
+        gs.run_simulation_driver_batched(raw, dyr, scenarios, **driver_options)
+
+    assert called_ids == ["a"]
+    checkpoint_path = tmp_path / "simulation_checkpoint.json"
+    checkpoint = json.loads(checkpoint_path.read_text())
+    assert checkpoint["last_batch"] == 0
+    assert set(checkpoint["simulation_log"]) == {"a"}
+    first_result = _read_successful_scenario(checkpoint["simulation_log"]["a"])
+    first_file = tmp_path / checkpoint["simulation_log"]["a"]["file"]
+    first_bytes = first_file.read_bytes()
+
+    monkeypatch.setattr(gs, "Parallel", original_parallel)
+    log = gs.run_simulation_driver_batched(raw, dyr, scenarios, **driver_options)
+
+    assert called_ids == ["a", "b"]
+    assert set(log) == {"a", "b"}
+    assert json.loads((tmp_path / "simulation_log.json").read_text()) == log
+    assert (tmp_path / "state_metadata.json").is_file()
+    assert not checkpoint_path.exists()
+    assert first_file.read_bytes() == first_bytes
+    np.testing.assert_array_equal(
+        _read_successful_scenario(log["a"])["history"], first_result["history"],
+    )
+    _read_successful_scenario(log["b"])
 
 
 def test_fault_worker_preserves_failed_pf_validation(

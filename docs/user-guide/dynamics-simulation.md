@@ -59,7 +59,7 @@ config = IntegrationConfig(
     verbose=False,
     comp_sens=False,
     fsolve=False,
-    petsc=True,
+    petsc=False,
     enforce_q_limits=True,
     q_limit_tolerance=1e-8,
     max_q_limit_iterations=None,
@@ -92,12 +92,12 @@ Key fields:
 - **dt**: Integration step size (seconds).
 - **steps**: Number of nominal advances. A positive value overrides `tend` and
   produces `steps + 1` base samples, including `t=0`.
-- **method**: `"beuler"`, `"cn"`, `"herk2"`, or `"herk4"`.
+- **method**: `"beuler"`, `"cn"`, `"herk2"`, or `"herk4"` (default: `"cn"`).
 - **ton/toff**: Fault activation and removal times.
 - **comp_sens**: Enable adjoint-based sensitivities (requires PETSc and
   `method="cn"`).
 - **petsc**: Switch to PETSc-backed integrators for improved robustness and
-  adjoint capabilities.
+  adjoint capabilities (default: `False`).
 - **enforce_q_limits**: Enforce non-slack PV generator reactive-power limits
   during the power flow used for dynamic initialization.
 - **q_limit_tolerance**: Per-unit tolerance for activating a generator
@@ -115,7 +115,7 @@ Key fields:
 - **check_jacobian**: Run a finite-difference Jacobian check (non-PETSc only).
 - **jacobian_mode**: Use `"analytical"` assembly or sparse
   `"finite_difference"` assembly. Finite-difference assembly requires native
-  backward Euler.
+  backward Euler or Crank-Nicolson.
 - **finite_difference_epsilon**: Perturbation size used by finite-difference
   Jacobian assembly.
 - **jacobian_check_tol**: Absolute tolerance for reporting FD mismatches.
@@ -128,22 +128,40 @@ Key fields:
 |---|---|
 | `method="beuler", petsc=False` | Native backward Euler |
 | `method="beuler", petsc=True` | PETSc `TSBEULER`, or ordinary SNES when hard limits are active |
+| `method="cn", petsc=False` | Native Crank-Nicolson |
 | `method="cn", petsc=True` | PETSc `TSCN`, or ordinary SNES when hard limits are active |
 | `method="herk2", petsc=False` | HERK2 |
 | `method="herk4", petsc=False` | HERK4 |
 
-Without enabled hard-limit states, `cn` is explicitly mapped to PETSc `TSCN`.
+The library and dynamics CLI default to native Crank-Nicolson
+(`method="cn", petsc=False`). `IntegrationConfig()` or a CLI invocation without
+`--method` or `--petsc` selects native CN. Passing `--petsc` without `--method`
+selects PETSc CN. Select backward Euler explicitly with `method="beuler"` or
+`--method beuler`, and choose its backend with `petsc` or `--petsc`.
+
+Native CN reuses the backward-Euler sparse Newton solver, schedule,
+initialization, and topology projection. Its differential rows use endpoint
+trapezoidal equations, while algebraic rows are evaluated only at the endpoint.
+
+Native CN retains the injector contract: update each signal once at the start
+of an interval and hold its parameters throughout that interval. The starting
+derivative stays fixed during nonlinear solves and is recomputed for each new
+interval, including after fault switching and algebraic projection. CN is
+second order for smooth dynamics under held forcing; sampled inputs and
+endpoint-only limit or topology switches can reduce the observed order.
+
+With `petsc=True` and no enabled hard-limit states, `cn` is explicitly mapped to
+PETSc `TSCN`.
 This is not the same as selecting the midpoint form of `TSTHETA`; PETSc
 distinguishes endpoint Crank-Nicolson from its theta-method midpoint
 formulation for DAEs. See the
 [PETSc TSTHETA documentation](https://petsc.org/release/manualpages/TS/TSTHETA/).
 
-`cn` requires PETSc, and HERK requires the native backend. Hard dynamic limits
-do not support sensitivities or the legacy fsolve path; set
-`enforce_dynamic_limits=False`
-explicitly to use those paths. The library default remains `method="beuler"`.
-Configurations that previously omitted `method` therefore select backward
-Euler. PETSc command-line options may tune solver internals, but options that
+HERK requires the native backend. Native BE and CN support `fsolve=True` only
+with `enforce_dynamic_limits=False`. Sensitivities still require `petsc=True`,
+`method="cn"`, and `enforce_dynamic_limits=False`. Configurations that omit
+`method` now select CN; specify `method="beuler"` to retain backward Euler.
+PETSc command-line options may tune solver internals, but options that
 override the configured TS type, time step, horizon, exact-final-time policy,
 or adaptivity are rejected.
 
@@ -154,8 +172,8 @@ dispatch onto its RAW/MATPOWER bounds before dynamic initialization. Set
 `enforce_q_limits=False` only when an unconstrained legacy operating point is
 required. If a non-slack PV bus cannot hold its voltage setpoint within
 aggregate generator Q capability, the power flow switches that bus to PQ and
-solves again. The same initialization is used for PETSc, backward Euler,
-HERK2, and HERK4.
+solves again. The same initialization is used for native BE/CN, PETSc, HERK2,
+and HERK4.
 
 This constrains the operating point only. Exciter field-voltage limits use the
 separate dynamic-limit configuration below.
@@ -239,12 +257,13 @@ Backward Euler transitions are represented at the interval endpoint; they do
 not localize the crossing, backtrack, or add timestamps. Stored endpoints are
 bound-feasible and algebraically consistent, but activation or release may be
 delayed by one step and contributes an expected O(dt) switching-time error.
-PETSc CN uses the same endpoint active-set contract when enabled limited states
-exist, but assembles the trapezoidal equations explicitly and solves them with
-ordinary SNES instead of delegating to TSCN. At each accepted interval start,
+Native and PETSc CN use the same endpoint active-set contract when enabled
+limited states exist. Both assemble the trapezoidal equations explicitly;
+native CN uses sparse Newton and PETSc CN uses ordinary SNES instead of TSCN.
+At each accepted interval start,
 an outward raw derivative is zeroed only for an inherited active bound; inward
 derivatives pass through immediately. That effective starting derivative stays
-fixed while UQGrid repeats endpoint SNES solves until the active set is
+fixed while UQGrid repeats endpoint nonlinear solves until the active set is
 complementarity-consistent. Free differential rows use the average of the fixed
 starting derivative and the raw endpoint derivative. Active rows remain exact
 bound equations, and algebraic rows remain endpoint equations.
@@ -293,15 +312,15 @@ loading bounds, Q-limit active-set consistency, and one slack bus per electrical
 island. A failed check raises `PowerFlowValidationError` before
 `initialize_system()` or PETSc setup.
 
-Successful backward Euler, PETSc, HERK2, and HERK4 runs include the JSON-safe
+Successful native BE/CN, PETSc, HERK2, and HERK4 runs include the JSON-safe
 diagnostics under `results["power_flow_diagnostics"]`.
 
 ### Jacobian diagnostics (optional)
 
 Set `jacobian_mode="finite_difference"` to use sparse finite-difference
-assembly during native backward Euler integration. This mode requires
-`method="beuler"` and `petsc=False`; incompatible combinations are rejected by
-`IntegrationConfig`.
+assembly during native backward Euler or Crank-Nicolson integration. This mode
+requires `method="beuler"` or `method="cn"` with `petsc=False`; incompatible
+combinations are rejected by `IntegrationConfig`.
 
 When running without PETSc, you can enable a finite-difference Jacobian check:
 

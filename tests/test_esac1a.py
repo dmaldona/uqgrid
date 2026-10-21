@@ -235,6 +235,7 @@ def test_esac1a_numba_kernels_compile(esac1a_case):
     "method,petsc",
     [
         ("beuler", False),
+        ("cn", False),
         ("herk2", False),
         ("herk4", False),
         ("beuler", True),

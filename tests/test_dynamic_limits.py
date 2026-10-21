@@ -381,9 +381,9 @@ def _load_enabled_sexs_system(data_dir):
     return psys
 
 
-def test_native_be_and_herk_return_identical_initial_limit_diagnostics(data_dir):
+def test_native_integrators_return_identical_initial_limit_diagnostics(data_dir):
     results = []
-    for method in ("beuler", "herk2"):
+    for method in ("beuler", "cn", "herk2"):
         psys = _load_enabled_sexs_system(data_dir)
         results.append(
             integrate_system(
@@ -399,7 +399,7 @@ def test_native_be_and_herk_return_identical_initial_limit_diagnostics(data_dir)
             )["dynamic_limit_diagnostics"]
         )
 
-    assert results[0] == results[1]
+    assert results[0] == results[1] == results[2]
     assert results[0]["enabled_state_count"] == 1
     assert results[0]["initialization"]["valid"] is True
     assert results[0]["events"] == []
@@ -449,8 +449,9 @@ def test_invalid_context_fails_before_petsc_setup_or_schedule(data_dir, monkeypa
     assert ctx.z0_user[state_index] == pytest.approx(initial_value)
 
 
+@pytest.mark.parametrize("method", ["beuler", "cn"])
 def test_invalid_context_fails_before_native_allocation_or_schedule(
-    data_dir, monkeypatch
+    data_dir, monkeypatch, method
 ):
     from uqgrid.simulation import dynamics
 
@@ -470,7 +471,7 @@ def test_invalid_context_fails_before_native_allocation_or_schedule(
     with pytest.raises(DynamicLimitError):
         integrate_system(
             psys,
-            IntegrationConfig(petsc=False, method="beuler", steps=1),
+            IntegrationConfig(petsc=False, method=method, steps=1),
             ctx,
         )
 

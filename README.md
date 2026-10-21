@@ -57,20 +57,22 @@ psys.set_load_parameters(np.zeros(psys.nloads))
 config = IntegrationConfig(
     tend=2.0,
     dt=1.0 / 120.0,
-    method="cn",
     ton=0.10,
     toff=0.15,
-    petsc=True,
 )
 
 results = integrate_system(psys, config)
 ```
 
+The library and dynamics CLI default to native Crank-Nicolson (`method="cn"`,
+`petsc=False`). Use `method="beuler"` for backward Euler or `petsc=True` for the
+PETSc backend. On the CLI, use `--method beuler` or `--petsc`, respectively.
+
 ## Examples
 
 Explore the `/bin/` directory for runnable scripts:
 
-- `dynamics_driver.py` — Full PETSc-based workflow with plotting hooks.
+- `dynamics_driver.py` — Dynamic simulation with plotting hooks and an optional PETSc backend.
 - `generate_scenarios.py` — Monte Carlo batch execution utilities.
 
 Each script accepts `--help` for usage details.
