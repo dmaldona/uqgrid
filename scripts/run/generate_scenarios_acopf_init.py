@@ -38,6 +38,7 @@ from joblib import Parallel, delayed
 
 
 _TIME_GRID_CONTRACT = "initialized_t0_exact_events_v1"
+_HANDOFF_CORRECTNESS_VERSION = 1
 _POWER_FLOW_VALIDATION_CONTRACT_DEFAULTS = {
     "enabled": False,
     "residual_tolerance": 1e-8,
@@ -254,6 +255,11 @@ def _compare_sequence(label: str, parsed: Sequence[Any], uqgrid: Sequence[Any]) 
 
 def apply_exajugo_solution_to_psys(psys: Any, parsed: ParsedExaJuGOBasecase) -> dict[str, Any]:
     """Apply a parsed ExaJuGO basecase to a fresh UQGrid power-system object."""
+    if any(not hasattr(shunt, "is_switched") for shunt in getattr(psys, "shunts", [])):
+        raise RuntimeError(
+            "Missing shunt provenance. Use the updated UQGrid package and "
+            "ACOPF generator from the same checkout."
+        )
     load_bus_ids = parsed.load_bus_ids.astype(int).tolist()
     uqgrid_load_bus_ids = [int(load.bus) + 1 for load in psys.loads]
     _compare_sequence("load ordering", load_bus_ids, uqgrid_load_bus_ids)
@@ -279,21 +285,20 @@ def apply_exajugo_solution_to_psys(psys: Any, parsed: ParsedExaJuGOBasecase) -> 
     psys.set_load_pq(p_load, q_load)
     psys.set_gen_pq(p_gen, q_gen)
 
-    bsh_total = np.zeros(int(psys.nbuses), dtype=np.float64)
+    switched_bsh = np.zeros(int(psys.nbuses), dtype=np.float64)
     for shunt in getattr(psys, "shunts", []):
-        bsh_total[int(shunt.bus)] += float(shunt.bsh)
+        if shunt.is_switched:
+            switched_bsh[int(shunt.bus)] += float(shunt.bsh)
 
     adjusted_shunts = 0
     for ext_bus, bcs_mvar in zip(parsed.bus_ids, parsed.bus_bcs_mvar):
-        if abs(float(bcs_mvar)) <= 1e-10:
-            continue
         bus_int = psys.ext2int[int(ext_bus)]
         desired_bsh = float(bcs_mvar) / base_mva
-        delta_bsh = desired_bsh - bsh_total[bus_int]
+        delta_bsh = desired_bsh - switched_bsh[bus_int]
         if abs(delta_bsh) <= 1e-10:
             continue
-        psys.add_shunt(bus_int, 0.0, delta_bsh * base_mva)
-        bsh_total[bus_int] += delta_bsh
+        psys.add_shunt(bus_int, 0.0, delta_bsh * base_mva, is_switched=True)
+        switched_bsh[bus_int] += delta_bsh
         adjusted_shunts += 1
 
     for ext_bus, vm_pu, theta_deg in zip(
@@ -3425,6 +3430,7 @@ def read_acopf_production_status(
             resume.get("integration_contract"),
         ),
         "sampling_config": progress.get("sampling_config"),
+        "handoff_correctness_version": progress.get("handoff_correctness_version"),
         "resume_error": resume_error,
         "progress_path": str(state_paths["progress"]),
         "diagnostics_path": str(state_paths["diagnostics"]),
@@ -3449,6 +3455,7 @@ def _production_progress(
 ) -> dict[str, Any]:
     progress = {
         "stage": "stage_4_production",
+        "handoff_correctness_version": _HANDOFF_CORRECTNESS_VERSION,
         "target_accepted_scenarios": int(target_accepted_scenarios),
         "accepted_count": int(accepted_count),
         "next_sample_idx": int(next_sample_idx),
@@ -3530,6 +3537,14 @@ def _load_production_resume_state(
     )
     progress = _read_json_file(state_paths["progress"], {})
     if progress:
+        if progress.get("handoff_correctness_version") != _HANDOFF_CORRECTNESS_VERSION:
+            raise ValueError(
+                "Resume rejected: handoff correctness version "
+                f"{progress.get('handoff_correctness_version')!r} does not match "
+                f"{_HANDOFF_CORRECTNESS_VERSION}. Corrected transformer ratings "
+                "and shunt handling require a fresh output directory. "
+                "Existing NPZ files remain readable."
+            )
         _assert_integration_contract_matches(
             progress.get("integration_contract"),
             expected_integration_contract,

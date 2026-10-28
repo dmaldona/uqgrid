@@ -68,7 +68,8 @@ def load_psse(raw_filename):
 
         tap = (volt1/volt2)
         psys.add_branch(fr_internal, to_internal, r12, x12, 
-                tran.MAG2 if abs(tran.MAG2) > 0.0 else 0.0, tap=tap, shift=tran.ANG1)
+                tran.MAG2 if abs(tran.MAG2) > 0.0 else 0.0, tap=tap, shift=tran.ANG1,
+                rateA=tran.rateA, rateB=tran.rateB, rateC=tran.rateC)
 
         if tran.COD1 == 1:
             psys.add_shunt(fr_internal, tran.MAG1*baseMVA, tran.MAG2*baseMVA)
@@ -168,11 +169,14 @@ def load_psse(raw_filename):
         elif tran.status == 4: s1, s2, s3 = 0, 1, 1
 
         psys.add_branch(ibus, bus_internal, r1, x1,
-                0.0, tap=tap1, shift=tran.ANG1)
+                0.0, tap=tap1, shift=tran.ANG1,
+                rateA=tran.rateA1, rateB=tran.rateB1, rateC=tran.rateC1)
         psys.add_branch(bus_internal, jbus, r2, x2,
-                0.0, tap=tap2, shift=tran.ANG2)
+                0.0, tap=tap2, shift=tran.ANG2,
+                rateA=tran.rateA2, rateB=tran.rateB2, rateC=tran.rateC2)
         psys.add_branch(bus_internal, kbus, r3, x3,
-                0.0, tap=tap3, shift=tran.ANG3)
+                0.0, tap=tap3, shift=tran.ANG3,
+                rateA=tran.rateA3, rateB=tran.rateB3, rateC=tran.rateC3)
 
     # add generators
     # First pass: track inactive generators and buses with active generators
@@ -219,7 +223,7 @@ def load_psse(raw_filename):
     for shunt in getattr(case, "switched_shunts", []):
         if shunt.status == 1:
             bus = psse_to_int[int(shunt.busn)]
-            psys.add_shunt(bus, 0.0, shunt.binit)
+            psys.add_shunt(bus, 0.0, shunt.binit, is_switched=True)
 
     psys.add_ext2int(psse_to_int)
     psys.assemble()

@@ -257,10 +257,11 @@ class Generator(object):
         self.has_dynamic_model = False
 
 class Shunt(object):
-    def __init__(self, bus, gsh, bsh, basemva):
+    def __init__(self, bus, gsh, bsh, basemva, *, is_switched=False):
         self.bus = bus
         self.gsh = gsh/basemva
         self.bsh = bsh/basemva
+        self.is_switched = bool(is_switched)
 
 class BusFault(object):
     def __init__(self, bus, rfault):
@@ -482,8 +483,8 @@ class Psystem:
         self.add_device(self.loads[-1])
         self.nloads += 1
 
-    def add_shunt(self, bus, gsh, bsh):
-        self.shunts.append(Shunt(bus, gsh, bsh, self.basemva))
+    def add_shunt(self, bus, gsh, bsh, *, is_switched=False):
+        self.shunts.append(Shunt(bus, gsh, bsh, self.basemva, is_switched=is_switched))
         self.nshunts += 1
 
     def add_branch(self, i, j, r, x, sh=0.0, tap=0.0, shift=0.0, rateA=0.0, rateB=0.0, rateC=0.0):

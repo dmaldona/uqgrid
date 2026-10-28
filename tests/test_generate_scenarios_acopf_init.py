@@ -125,7 +125,7 @@ class _DummyPsys:
         self.loads = [SimpleNamespace(bus=0), SimpleNamespace(bus=1)]
         self.gens = [SimpleNamespace(bus=0, idx="1"), SimpleNamespace(bus=1, idx="A")]
         self.buses = [_DummyBus(), _DummyBus()]
-        self.shunts = [SimpleNamespace(bus=0, bsh=0.01)]
+        self.shunts = [SimpleNamespace(bus=0, gsh=0.0, bsh=0.01, is_switched=True)]
         self.load_pq = None
         self.gen_pq = None
         self.faults = []
@@ -136,8 +136,11 @@ class _DummyPsys:
     def set_gen_pq(self, p_gen, q_gen):
         self.gen_pq = (np.asarray(p_gen), np.asarray(q_gen))
 
-    def add_shunt(self, bus, gsh, bsh):
-        self.shunts.append(SimpleNamespace(bus=bus, gsh=gsh / self.basemva, bsh=bsh / self.basemva))
+    def add_shunt(self, bus, gsh, bsh, *, is_switched=False):
+        self.shunts.append(SimpleNamespace(
+            bus=bus, gsh=gsh / self.basemva, bsh=bsh / self.basemva,
+            is_switched=is_switched,
+        ))
 
     def createYbusComplex(self):
         self.ybus_created = True
@@ -174,6 +177,62 @@ def test_apply_exajugo_solution_to_psys_checks_order_and_applies_values(acopf, t
     assert psys.shunts[-1].bsh == pytest.approx(0.01)
     assert psys.buses[0].v0m == pytest.approx(1.01)
     assert psys.buses[1].v0a == pytest.approx(np.deg2rad(-3.0))
+
+
+@pytest.mark.parametrize("base_mva", [50.0, 100.0])
+@pytest.mark.parametrize(
+    "fixed,switched,target,expected_total,adjusted",
+    [
+        (10.0, [5.0], 8.0, 18.0, 1),
+        (10.0, [5.0], 0.0, 10.0, 1),
+        (0.0, [5.0], 0.0, 0.0, 1),
+        (10.0, [2.0, 3.0], 8.0, 18.0, 1),
+        (10.0, [5.0], -3.0, 7.0, 1),
+        (10.0, [5.0], 5.0, 15.0, 0),
+        (10.0, [], 8.0, 18.0, 1),
+        (10.0, [], 0.0, 10.0, 0),
+    ],
+)
+def test_apply_exajugo_replaces_only_switched_compensation(
+    acopf, tmp_path, base_mva, fixed, switched, target, expected_total, adjusted
+):
+    path = tmp_path / "Basecase_solution.txt"
+    path.write_text(_basecase_text(), encoding="utf-8")
+    parsed = acopf.parse_exajugo_basecase(path)
+    parsed.bus_bcs_mvar[0] = target
+    psys = _DummyPsys()
+    psys.basemva = base_mva
+    psys.shunts = []
+    psys.add_shunt(0, 2.0, fixed)
+    fixed_shunt = psys.shunts[0]
+    for value in switched:
+        psys.add_shunt(0, 0.0, value, is_switched=True)
+
+    summary = acopf.apply_exajugo_solution_to_psys(psys, parsed)
+
+    assert sum(shunt.bsh for shunt in psys.shunts) * base_mva == pytest.approx(expected_total)
+    assert fixed_shunt.bsh * base_mva == pytest.approx(fixed)
+    assert fixed_shunt.gsh * base_mva == pytest.approx(2.0)
+    assert fixed_shunt.is_switched is False
+    assert sum(shunt.bsh for shunt in psys.shunts if shunt.is_switched) * base_mva == pytest.approx(target)
+    assert summary["adjusted_shunts"] == adjusted
+    shunt_count = len(psys.shunts)
+    second = acopf.apply_exajugo_solution_to_psys(psys, parsed)
+    assert second["adjusted_shunts"] == 0
+    assert len(psys.shunts) == shunt_count
+
+
+def test_apply_exajugo_rejects_missing_shunt_provenance(acopf, tmp_path):
+    path = tmp_path / "Basecase_solution.txt"
+    path.write_text(_basecase_text(), encoding="utf-8")
+    parsed = acopf.parse_exajugo_basecase(path)
+    psys = _DummyPsys()
+    del psys.shunts[0].is_switched
+
+    with pytest.raises(RuntimeError, match="shunt provenance.*same checkout"):
+        acopf.apply_exajugo_solution_to_psys(psys, parsed)
+    assert psys.load_pq is None
+    assert psys.gen_pq is None
 
 
 def test_apply_exajugo_solution_rejects_order_mismatch(acopf, tmp_path):
@@ -2336,6 +2395,7 @@ def test_production_resume_success_and_mismatch_rejection(acopf, tmp_path):
         fault_runner_func=lambda *args, **kwargs: pytest.fail("resume should not replay"),
     )
     assert resumed["accepted_count"] == 1
+    assert resumed["handoff_correctness_version"] == 1
 
     progress_path = output_dir / "acopf_init_progress.json"
     progress = json.loads(progress_path.read_text(encoding="utf-8"))
@@ -2350,6 +2410,46 @@ def test_production_resume_success_and_mismatch_rejection(acopf, tmp_path):
             continue_run=True,
             probml_basename="prod",
         )
+
+
+@pytest.mark.parametrize("version", [None, 0, 2])
+def test_production_rejects_legacy_handoff_resume_but_status_still_reads(
+    acopf, tmp_path, version
+):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, target=1)
+    output_dir = tmp_path / "out"
+    common = dict(
+        config_path=config_path,
+        output_dir=output_dir,
+        acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+        acopf_probability=0.0,
+        probml_basename="prod",
+        direct_context_func=_accepted_direct_production_context(tmp_path),
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=_successful_fault_runner([]),
+    )
+    acopf.run_acopf_production(**common)
+    progress_path = output_dir / "acopf_init_progress.json"
+    progress = json.loads(progress_path.read_text())
+    assert progress["handoff_correctness_version"] == 1
+    if version is None:
+        progress.pop("handoff_correctness_version")
+    else:
+        progress["handoff_correctness_version"] = version
+    progress_path.write_text(json.dumps(progress))
+    original_files = {path.name: path.read_bytes() for path in output_dir.iterdir()}
+    common["state_metadata_func"] = lambda **kwargs: pytest.fail("resume must fail before work")
+
+    with pytest.raises(ValueError, match="handoff correctness version.*fresh output"):
+        acopf.run_acopf_production(
+            **common, continue_run=True, target_accepted_scenarios=2
+        )
+
+    assert {path.name: path.read_bytes() for path in output_dir.iterdir()} == original_files
+    status = acopf.read_acopf_production_status(output_dir=output_dir, probml_basename="prod")
+    assert status["accepted_count"] == 1
+    assert status["handoff_correctness_version"] == version
+    assert status["resume_error"] is None
 
 
 def test_production_resume_rejects_changed_integration_method(acopf, tmp_path):

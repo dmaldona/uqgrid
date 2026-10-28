@@ -445,12 +445,19 @@ Contracts without dynamic-limit fields are interpreted as
 `enforce_dynamic_limits=false` with default tolerances. Existing ML readers
 remain compatible because the established NPZ arrays and shapes are unchanged.
 
+Corrected transformer-rating import and switched-shunt handling require fresh
+production outputs. Progress records `handoff_correctness_version=1`;
+`--continue` rejects older or different versions, while existing NPZ files and
+read-only `--status` remain supported. Use the generator and the installed
+`uqgrid` package from this same feature checkout so shunt provenance is available.
+
 Keep `--source-seed` and `--use-source-seed-for-samples` unchanged on restart.
 Progress records their values in `sampling_config`; `--continue` rejects a
 different seed or flag before generating new samples, and `--status` shows the
-saved settings. Older outputs without this field are checked against any source
-seed in their diagnostics, then resumed with a warning: their original sampling
-flag cannot be verified. For those runs, supply the original settings; they are
+saved settings. Outputs with a matching correctness version but no sampling
+settings are checked against any source seed in their diagnostics, then resumed
+with a warning: their original sampling flag cannot be verified. For those runs,
+supply the original settings; they are
 recorded at the next checkpoint and validated on subsequent resumes.
 
 Read status without running ACOPF, candidate generation, or replay:
