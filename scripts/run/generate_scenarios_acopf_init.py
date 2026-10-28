@@ -38,7 +38,7 @@ from joblib import Parallel, delayed
 
 
 _TIME_GRID_CONTRACT = "initialized_t0_exact_events_v1"
-_HANDOFF_CORRECTNESS_VERSION = 1
+_HANDOFF_CORRECTNESS_VERSION = 2
 _POWER_FLOW_VALIDATION_CONTRACT_DEFAULTS = {
     "enabled": False,
     "residual_tolerance": 1e-8,
@@ -2048,6 +2048,712 @@ def _residual_from_attrs(attrs: Mapping[str, Any]) -> float | None:
     return None
 
 
+def _handoff_safe(value: Any) -> Any:
+    value = _json_safe(value)
+    if isinstance(value, dict):
+        return {key: _handoff_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_handoff_safe(item) for item in value]
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
+
+
+def _read_exajugo_artifact(path: Path, specs: Mapping[str, tuple]) -> dict[str, Any]:
+    """Read optional sectioned diagnostics without mistaking missing data for zero."""
+    result = {"path": str(path), "status": "unavailable", "sections": {}}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        result["reason"] = str(exc)
+        return result
+    rows = {name: [] for name in specs}
+    errors = {}
+    found = set()
+    section = None
+    header = False
+    for line in lines:
+        line = line.strip()
+        if line.startswith("--"):
+            section = line if line in specs else None
+            if section in found:
+                errors[section] = "Duplicate section"
+            found.add(section)
+            header = True
+            continue
+        if section is None or not line:
+            continue
+        identifiers, values = specs[section]
+        try:
+            fields = _csv_row(line)
+            if len(fields) != len(identifiers) + len(values):
+                raise ValueError("Unexpected column count")
+            if header:
+                if fields[0].lower() != (
+                    "bus" if identifiers == ("bus_id",) else "from"
+                ):
+                    raise ValueError("Missing or malformed diagnostic header")
+                continue
+            row = {name: int(fields[i]) for i, name in enumerate(identifiers)}
+            numbers = [float(item) for item in fields[len(identifiers) :]]
+            if not np.all(np.isfinite(numbers)):
+                raise ValueError("Nonfinite diagnostic value")
+            row.update(zip(values, numbers))
+            if identifiers == ("bus_id",) and any(
+                r["bus_id"] == row["bus_id"] for r in rows[section]
+            ):
+                raise ValueError("Duplicate bus identity")
+            rows[section].append(row)
+        except (ValueError, csv.Error) as exc:
+            errors[section] = str(exc)
+        finally:
+            header = False
+    for name in specs:
+        if specs[name][0] == ("bus_id",) and not rows[name]:
+            errors[name] = "No node diagnostic rows"
+        valid = name in found and name not in errors
+        result["sections"][name] = {
+            "status": "available" if valid else "unavailable",
+            "rows": rows[name] if valid else [],
+            "reason": errors.get(name, None if valid else "Missing section"),
+        }
+    count = sum(s["status"] == "available" for s in result["sections"].values())
+    result["status"] = (
+        "available" if count == len(specs) else "partial" if count else "unavailable"
+    )
+    return result
+
+
+def _associate_exajugo_rows(
+    section: dict[str, Any], raw: Any, kind: str
+) -> dict[str, Any]:
+    if section.get("status") != "available" or raw is None:
+        return {"status": "unavailable", "reason": "Source section or RAW unavailable"}
+    if kind == "transformer" and getattr(raw, "transthree", []):
+        return {
+            "status": "unavailable",
+            "reason": "Unsupported three-winding source representation",
+        }
+    buses = {int(bus.busn): bus.type for bus in raw.buses}
+    elements = raw.branches if kind == "line" else raw.transformers
+    active = [
+        e
+        for e in elements
+        if e.status != 0 and buses.get(e.fbus, 4) != 4 and buses.get(e.tbus, 4) != 4
+    ]
+    expected = [(int(e.fbus), int(e.tbus)) for e in active]
+    actual = [(r["from_bus_id"], r["to_bus_id"]) for r in section["rows"]]
+    if actual != expected:
+        return {
+            "status": "unavailable",
+            "reason": "RAW active count or endpoint sequence mismatch",
+        }
+    identities = [
+        (min(e.fbus, e.tbus), max(e.fbus, e.tbus), e.ckt.strip("' ")) for e in active
+    ]
+    if len(set(identities)) != len(identities):
+        return {"status": "unavailable", "reason": "Duplicate RAW circuit identities"}
+    for row, element in zip(section["rows"], active):
+        row.update(
+            element_type=kind,
+            circuit_id=element.ckt.strip("' "),
+            rateA_mva=float(element.rateA),
+        )
+    return {"status": "available", "method": "validated_active_raw_order"}
+
+
+def _handoff_branch_key(row: Mapping[str, Any]) -> tuple | None:
+    keys = [
+        row.get(name)
+        for name in ("element_type", "from_bus_id", "to_bus_id", "circuit_id")
+    ]
+    if any(value is None for value in keys) or keys[0] not in {"line", "transformer"}:
+        return None
+    return keys[0], min(keys[1:3]), max(keys[1:3]), keys[3]
+
+
+def _exajugo_handoff_artifacts(
+    basecase_path: Path, case_raw_path: Path
+) -> tuple[dict, dict, dict]:
+    node = (
+        "--node slack section",
+        (("bus_id",), ("p_minus", "p_plus", "q_minus", "q_plus")),
+    )
+    ends = ("from_bus_id", "to_bus_id")
+    slack_specs = dict(
+        [
+            node,
+            ("--line slack section", (ends, ("from", "to"))),
+            ("--transformer slack section", (ends, ("from", "to"))),
+        ]
+    )
+    slack = _read_exajugo_artifact(
+        basecase_path.parent / "Basecase_slacks.txt", slack_specs
+    )
+    flow = _read_exajugo_artifact(
+        basecase_path.parent / "Basecase_power_flow.txt",
+        {
+            "--line section": (ends, ("p_from_mw", "p_to_mw")),
+            "--transformer section": (ends, ("p_from_mw", "p_to_mw")),
+        },
+    )
+    raw = None
+    if slack["status"] != "unavailable" or flow["status"] != "unavailable":
+        try:
+            from uqgrid.io.parse_psse import read_raw
+
+            raw = read_raw(str(case_raw_path))
+        except Exception as exc:
+            slack["raw_association_error"] = flow["raw_association_error"] = str(exc)
+    slack_map, flow_map = {}, {}
+    families = {}
+    for family, marker, columns, unit in (
+        ("p_balance", node[0], ("p_minus", "p_plus"), "MW"),
+        ("q_balance", node[0], ("q_minus", "q_plus"), "MVAr"),
+        ("line_thermal", "--line slack section", ("from", "to"), "MVA-equivalent"),
+        (
+            "transformer_thermal",
+            "--transformer slack section",
+            ("from", "to"),
+            "MVA-equivalent",
+        ),
+    ):
+        section = slack.get("sections", {}).get(
+            marker, {"status": "unavailable", "rows": [], "reason": slack.get("reason")}
+        )
+        association = None
+        if "thermal" in family:
+            association = _associate_exajugo_rows(section, raw, family.split("_")[0])
+            if association["status"] == "available":
+                slack_map.update({_handoff_branch_key(r): r for r in section["rows"]})
+        values = [r[c] for r in section["rows"] for c in columns]
+        empty_unknown = not values and (association or {}).get("status") != "available"
+        valid = section["status"] == "available" and not empty_unknown
+        families[family] = {
+            "status": "available" if valid else "unavailable",
+            "reason": section.get("reason")
+            or (
+                "Empty source section not established by RAW" if empty_unknown else None
+            ),
+            "unit": unit,
+            "row_count": len(section["rows"]),
+            "min_signed": min(values) if values else None,
+            "max_signed": max(values) if values else None,
+            "max_nonnegative": max([0.0, *values]) if valid else None,
+            "sum_nonnegative": float(np.maximum(values, 0.0).sum()) if valid else None,
+            "top": sorted(
+                section["rows"],
+                key=lambda r: max(abs(r[c]) for c in columns),
+                reverse=True,
+            )[:10],
+        }
+        if association is not None:
+            families[family]["association"] = association
+    flow_sections = {}
+    for marker, section in flow.get("sections", {}).items():
+        kind = "line" if marker == "--line section" else "transformer"
+        association = _associate_exajugo_rows(section, raw, kind)
+        flow_sections[kind] = {
+            "status": section["status"],
+            "association": association,
+            "reason": section.get("reason"),
+        }
+        if association["status"] == "available":
+            flow_map.update({_handoff_branch_key(r): r for r in section["rows"]})
+    result = {
+        "slacks": {
+            "path": slack["path"],
+            "status": (
+                "available"
+                if all(f["status"] == "available" for f in families.values())
+                else (
+                    "partial"
+                    if any(f["status"] == "available" for f in families.values())
+                    else "unavailable"
+                )
+            ),
+            "reason": slack.get("reason"),
+            "families": families,
+        },
+        "power_flow": {
+            "path": flow["path"],
+            "status": flow["status"],
+            "reason": flow.get("reason"),
+            "sections": flow_sections,
+            "q_s_status": "unavailable: source file contains P only",
+        },
+        "raw_association_error": slack.get("raw_association_error"),
+    }
+    return result, slack_map, flow_map
+
+
+def _capture_handoff_state(psys: Any, pf: Any = None) -> dict[str, Any]:
+    from types import SimpleNamespace
+    from uqgrid.simulation.pflow import (
+        compute_branch_loading_diagnostics,
+        _solved_power_injections,
+    )
+
+    reverse = {value: key for key, value in getattr(psys, "ext2int", {}).items()}
+    bus_ids = [
+        None if getattr(b, "dummy", False) else reverse.get(i, getattr(b, "id", i))
+        for i, b in enumerate(psys.buses)
+    ]
+    vm = np.asarray(
+        pf.v_magnitudes if pf is not None else [b.v0m for b in psys.buses], dtype=float
+    )
+    va = np.asarray(
+        (
+            getattr(pf, "v_angles", np.full(vm.size, np.nan))
+            if pf is not None
+            else [getattr(b, "v0a", np.nan) for b in psys.buses]
+        ),
+        dtype=float,
+    )
+    pg = np.asarray(
+        (
+            getattr(pf, "gen_psch", np.full(len(psys.gens), np.nan))
+            if pf is not None
+            else [getattr(g, "psch", np.nan) for g in psys.gens]
+        ),
+        dtype=float,
+    )
+    qg = np.asarray(
+        (
+            getattr(pf, "gen_qsch", np.full(len(psys.gens), np.nan))
+            if pf is not None
+            else [getattr(g, "qsch", np.nan) for g in psys.gens]
+        ),
+        dtype=float,
+    )
+    branches = compute_branch_loading_diagnostics(
+        psys, SimpleNamespace(v_magnitudes=vm, v_angles=va), top_n=None
+    )
+    mismatch = {"status": "unavailable"}
+    try:
+        if not all(np.all(np.isfinite(x)) for x in (vm, va, pg, qg)):
+            raise ValueError("Incomplete finite state")
+        _, _, implied = _solved_power_injections(psys, vm, va)
+        scheduled = np.zeros(2 * psys.nbuses)
+        for i, gen in enumerate(psys.gens):
+            scheduled[2 * gen.bus] += pg[i]
+            scheduled[2 * gen.bus + 1] += qg[i]
+        residual = (implied - scheduled).reshape(-1, 2) * psys.basemva
+        rows = [
+            {"bus_id": bus_ids[i], "p_mw": float(p), "q_mvar": float(q)}
+            for i, (p, q) in enumerate(residual)
+        ]
+        mismatch = {
+            "status": "available",
+            "max_abs_p_mw": float(np.max(np.abs(residual[:, 0]))),
+            "max_abs_q_mvar": float(np.max(np.abs(residual[:, 1]))),
+            "top": sorted(
+                rows, key=lambda r: max(abs(r["p_mw"]), abs(r["q_mvar"])), reverse=True
+            )[:10],
+        }
+    except Exception as exc:
+        mismatch["reason"] = str(exc)
+    return {
+        "vm": vm,
+        "va": va,
+        "pg": pg,
+        "qg": qg,
+        "bus_ids": bus_ids,
+        "generator_bus_ids": [bus_ids[g.bus] for g in psys.gens],
+        "generator_ids": [normalize_unit_id(getattr(g, "idx", "")) for g in psys.gens],
+        "base_mva": float(psys.basemva),
+        "branch": branches,
+        "nodal_mismatch": mismatch,
+    }
+
+
+def _compact_handoff_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    finite = state["vm"][np.isfinite(state["vm"])]
+    return {
+        "voltage_min_pu": float(finite.min()) if finite.size else None,
+        "voltage_max_pu": float(finite.max()) if finite.size else None,
+        "generator_dispatch": {
+            "status": (
+                "available"
+                if np.isfinite(state["pg"]).all() and np.isfinite(state["qg"]).all()
+                else "unavailable"
+            ),
+            "bus_ids": state["generator_bus_ids"],
+            "unit_ids": state["generator_ids"],
+            "p_mw": state["pg"] * state["base_mva"],
+            "q_mvar": state["qg"] * state["base_mva"],
+        },
+        "nodal_mismatch": state["nodal_mismatch"],
+        "branch": {
+            **state["branch"],
+            "loading_top": state["branch"]["loading_top"][:10],
+        },
+    }
+
+
+def _compare_handoff_states(
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    slack_map: Mapping,
+    flow_map: Mapping,
+) -> dict[str, Any]:
+    def maximum(values):
+        return (
+            float(np.max(np.abs(values)))
+            if values.size and np.isfinite(values).all()
+            else None
+        )
+
+    dv = after["vm"] - before["vm"]
+    da = np.rad2deg(np.angle(np.exp(1j * (after["va"] - before["va"]))))
+    dp = (after["pg"] - before["pg"]) * before["base_mva"]
+    dq = (after["qg"] - before["qg"]) * before["base_mva"]
+    buses = [
+        {"bus_id": bus, "delta_v_pu": float(v), "delta_angle_deg": float(a)}
+        for bus, v, a in zip(before["bus_ids"], dv, da)
+    ]
+    generators = [
+        {
+            "generator_index": i,
+            "bus_id": bus,
+            "unit_id": before["generator_ids"][i],
+            "delta_p_mw": float(p),
+            "delta_q_mvar": float(q),
+        }
+        for i, (bus, p, q) in enumerate(zip(before["generator_bus_ids"], dp, dq))
+    ]
+    previous = {r["branch_index"]: r for r in before["branch"]["loading_top"]}
+    branches = []
+    for end in after["branch"]["loading_top"]:
+        start = previous.get(end["branch_index"])
+        if start is None:
+            continue
+        row = {
+            "before": start,
+            "after": end,
+            "delta_loading": end["loading"] - start["loading"],
+        }
+        row["terminal_change_mva"] = max(
+            float(
+                np.hypot(
+                    end[f"p_{side}_mw"] - start[f"p_{side}_mw"],
+                    end[f"q_{side}_mvar"] - start[f"q_{side}_mvar"],
+                )
+            )
+            for side in ("from", "to")
+        )
+        key = _handoff_branch_key(start)
+        source_slack, source_flow = slack_map.get(key), flow_map.get(key)
+        row["exajugo_thermal_slack"] = None
+        row["exajugo_terminal_p"] = None
+        for source, kind in ((source_slack, "slack"), (source_flow, "flow")):
+            if source is None:
+                continue
+            same = source["from_bus_id"] == start["from_bus_id"]
+            sides = ("from", "to") if same else ("to", "from")
+            if kind == "slack":
+                row["exajugo_thermal_slack"] = {
+                    f"{side}_mva_equivalent": source[source_side]
+                    for side, source_side in zip(("from", "to"), sides)
+                }
+                row["exajugo_zero_slack_allowance_mva"] = {
+                    side: source["rateA_mva"]
+                    * (
+                        start[f"v_{side}_pu"]
+                        if start["element_type"] == "line"
+                        else 1.0
+                    )
+                    for side in ("from", "to")
+                }
+            else:
+                row["exajugo_terminal_p"] = {
+                    f"{side}_mw": source[f"p_{source_side}_mw"]
+                    for side, source_side in zip(("from", "to"), sides)
+                }
+                row["imported_minus_exajugo_p_mw"] = {
+                    side: start[f"p_{side}_mw"]
+                    - row["exajugo_terminal_p"][f"{side}_mw"]
+                    for side in ("from", "to")
+                }
+                row["solved_minus_exajugo_p_mw"] = {
+                    side: end[f"p_{side}_mw"] - row["exajugo_terminal_p"][f"{side}_mw"]
+                    for side in ("from", "to")
+                }
+        branches.append(row)
+    return {
+        "max_abs_voltage_change_pu": maximum(dv),
+        "max_abs_angle_change_deg": maximum(da),
+        "max_abs_p_gen_change_mw": maximum(dp),
+        "max_abs_q_gen_change_mvar": maximum(dq),
+        "max_terminal_power_change_mva": max(
+            (r["terminal_change_mva"] for r in branches), default=None
+        ),
+        "voltage_change_top": sorted(
+            buses,
+            key=lambda r: abs(r["delta_v_pu"]) if np.isfinite(r["delta_v_pu"]) else -1,
+            reverse=True,
+        )[:10],
+        "angle_change_top": sorted(
+            buses,
+            key=lambda r: (
+                abs(r["delta_angle_deg"]) if np.isfinite(r["delta_angle_deg"]) else -1
+            ),
+            reverse=True,
+        )[:10],
+        "generator_change_top": sorted(
+            generators,
+            key=lambda r: (
+                max(abs(r["delta_p_mw"]), abs(r["delta_q_mvar"]))
+                if np.isfinite(r["delta_p_mw"]) and np.isfinite(r["delta_q_mvar"])
+                else -1
+            ),
+            reverse=True,
+        )[:10],
+        "branch_change_top": sorted(
+            branches, key=lambda r: r["terminal_change_mva"], reverse=True
+        )[:10],
+        "branch_loading_before_top": sorted(
+            branches, key=lambda r: r["before"]["loading"], reverse=True
+        )[:10],
+        "branch_loading_after_top": sorted(
+            branches, key=lambda r: r["after"]["loading"], reverse=True
+        )[:10],
+        "compared_branch_count": len(branches),
+    }
+
+
+def _validate_replay_handoff(
+    *,
+    raw_path: str | Path,
+    dyr_path: str | Path,
+    source: str,
+    pf_residual_tol: float,
+    integration_config: Mapping[str, Any] | None = None,
+    operating_point: Mapping[str, Any] | None = None,
+    basecase_path: str | Path | None = None,
+    case_raw_path: str | Path | None = None,
+    output_dir: str | Path | None = None,
+    sample_idx: int = 0,
+    operating_point_id: str | None = None,
+    verbose: bool = False,
+    load_psse_func: Callable[..., Any] | None = None,
+    add_dyr_func: Callable[..., Any] | None = None,
+    runpf_func: Callable[..., Any] | None = None,
+    validate_pf_func: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Check the replay PF contract once, retaining imported/solved diagnostics."""
+    cfg = _integration_config_from_config({"integration": integration_config or {}})
+    policy = _normalize_power_flow_validation_contract(cfg["power_flow_validation"])
+    pf_settings = {
+        key: cfg[key]
+        for key in ("enforce_q_limits", "q_limit_tolerance", "max_q_limit_iterations")
+    }
+    stage = "post_acopf_pf" if source == "acopf" else "post_uqgrid_pf"
+    summary = {
+        "record_type": f"{stage}_validation",
+        "success": False,
+        "accepted": False,
+        "reject_stage": stage,
+        "reject_reason": f"{stage}_error",
+        "raw_path": str(raw_path),
+        "dyr_path": str(dyr_path),
+        "initialization_source": source,
+    }
+    artifacts, slack_map, flow_map = {}, {}, {}
+    if source == "acopf":
+        artifacts, slack_map, flow_map = _exajugo_handoff_artifacts(
+            Path(basecase_path), Path(case_raw_path)
+        )
+        summary.update(
+            basecase_path=str(basecase_path), case_raw_path=str(case_raw_path)
+        )
+        artifacts.update(
+            {
+                name: {
+                    "path": str(path),
+                    "status": "available" if Path(path).is_file() else "unavailable",
+                }
+                for name, path in (
+                    ("basecase", basecase_path),
+                    ("patched_raw", case_raw_path),
+                )
+            }
+        )
+    else:
+        artifacts = {
+            name: {"status": "not_applicable", "reason": "Direct UQGrid initialization"}
+            for name in ("slacks", "power_flow", "basecase", "patched_raw")
+        }
+    report = {
+        "report_version": 1,
+        "handoff_correctness_version": _HANDOFF_CORRECTNESS_VERSION,
+        "sample_idx": int(sample_idx),
+        "operating_point_id": operating_point_id,
+        "initialization_source": source,
+        "effective_validation_settings": {
+            **pf_settings,
+            "baseline_residual_tolerance": float(pf_residual_tol),
+            "power_flow_validation": policy,
+            "full_limit_validation": "enabled" if policy["enabled"] else "disabled",
+        },
+        "flow_definitions": {
+            "before": "UQGrid evaluated at imported voltages",
+            "after": "UQGrid evaluated at PF-solved voltages",
+            "loading": "max(abs(S_from), abs(S_to)) / RATEA (fixed MVA)",
+            "exajugo_line_allowance": "RATEA * terminal_voltage_pu + thermal_slack",
+            "mismatch": "network injection plus load minus scheduled generation",
+            "source_q_s": "unavailable; optional ExaJuGO flow file contains terminal P only",
+        },
+        "source_artifacts": artifacts,
+        "before": None,
+        "after": None,
+        "comparisons": None,
+    }
+    psys = None
+    before = after = None
+    try:
+        if load_psse_func is None or add_dyr_func is None or runpf_func is None:
+            defaults = _load_powerflow_functions()
+            load_psse_func = load_psse_func or defaults[0]
+            add_dyr_func = add_dyr_func or defaults[1]
+            runpf_func = runpf_func or defaults[2]
+        psys = load_psse_func(str(raw_path))
+        add_dyr_func(psys, str(dyr_path))
+        if source == "acopf":
+            parsed = parse_exajugo_basecase(basecase_path, raw_path=case_raw_path)
+            summary.update(apply_exajugo_solution_to_psys(psys, parsed))
+        else:
+            psys.set_load_pq(
+                np.asarray(operating_point["p_load_scaled"], dtype=float),
+                np.asarray(operating_point["q_load_scaled"], dtype=float),
+            )
+            psys.set_gen_pq(
+                np.asarray(operating_point["p_gen_scaled"], dtype=float),
+                np.asarray(operating_point["q_gen_scaled"], dtype=float),
+            )
+            vm = operating_point.get("pf_v_magnitudes")
+            va = operating_point.get("pf_v_angles")
+            if vm is not None and va is not None:
+                if len(vm) != psys.nbuses or len(va) != psys.nbuses:
+                    raise ValueError(
+                        "PF voltage initialization does not match UQGrid buses"
+                    )
+                for bus, magnitude, angle in zip(psys.buses, vm, va):
+                    bus.set_vinit(float(magnitude), float(angle))
+            summary.update(
+                base_mva=float(psys.basemva),
+                num_loads=len(psys.loads),
+                num_generators=len(psys.gens),
+                adjusted_shunts=0,
+            )
+        summary["num_buses"] = int(psys.nbuses)
+        psys.createYbusComplex()
+        before = _capture_handoff_state(psys)
+        report["before"] = _compact_handoff_state(before)
+        pf_solution = runpf_func(psys, verbose=verbose, **pf_settings)
+        after = _capture_handoff_state(psys, pf_solution)
+        report["after"] = _compact_handoff_state(after)
+        report["comparisons"] = _compare_handoff_states(
+            before, after, slack_map, flow_map
+        )
+        attrs = _pf_solution_attrs(pf_solution)
+        residual = next(
+            (
+                float(attrs[key])
+                for key in (
+                    "final_residual_norm",
+                    "residual_norm",
+                    "initial_residual_norm",
+                )
+                if attrs.get(key) is not None
+            ),
+            None,
+        )
+        summary.update(
+            voltage_min_pu=report["after"]["voltage_min_pu"],
+            voltage_max_pu=report["after"]["voltage_max_pu"],
+            pf_solution_attrs=attrs,
+            pf_residual=residual,
+            pf_residual_tol=float(pf_residual_tol),
+        )
+        if attrs.get("converged") is not None and not bool(attrs["converged"]):
+            summary["reject_reason"] = f"{stage}_not_converged"
+        elif residual is not None and (
+            not np.isfinite(residual) or residual > pf_residual_tol
+        ):
+            summary["reject_reason"] = f"{stage}_residual_too_large"
+        elif not np.isfinite(after["vm"]).all() or not np.isfinite(after["va"]).all():
+            summary["reject_reason"] = f"{stage}_nonfinite_voltages"
+        else:
+            summary.update(
+                success=True, accepted=True, reject_reason=None, reject_stage=None
+            )
+        if policy["enabled"]:
+            if validate_pf_func is None:
+                from uqgrid.simulation.pflow import validate_power_flow_solution
+
+                validate_pf_func = validate_power_flow_solution
+            validation = validate_pf_func(
+                psys, pf_solution, **{k: v for k, v in policy.items() if k != "enabled"}
+            )
+            report["power_flow_validation"] = validation
+            summary["power_flow_validation"] = {
+                k: validation.get(k) for k in ("valid", "failure_reasons")
+            }
+            if not validation["valid"]:
+                summary.update(
+                    success=False,
+                    accepted=False,
+                    reject_stage=stage,
+                    reject_reason=f"{stage}_validation_failed",
+                )
+    except Exception as exc:
+        summary.update(
+            success=False,
+            accepted=False,
+            error_type=type(exc).__name__,
+            error=str(exc),
+            reject_stage=stage,
+            reject_reason=f"{stage}_error",
+        )
+    finally:
+        if psys is not None:
+            del psys
+        gc.collect()
+
+    report["validation_outcome"] = dict(summary)
+    comparison = report["comparisons"] or {}
+    compact = {
+        "full_limit_validation": report["effective_validation_settings"][
+            "full_limit_validation"
+        ],
+        "accepted": summary["accepted"],
+        "max_abs_voltage_change_pu": comparison.get("max_abs_voltage_change_pu"),
+        "max_abs_angle_change_deg": comparison.get("max_abs_angle_change_deg"),
+        "max_abs_p_gen_change_mw": comparison.get("max_abs_p_gen_change_mw"),
+        "max_abs_q_gen_change_mvar": comparison.get("max_abs_q_gen_change_mvar"),
+        "slacks_status": artifacts["slacks"]["status"],
+        "source_flow_status": artifacts["power_flow"]["status"],
+        "loading_before_max": (report["before"] or {})
+        .get("branch", {})
+        .get("loading_max"),
+        "loading_after_max": (report["after"] or {})
+        .get("branch", {})
+        .get("loading_max"),
+        "slack_max_nonnegative": {
+            family: {"value": values["max_nonnegative"], "unit": values["unit"]}
+            for family, values in artifacts["slacks"].get("families", {}).items()
+        },
+    }
+    summary["handoff_summary"] = compact
+    if output_dir is not None:
+        path = Path(output_dir) / "handoff_diagnostics" / f"op_{int(sample_idx)}.json"
+        # Do not turn report-write failures into ordinary candidate rejections.
+        _write_json(path, _handoff_safe(report))
+        summary["handoff_report_path"] = str(path)
+    return _handoff_safe(summary)
+
+
 def validate_acopf_power_flow(
     *,
     raw_path: str | Path,
@@ -2055,97 +2761,18 @@ def validate_acopf_power_flow(
     basecase_path: str | Path,
     case_raw_path: str | Path,
     pf_residual_tol: float,
-    verbose: bool = False,
-    load_psse_func: Callable[..., Any] | None = None,
-    add_dyr_func: Callable[..., Any] | None = None,
-    runpf_func: Callable[..., Any] | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
-    """Import an ExaJuGO basecase into UQGrid and run a PF validation check."""
-    psys = None
-    try:
-        if load_psse_func is None or add_dyr_func is None or runpf_func is None:
-            load_psse_func, add_dyr_func, runpf_func = _load_powerflow_functions()
-
-        parsed = parse_exajugo_basecase(basecase_path, raw_path=case_raw_path)
-        psys = load_psse_func(str(raw_path))
-        add_dyr_func(psys, str(dyr_path))
-        apply_summary = apply_exajugo_solution_to_psys(psys, parsed)
-        psys.createYbusComplex()
-        pf_solution = runpf_func(psys, verbose=verbose)
-
-        attrs = _pf_solution_attrs(pf_solution)
-        voltages = np.asarray(pf_solution.v_magnitudes, dtype=np.float64)
-        summary = {
-            "record_type": "post_acopf_pf_validation",
-            "success": True,
-            "accepted": True,
-            "reject_reason": None,
-            "raw_path": str(raw_path),
-            "dyr_path": str(dyr_path),
-            "basecase_path": str(basecase_path),
-            "case_raw_path": str(case_raw_path),
-            "base_mva": float(apply_summary["base_mva"]),
-            "num_buses": int(psys.nbuses),
-            "num_loads": int(apply_summary["num_loads"]),
-            "num_generators": int(apply_summary["num_generators"]),
-            "num_exajugo_generators": int(apply_summary["num_exajugo_generators"]),
-            "num_active_exajugo_generators": int(
-                apply_summary["num_active_exajugo_generators"]
-            ),
-            "adjusted_shunts": int(apply_summary["adjusted_shunts"]),
-            "voltage_min_pu": float(np.nanmin(voltages)),
-            "voltage_max_pu": float(np.nanmax(voltages)),
-            "pf_solution_attrs": attrs,
-        }
-
-        converged = attrs.get("converged")
-        if converged is not None and not bool(converged):
-            summary.update(
-                {
-                    "success": False,
-                    "accepted": False,
-                    "reject_stage": "post_acopf_pf",
-                    "reject_reason": "post_acopf_pf_not_converged",
-                }
-            )
-            return summary
-
-        residual = _residual_from_attrs(attrs)
-        if residual is not None and residual > float(pf_residual_tol):
-            summary.update(
-                {
-                    "success": False,
-                    "accepted": False,
-                    "reject_stage": "post_acopf_pf",
-                    "reject_reason": "post_acopf_pf_residual_too_large",
-                    "pf_residual": residual,
-                    "pf_residual_tol": float(pf_residual_tol),
-                }
-            )
-            return summary
-
-        if residual is not None:
-            summary["pf_residual"] = residual
-            summary["pf_residual_tol"] = float(pf_residual_tol)
-        return summary
-    except Exception as exc:
-        return {
-            "record_type": "post_acopf_pf_validation",
-            "success": False,
-            "accepted": False,
-            "reject_stage": "post_acopf_pf",
-            "reject_reason": "post_acopf_pf_error",
-            "error_type": type(exc).__name__,
-            "error": str(exc),
-            "raw_path": str(raw_path),
-            "dyr_path": str(dyr_path),
-            "basecase_path": str(basecase_path),
-            "case_raw_path": str(case_raw_path),
-        }
-    finally:
-        if psys is not None:
-            del psys
-        gc.collect()
+    """Import an ExaJuGO basecase and check the shared replay PF contract."""
+    return _validate_replay_handoff(
+        raw_path=raw_path,
+        dyr_path=dyr_path,
+        source="acopf",
+        basecase_path=basecase_path,
+        case_raw_path=case_raw_path,
+        pf_residual_tol=pf_residual_tol,
+        **kwargs,
+    )
 
 
 def _summarize_smoke_records(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -2312,6 +2939,10 @@ def run_acopf_smoke(
             basecase_path=acopf_result["basecase_path"],
             case_raw_path=case_info["case_raw"],
             pf_residual_tol=float(op_cfg.get("pf_residual_tol", 1e-8)),
+            integration_config=_integration_config_from_config(config),
+            output_dir=output_dir,
+            sample_idx=int(sample_idx_start),
+            operating_point_id=scenario["operating_point_id"],
             verbose=pf_verbose,
         )
     )
@@ -2338,6 +2969,8 @@ def run_acopf_smoke(
         "pre_acopf_attempts": prep_diag.get("attempts"),
         "pre_acopf_pf_residual": prep_diag.get("pf_residual"),
         "post_acopf_pf_validation": pf_summary,
+        "handoff_report_path": pf_summary.get("handoff_report_path"),
+        "handoff_summary": pf_summary.get("handoff_summary"),
     }
     records.append(smoke_record)
     progress = _smoke_progress(
@@ -2431,6 +3064,8 @@ def prepare_acopf_replay_context(
         "basecase_path": basecase_path,
         "parsed_basecase": parsed,
         "post_acopf_pf_validation": pf_summary,
+        "handoff_report_path": pf_summary.get("handoff_report_path"),
+        "handoff_summary": pf_summary.get("handoff_summary"),
         "sample_idx": sample_idx,
         "operating_point_id": smoke_record.get(
             "operating_point_id",
@@ -2460,9 +3095,9 @@ def prepare_uqgrid_candidate_context(
     pf_verbose: bool = False,
     candidate_func: Callable[..., Mapping[str, Any]] | None = None,
     op_config_resolver: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
+    pf_validator_func: Callable[..., Mapping[str, Any]] = _validate_replay_handoff,
 ) -> dict[str, Any]:
     """Prepare one PF-screened candidate for direct UQGrid dynamic replay."""
-    del output_dir, pf_verbose
     config_path = Path(config_path).expanduser()
     config = _load_json_config(config_path)
     if candidate_func is None or op_config_resolver is None:
@@ -2566,17 +3201,32 @@ def prepare_uqgrid_candidate_context(
     operating_point = dict(prep["operating_point"])
     operating_point["operating_point_id"] = operating_point_id
     operating_point["accepted_operating_point_index"] = int(accepted_operating_point_index)
+    pf_summary = dict(pf_validator_func(
+        raw_path=raw_path, dyr_path=dyr_path, source="uqgrid_pf",
+        operating_point=operating_point,
+        pf_residual_tol=float(op_cfg.get("pf_residual_tol", 1e-8)),
+        integration_config=_integration_config_from_config(config),
+        output_dir=output_dir, sample_idx=sample_idx,
+        operating_point_id=operating_point_id, verbose=pf_verbose,
+    ))
+    records.append(pf_summary)
+    handoff = {key: pf_summary.get(key) for key in ("handoff_report_path", "handoff_summary")}
     records.append(
         {
             **group_base,
-            "record_type": "uqgrid_pf_initialization",
-            "accepted": True,
-            "reject_reason": None,
+            **handoff,
+            "record_type": "uqgrid_pf_initialization" if pf_summary.get("success") else "operating_point_group",
+            "accepted": bool(pf_summary.get("success")),
+            "reject_reason": pf_summary.get("reject_reason"),
+            "reject_stage": pf_summary.get("reject_stage"),
         }
     )
     return {
-        "success": True,
-        "accepted": True,
+        "success": bool(pf_summary.get("success")),
+        "accepted": bool(pf_summary.get("success")),
+        "reject_reason": pf_summary.get("reject_reason"),
+        "reject_stage": pf_summary.get("reject_stage"),
+        **handoff,
         "records": records,
         "config": config,
         "raw_path": raw_path,
@@ -2762,10 +3412,16 @@ def prepare_acopf_candidate_context(
             basecase_path=acopf_result["basecase_path"],
             case_raw_path=case_info["case_raw"],
             pf_residual_tol=float(op_cfg.get("pf_residual_tol", 1e-8)),
+            integration_config=_integration_config_from_config(config),
+            output_dir=output_dir,
+            sample_idx=sample_idx,
+            operating_point_id=operating_point_id,
             verbose=pf_verbose,
         )
     )
     records.append(pf_summary)
+    handoff = {key: pf_summary.get(key) for key in ("handoff_report_path", "handoff_summary")}
+    group_base.update(handoff)
     if not pf_summary.get("success"):
         records.append(
             {
@@ -2789,6 +3445,7 @@ def prepare_acopf_candidate_context(
             "candidate_attempts": candidate_attempts,
             "reject_stage": "post_acopf_pf",
             "reject_reason": pf_summary.get("reject_reason", "post_acopf_pf_failed"),
+            **handoff,
             "case_dir": case_info["case_dir"],
             "initialization_source": "acopf",
             "acopf_feasible": False,
@@ -2822,6 +3479,7 @@ def prepare_acopf_candidate_context(
             "reject_stage": "basecase_parse",
             "reject_reason": "basecase_parse_failed",
             "case_dir": case_info["case_dir"],
+            **handoff,
             "initialization_source": "acopf",
             "acopf_feasible": False,
         }
@@ -2839,6 +3497,7 @@ def prepare_acopf_candidate_context(
         "parsed_basecase": parsed,
         "post_acopf_pf_validation": pf_summary,
         "sample_idx": int(sample_idx),
+        **handoff,
         "operating_point_id": operating_point_id,
         "accepted_operating_point_index": int(accepted_operating_point_index),
         "candidate_attempts": candidate_attempts,
@@ -3164,6 +3823,7 @@ def run_acopf_replay_smoke(
         )
     )
     records = list(context.get("records", []))
+    handoff = {key: context.get(key) for key in ("handoff_report_path", "handoff_summary")}
     sample_idx = int(context.get("sample_idx", sample_idx_start))
     if not context.get("accepted"):
         progress = _stage3_progress(
@@ -3231,6 +3891,7 @@ def run_acopf_replay_smoke(
     except Exception as exc:
         record = {
             "record_type": "fault_scenario_group",
+            **handoff,
             "accepted": False,
             "reject_reason": "dynamic_fault_failed",
             "error_type": type(exc).__name__,
@@ -3246,6 +3907,9 @@ def run_acopf_replay_smoke(
         _write_smoke_diagnostics(output_dir, progress=progress, records=records)
         return progress
 
+    for result in fault_results:
+        for key in ("handoff_report_path", "handoff_summary"):
+            result[key] = context.get(key)
     records.extend(fault_results)
     failed, failure_counts, group_reject_reason = _fault_group_failure_summary(
         fault_results,
@@ -3263,6 +3927,7 @@ def run_acopf_replay_smoke(
             "faults_required": task_count,
             "faults_successful": faults_successful,
             "fault_failure_reasons": failure_counts,
+            **handoff,
         }
         records.append(group_record)
         progress = _stage3_progress(
@@ -3303,6 +3968,7 @@ def run_acopf_replay_smoke(
         "min_tsi_min": float(np.nanmin(min_tsi_values)),
         "min_tsi_num_unstable": int(np.sum(min_tsi_values <= 0.0)),
         "probml_outputs": probml_outputs,
+        **handoff,
     }
     records.append(group_record)
     progress = _stage3_progress(
@@ -3541,8 +4207,8 @@ def _load_production_resume_state(
             raise ValueError(
                 "Resume rejected: handoff correctness version "
                 f"{progress.get('handoff_correctness_version')!r} does not match "
-                f"{_HANDOFF_CORRECTNESS_VERSION}. Corrected transformer ratings "
-                "and shunt handling require a fresh output directory. "
+                f"{_HANDOFF_CORRECTNESS_VERSION}. The corrected replay PF handoff "
+                "requires a fresh output directory. "
                 "Existing NPZ files remain readable."
             )
         _assert_integration_contract_matches(
@@ -3658,6 +4324,8 @@ def _fault_result_entries(
             "tsi_final": float(result["tsi_final"]),
             "tsi_min": float(result["tsi_min"]),
             "file": None,
+            "handoff_report_path": result.get("handoff_report_path"),
+            "handoff_summary": result.get("handoff_summary"),
         }
         metadata[sid] = dict(base)
         simulation_log[sid] = {
@@ -3947,6 +4615,7 @@ def run_acopf_production(
         )
         context_source = str(context["initialization_source"])
         context_acopf_feasible = bool(context["acopf_feasible"])
+        handoff = {key: context.get(key) for key in ("handoff_report_path", "handoff_summary")}
         last_sample_idx = int(context.get("sample_idx", sample_idx))
         candidate_attempts = int(context.get("candidate_attempts", 1))
         total_candidate_attempts += candidate_attempts
@@ -3955,6 +4624,7 @@ def run_acopf_production(
             record.setdefault("initialization_source", context_source)
             record.setdefault("acopf_feasible", context_acopf_feasible)
             if record.get("record_type") == "operating_point_group":
+                record.update(handoff)
                 record.setdefault("total_candidate_attempts", total_candidate_attempts)
                 record.setdefault("faults_required", task_count)
         records.extend(context_records)
@@ -4047,6 +4717,7 @@ def run_acopf_production(
             records.append(
                 {
                     "record_type": "fault_scenario_group",
+                    **handoff,
                     "sample_idx": int(context["sample_idx"]),
                     "operating_point_id": str(context["operating_point_id"]),
                     "accepted_operating_point_index": int(
@@ -4064,6 +4735,7 @@ def run_acopf_production(
         for result in fault_results:
             result.setdefault("initialization_source", context_source)
             result.setdefault("acopf_feasible", context_acopf_feasible)
+            result.update(handoff)
 
         records.extend(fault_results)
         failed, failure_counts, group_reject_reason = _fault_group_failure_summary(
@@ -4084,6 +4756,7 @@ def run_acopf_production(
                     "acopf_feasible": context_acopf_feasible,
                     "accepted": False,
                     "reject_reason": group_reject_reason,
+                    **handoff,
                     "total_candidate_attempts": total_candidate_attempts,
                     "max_total_attempts": max_attempts,
                     "faults_required": task_count,
@@ -4178,6 +4851,7 @@ def run_acopf_production(
                 "min_tsi_min": float(np.nanmin(min_tsi_values)),
                 "min_tsi_num_unstable": int(np.sum(min_tsi_values <= 0.0)),
                 "probml_outputs": probml_outputs,
+                **handoff,
             }
         )
         new_metadata, new_log = _fault_result_entries(

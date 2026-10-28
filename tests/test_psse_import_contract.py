@@ -23,6 +23,9 @@ def test_two_winding_ratings_preserve_mva_and_zero_ratings(monkeypatch):
 
     imported = psys.branches[len(case.branches):]
     assert psys.basemva == 50.0
+    assert all(b.raw_identity["element_type"] == "line" for b in psys.branches[:len(case.branches)])
+    assert [b.raw_identity["circuit_id"] for b in imported] == [t.ckt.strip("' ") for t in case.transformers]
+    assert all(b.raw_identity["element_type"] == "transformer" for b in imported)
     np.testing.assert_array_equal(
         [(branch.rateA, branch.rateB, branch.rateC) for branch in imported], ratings
     )
@@ -40,6 +43,8 @@ def test_three_winding_ratings_follow_their_star_branches(monkeypatch):
 
     psys = parse.load_psse("fixture.raw")
 
+    assert [b.raw_identity["winding"] for b in psys.branches] == [1, 2, 3]
+    assert all(b.raw_identity["parent_bus_ids"] == [transformer.ibus, transformer.jbus, transformer.kbus] for b in psys.branches)
     np.testing.assert_array_equal(
         [(branch.rateA, branch.rateB, branch.rateC) for branch in psys.branches],
         ratings,

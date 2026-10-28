@@ -435,6 +435,8 @@ def validate_operating_point(args: argparse.Namespace) -> dict[str, Any]:
             )
         report["solver"] = {"backend": backend, "method": method}
         context = _prepare_context(args, config)
+        report["handoff_report_path"] = context.get("handoff_report_path")
+        report["handoff_summary"] = context.get("handoff_summary")
         _check(checks, "PF-screened source context accepted", context.get("accepted"), {
             "reject_reason": context.get("reject_reason"),
             "sample_idx": context.get("sample_idx"),

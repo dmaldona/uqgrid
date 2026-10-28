@@ -112,6 +112,8 @@ def test_parse_exajugo_basecase_falls_back_to_raw_loads(acopf, tmp_path):
 
 
 class _DummyBus:
+    v0m = 1.0
+    v0a = 0.0
     def set_vinit(self, magnitude, angle):
         self.v0m = magnitude
         self.v0a = angle
@@ -125,6 +127,7 @@ class _DummyPsys:
         self.loads = [SimpleNamespace(bus=0), SimpleNamespace(bus=1)]
         self.gens = [SimpleNamespace(bus=0, idx="1"), SimpleNamespace(bus=1, idx="A")]
         self.buses = [_DummyBus(), _DummyBus()]
+        self.branches = []
         self.shunts = [SimpleNamespace(bus=0, gsh=0.0, bsh=0.01, is_switched=True)]
         self.load_pq = None
         self.gen_pq = None
@@ -1092,8 +1095,9 @@ def test_validate_acopf_power_flow_accepts_and_rejects_nonconvergence(acopf, tmp
         pf_residual_tol=1e-8,
         load_psse_func=lambda path: psys,
         add_dyr_func=add_dyr,
-        runpf_func=lambda psys, verbose=False: SimpleNamespace(
+        runpf_func=lambda psys, verbose=False, **kwargs: SimpleNamespace(
             v_magnitudes=np.asarray([1.0, 1.02]),
+            v_angles=np.zeros(2),
             converged=True,
             final_residual_norm=1e-10,
             iterations=3,
@@ -1112,8 +1116,9 @@ def test_validate_acopf_power_flow_accepts_and_rejects_nonconvergence(acopf, tmp
         pf_residual_tol=1e-8,
         load_psse_func=lambda path: _DummyPsys(),
         add_dyr_func=add_dyr,
-        runpf_func=lambda psys, verbose=False: SimpleNamespace(
+        runpf_func=lambda psys, verbose=False, **kwargs: SimpleNamespace(
             v_magnitudes=np.asarray([1.0, 1.02]),
+            v_angles=np.zeros(2),
             converged=False,
             final_residual_norm=1e-10,
         ),
@@ -2367,6 +2372,82 @@ def test_production_no_continue_rejects_existing_outputs(acopf, tmp_path):
         )
 
 
+def test_direct_preparation_runs_shared_early_pf_gate(acopf, tmp_path):
+    config_path, *_ = _production_config(tmp_path)
+    calls = []
+
+    def validator(**kwargs):
+        calls.append(kwargs)
+        return {"success": False, "reject_reason": "post_uqgrid_pf_validation_failed",
+                "reject_stage": "post_uqgrid_pf", "handoff_report_path": "report.json",
+                "handoff_summary": {"accepted": False}}
+
+    result = acopf.prepare_uqgrid_candidate_context(
+        config_path=config_path, output_dir=tmp_path / "out", sample_idx=4,
+        accepted_operating_point_index=0, target_accepted_scenarios=1,
+        max_total_attempts=10, remaining_attempts=10, candidate_func=_candidate_success,
+        op_config_resolver=lambda cfg: cfg, pf_validator_func=validator,
+    )
+    assert not result["accepted"]
+    assert result["reject_stage"] == "post_uqgrid_pf"
+    assert calls[0]["source"] == "uqgrid_pf"
+    assert calls[0]["sample_idx"] == 4
+    assert calls[0]["integration_config"]["enforce_q_limits"] is True
+    assert result["records"][-1]["handoff_report_path"] == "report.json"
+
+
+def test_handoff_reports_survive_cleanup_and_fault_logs_only_reference_them(acopf, tmp_path):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, target=1)
+    parsed = _large_parsed_basecase(acopf)
+    factory = _accepted_production_context(acopf, tmp_path, parsed)
+    output_dir = tmp_path / "out"
+
+    def context(**kwargs):
+        result = factory(**kwargs)
+        path = output_dir / "handoff_diagnostics" / "op_0.json"
+        acopf._write_json(path, {"generator_dispatch": {"p_mw": [1, 2]}})
+        return {**result, "handoff_report_path": str(path),
+                "handoff_summary": {"accepted": True, "loading_after_max": 0.8}}
+
+    acopf.run_acopf_production(
+        config_path=config_path, output_dir=output_dir,
+        acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+        probml_basename="prod", acopf_context_func=context,
+        state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+        fault_runner_func=_successful_fault_runner([]),
+    )
+    assert not (tmp_path / "case_dir_0").exists()
+    assert (output_dir / "handoff_diagnostics" / "op_0.json").exists()
+    for filename in ("simulation_log.json", "scenario_metadata.json"):
+        for row in json.loads((output_dir / filename).read_text()).values():
+            assert row["handoff_report_path"].endswith("handoff_diagnostics/op_0.json")
+            assert row["handoff_summary"]["loading_after_max"] == 0.8
+            assert "generator_dispatch" not in json.dumps(row)
+    with np.load(output_dir / "prod_final.npz", allow_pickle=True) as data:
+        expected = acopf.build_acopf_probml_x(parsed, base_mva=100)
+        np.testing.assert_array_equal(data["X"][0], expected)
+        np.testing.assert_array_equal(data["X_flat"][0], expected.reshape(-1))
+        np.testing.assert_array_equal(data["Y"], [[[10], [11]]])
+
+
+def test_production_report_write_failure_stops_before_npz_append(acopf, tmp_path, monkeypatch):
+    config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, target=1)
+    monkeypatch.setattr(acopf, "append_acopf_probml_outputs", lambda **k: pytest.fail("must not append"))
+
+    def context(**kwargs):
+        raise OSError("handoff report disk full")
+
+    with pytest.raises(OSError, match="handoff report disk full"):
+        acopf.run_acopf_production(
+            config_path=config_path, output_dir=tmp_path / "out",
+            acopf_config=_production_acopf_config(acopf, tmp_path, base_raw, base_rop),
+            acopf_context_func=context,
+            state_metadata_func=lambda **kwargs: {"delta_state_indices": [0, 2]},
+            fault_runner_func=lambda *a, **k: pytest.fail("must not replay"),
+        )
+    assert not list((tmp_path / "out").glob("*.npz"))
+
+
 def test_production_resume_success_and_mismatch_rejection(acopf, tmp_path):
     config_path, _, _, base_raw, base_rop, _ = _production_config(tmp_path, target=1)
     parsed = _large_parsed_basecase(acopf)
@@ -2395,7 +2476,7 @@ def test_production_resume_success_and_mismatch_rejection(acopf, tmp_path):
         fault_runner_func=lambda *args, **kwargs: pytest.fail("resume should not replay"),
     )
     assert resumed["accepted_count"] == 1
-    assert resumed["handoff_correctness_version"] == 1
+    assert resumed["handoff_correctness_version"] == 2
 
     progress_path = output_dir / "acopf_init_progress.json"
     progress = json.loads(progress_path.read_text(encoding="utf-8"))
@@ -2412,7 +2493,7 @@ def test_production_resume_success_and_mismatch_rejection(acopf, tmp_path):
         )
 
 
-@pytest.mark.parametrize("version", [None, 0, 2])
+@pytest.mark.parametrize("version", [None, 0, 1, 3])
 def test_production_rejects_legacy_handoff_resume_but_status_still_reads(
     acopf, tmp_path, version
 ):
@@ -2431,7 +2512,7 @@ def test_production_rejects_legacy_handoff_resume_but_status_still_reads(
     acopf.run_acopf_production(**common)
     progress_path = output_dir / "acopf_init_progress.json"
     progress = json.loads(progress_path.read_text())
-    assert progress["handoff_correctness_version"] == 1
+    assert progress["handoff_correctness_version"] == 2
     if version is None:
         progress.pop("handoff_correctness_version")
     else:

@@ -445,8 +445,9 @@ Contracts without dynamic-limit fields are interpreted as
 `enforce_dynamic_limits=false` with default tolerances. Existing ML readers
 remain compatible because the established NPZ arrays and shapes are unchanged.
 
-Corrected transformer-rating import and switched-shunt handling require fresh
-production outputs. Progress records `handoff_correctness_version=1`;
+Corrected transformer-rating import, switched-shunt handling, and the shared
+early replay PF gate require fresh production outputs. Progress records
+`handoff_correctness_version=2`;
 `--continue` rejects older or different versions, while existing NPZ files and
 read-only `--status` remain supported. Use the generator and the installed
 `uqgrid` package from this same feature checkout so shunt provenance is available.
@@ -483,6 +484,49 @@ Production writes these files under `--output-dir`:
 | `scenario_metadata.json` | Per-fault scenario metadata with explicit TSI fields. |
 | `simulation_log.json` | Per-fault replay log with `file: null` in normal mode. |
 | `state_metadata.json` | UQGrid state metadata used to select generator angle states. |
+| `handoff_diagnostics/op_<sample_idx>.json` | One atomic before/after PF report per prepared operating point, including rejected imports/PF checks. |
+
+### Handoff Reports
+
+Both initialization sources run an early PF check using replay's effective
+`enforce_q_limits`, `q_limit_tolerance`, `max_q_limit_iterations`, and
+`integration.power_flow_validation` policy. Baseline convergence/residual checks
+remain active; the report explicitly says when full limit validation is disabled.
+The standalone handoff validator also exposes `handoff_report_path` and
+`handoff_summary` in its report.
+
+Each report includes complete imported and PF-solved generator P/Q dispatch,
+voltage and wrapped-angle changes, nodal P/Q mismatches, and terminal branch
+P/Q, apparent power, and loading comparisons. Ranked lists are limited to ten
+entries. Branch records include external bus IDs, circuit ID, element type,
+transformer winding where applicable, and limiting terminal. Unrated and
+uncomputable branch counts are explicit. The pre-PF flows are **UQGrid evaluated
+at imported voltages**, not measured ExaJuGO flows. UQGrid loading remains
+`max(abs(S_from), abs(S_to)) / RATEA`, with fixed MVA ratings.
+
+Optional `Basecase_slacks.txt` summaries separate P balance (MW), Q balance
+(MVAr), line thermal, and transformer thermal (MVA-equivalent, despite the
+source writer's MW header). Raw signed extrema, nonnegative sums/maxima, and
+top entries are retained. ExaJuGO line allowances use
+`RATEA * terminal_voltage_pu + thermal_slack`; transformer allowances use
+`RATEA + thermal_slack`. Positive slack alone does not imply a material
+violation, and these summaries introduce no rejection thresholds or penalty
+changes. Acceptance still follows the configured UQGrid PF policy.
+
+`Basecase_power_flow.txt`, when present, supplies terminal P only; source Q/S
+remain unavailable. Circuit association requires matching active RAW section
+counts and endpoint sequences before using RAW order, including parallel
+circuits. Unsupported three-winding representations or mismatches leave the
+association unavailable while retaining aggregate slack information. Missing,
+malformed, or nonfinite optional sections are explicitly unavailable/partial,
+never interpreted as zero. Direct-UQGrid rows mark ExaJuGO data not applicable.
+
+Reports retain available imported/source diagnostics after PF failure. They live
+outside removable ACOPF case directories; JSONL records and per-fault logs
+reference the report and a compact summary rather than repeating dispatch
+vectors. Workers do not recompute comparisons. A report-write failure stops the
+run before NPZ append. NPZ keys, shapes, metadata, and source-setpoint feature
+semantics are unchanged: PF-solved dispatch is diagnostic-only.
 
 Both NPZ files contain these keys:
 

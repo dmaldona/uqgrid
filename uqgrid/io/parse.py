@@ -39,6 +39,10 @@ def load_psse(raw_filename):
 
         psys.add_branch(fr_internal, to_internal, branch.r, branch.x, 
                 sh=branch.b, rateA=branch.rateA, rateB=branch.rateB, rateC=branch.rateC)
+        psys.branches[-1].raw_identity = {
+            "element_type": "line", "circuit_id": branch.ckt.strip("' "),
+            "from_bus_id": int(branch.fbus), "to_bus_id": int(branch.tbus),
+        }
     # add transformers
     for tran in case.transformers:
         
@@ -70,6 +74,10 @@ def load_psse(raw_filename):
         psys.add_branch(fr_internal, to_internal, r12, x12, 
                 tran.MAG2 if abs(tran.MAG2) > 0.0 else 0.0, tap=tap, shift=tran.ANG1,
                 rateA=tran.rateA, rateB=tran.rateB, rateC=tran.rateC)
+        psys.branches[-1].raw_identity = {
+            "element_type": "transformer", "circuit_id": tran.ckt.strip("' "),
+            "from_bus_id": int(tran.fbus), "to_bus_id": int(tran.tbus),
+        }
 
         if tran.COD1 == 1:
             psys.add_shunt(fr_internal, tran.MAG1*baseMVA, tran.MAG2*baseMVA)
@@ -177,6 +185,12 @@ def load_psse(raw_filename):
         psys.add_branch(bus_internal, kbus, r3, x3,
                 0.0, tap=tap3, shift=tran.ANG3,
                 rateA=tran.rateA3, rateB=tran.rateB3, rateC=tran.rateC3)
+        for winding, leg in enumerate(psys.branches[-3:], start=1):
+            leg.raw_identity = {
+                "element_type": "three_winding_leg", "circuit_id": tran.ckt.strip("' "),
+                "winding": winding,
+                "parent_bus_ids": [int(tran.ibus), int(tran.jbus), int(tran.kbus)],
+            }
 
     # add generators
     # First pass: track inactive generators and buses with active generators

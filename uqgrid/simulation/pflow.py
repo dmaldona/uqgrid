@@ -517,10 +517,19 @@ def compute_branch_loading_diagnostics(psys, pf_solution, top_n=10):
     """Return JSON-safe branch apparent-power loading diagnostics."""
     voltages = pf_solution.v_magnitudes * np.exp(1j * pf_solution.v_angles)
     records = []
+    external_ids = {index: bus_id for bus_id, index in getattr(psys, "ext2int", {}).items()}
+    unrated_count = 0
+    skipped = {"zero_impedance": 0, "nonfinite_voltage": 0, "nonfinite_flow": 0}
+
+    def bus_id(index):
+        if getattr(psys.buses[index], "dummy", False):
+            return None
+        return _json_value(external_ids.get(index, psys.buses[index].id))
 
     for branch_index, branch in enumerate(psys.branches):
         rate = float(getattr(branch, "rateA", 0.0))
         if rate <= 0.0:
+            unrated_count += 1
             continue
 
         tap = float(branch.tap)
@@ -533,35 +542,58 @@ def compute_branch_loading_diagnostics(psys, pf_solution, top_n=10):
 
         impedance = branch.r + 1j * branch.x
         if abs(impedance) <= 1e-12:
+            skipped["zero_impedance"] += 1
             continue
         y_series = 1.0 / impedance
         y_shunt = 1j * 0.5 * branch.sh
         v_from = voltages[branch.fr]
         v_to = voltages[branch.to]
         if not np.isfinite(v_from) or not np.isfinite(v_to):
+            skipped["nonfinite_voltage"] += 1
             continue
         i_from = ((y_series + y_shunt) / (tap * tap)) * v_from - (
             y_series / np.conj(tpsh)
         ) * v_to
         i_to = -(y_series / tpsh) * v_from + (y_series + y_shunt) * v_to
-        s_from_mva = abs(v_from * np.conj(i_from)) * psys.basemva
-        s_to_mva = abs(v_to * np.conj(i_to)) * psys.basemva
+        s_from = v_from * np.conj(i_from)
+        s_to = v_to * np.conj(i_to)
+        if not np.isfinite(s_from) or not np.isfinite(s_to):
+            skipped["nonfinite_flow"] += 1
+            continue
+        s_from_mva = abs(s_from) * psys.basemva
+        s_to_mva = abs(s_to) * psys.basemva
         loading = max(s_from_mva, s_to_mva) / rate
+        identity = getattr(branch, "raw_identity", {})
         records.append({
             "branch_index": int(branch_index),
             "from_bus_index": int(branch.fr),
             "to_bus_index": int(branch.to),
-            "from_bus_id": _json_value(psys.buses[branch.fr].id),
-            "to_bus_id": _json_value(psys.buses[branch.to].id),
+            "from_bus_id": bus_id(branch.fr),
+            "to_bus_id": bus_id(branch.to),
+            "element_type": identity.get("element_type"),
+            "circuit_id": identity.get("circuit_id"),
+            "winding": identity.get("winding"),
+            "parent_bus_ids": identity.get("parent_bus_ids"),
             "rateA_mva": rate,
+            "v_from_pu": float(abs(v_from)),
+            "v_to_pu": float(abs(v_to)),
+            "p_from_mw": float(s_from.real * psys.basemva),
+            "q_from_mvar": float(s_from.imag * psys.basemva),
+            "p_to_mw": float(s_to.real * psys.basemva),
+            "q_to_mvar": float(s_to.imag * psys.basemva),
             "s_from_mva": float(s_from_mva),
             "s_to_mva": float(s_to_mva),
             "loading": float(loading),
+            "limiting_end": "from" if s_from_mva >= s_to_mva else "to",
         })
 
     records.sort(key=lambda record: record["loading"], reverse=True)
     return {
         "available": bool(records),
+        "total_branch_count": len(psys.branches),
+        "unrated_branch_count": unrated_count,
+        "uncomputable_branch_count": sum(skipped.values()),
+        "uncomputable_reasons": skipped,
         "rated_branch_count": len(records),
         "loading_max": records[0]["loading"] if records else None,
         "loading_argmax": records[0]["branch_index"] if records else None,
