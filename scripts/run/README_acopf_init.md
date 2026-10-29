@@ -501,8 +501,10 @@ P/Q, apparent power, and loading comparisons. Ranked lists are limited to ten
 entries. Branch records include external bus IDs, circuit ID, element type,
 transformer winding where applicable, and limiting terminal. Unrated and
 uncomputable branch counts are explicit. The pre-PF flows are **UQGrid evaluated
-at imported voltages**, not measured ExaJuGO flows. UQGrid loading remains
-`max(abs(S_from), abs(S_to)) / RATEA`, with fixed MVA ratings.
+at imported voltages**, not measured ExaJuGO flows. UQGrid uses fixed MVA ratings:
+`max(abs(S_from), abs(S_to)) / RATEA` for lines and two-winding transformers, and
+`abs(S_physical_terminal) / RATEA` for three-winding legs. The artificial
+star-terminal power is not used for winding loading.
 
 Optional `Basecase_slacks.txt` summaries separate P balance (MW), Q balance
 (MVAr), line thermal, and transformer thermal (MVA-equivalent, despite the

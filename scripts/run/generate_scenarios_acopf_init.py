@@ -2599,7 +2599,10 @@ def _validate_replay_handoff(
         "flow_definitions": {
             "before": "UQGrid evaluated at imported voltages",
             "after": "UQGrid evaluated at PF-solved voltages",
-            "loading": "max(abs(S_from), abs(S_to)) / RATEA (fixed MVA)",
+            "loading": (
+                "max(abs(S_from), abs(S_to)) / RATEA for lines and two-winding transformers; "
+                "abs(S_physical_terminal) / RATEA for three-winding legs (fixed MVA)"
+            ),
             "exajugo_line_allowance": "RATEA * terminal_voltage_pu + thermal_slack",
             "mismatch": "network injection plus load minus scheduled generation",
             "source_q_s": "unavailable; optional ExaJuGO flow file contains terminal P only",
