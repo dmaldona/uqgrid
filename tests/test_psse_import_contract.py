@@ -2,10 +2,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from uqgrid.io import parse
 from uqgrid.io.parse_psse import read_raw
-from uqgrid.simulation.pflow import runpf, validate_power_flow_solution
+from uqgrid.simulation.pflow import (
+    compute_branch_loading_diagnostics,
+    runpf,
+    validate_power_flow_solution,
+)
 
 
 DATA = Path(__file__).resolve().parents[1] / "data"
@@ -49,6 +54,45 @@ def test_three_winding_ratings_follow_their_star_branches(monkeypatch):
         [(branch.rateA, branch.rateB, branch.rateC) for branch in psys.branches],
         ratings,
     )
+
+
+@pytest.mark.parametrize("physical_end", ["from", "to"])
+def test_three_winding_loading_uses_physical_terminal(physical_end):
+    psys = parse.load_psse(str(DATA / "pf_tests" / "three_winding.raw"))
+    branch_index = 2
+    branch = psys.branches[branch_index]
+    assert branch.tap == 1.0 and branch.shift == 0.0
+    if physical_end == "from":
+        branch.fr, branch.to = branch.to, branch.fr
+    psys.createYbusComplex()
+    solution = runpf(psys)
+    initial = compute_branch_loading_diagnostics(psys, solution, top_n=None)
+    record = next(r for r in initial["loading_top"] if r["branch_index"] == branch_index)
+    star_end = "to" if physical_end == "from" else "from"
+    physical_mva = record[f"s_{physical_end}_mva"]
+    star_mva = record[f"s_{star_end}_mva"]
+    assert physical_mva == pytest.approx(np.hypot(10.0, 5.0))
+    assert star_mva > physical_mva
+    branch.rateA = (physical_mva + star_mva) / 2.0
+
+    accepted = validate_power_flow_solution(
+        psys, solution, branch_loading_max=1.0, branch_limit_tolerance=0.0,
+    )
+    assert "branch_overload" not in accepted["failure_reasons"]
+    assert accepted["valid"]
+    row = next(r for r in accepted["branch"]["loading_top"] if r["branch_index"] == branch_index)
+    assert row["loading"] == pytest.approx(physical_mva / branch.rateA)
+    assert row["loading"] < 1.0
+    assert row["limiting_end"] == physical_end
+    assert row[f"s_{physical_end}_mva"] == pytest.approx(physical_mva)
+    assert row[f"s_{star_end}_mva"] == pytest.approx(star_mva)
+
+    branch.rateA = physical_mva * 0.99
+    rejected = validate_power_flow_solution(
+        psys, solution, branch_loading_max=1.0, branch_limit_tolerance=0.0,
+    )
+    assert "branch_overload" in rejected["failure_reasons"]
+    assert not rejected["valid"]
 
 
 def test_imported_transformer_overload_is_checked(monkeypatch):

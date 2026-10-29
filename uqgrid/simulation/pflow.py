@@ -562,7 +562,14 @@ def compute_branch_loading_diagnostics(psys, pf_solution, top_n=10):
             continue
         s_from_mva = abs(s_from) * psys.basemva
         s_to_mva = abs(s_to) * psys.basemva
-        loading = max(s_from_mva, s_to_mva) / rate
+        # Three-winding ratings apply at the physical winding, not the star bus.
+        from_dummy = getattr(psys.buses[branch.fr], "dummy", False)
+        to_dummy = getattr(psys.buses[branch.to], "dummy", False)
+        if from_dummy != to_dummy:
+            limiting_end = "to" if from_dummy else "from"
+        else:
+            limiting_end = "from" if s_from_mva >= s_to_mva else "to"
+        loading = (s_from_mva if limiting_end == "from" else s_to_mva) / rate
         identity = getattr(branch, "raw_identity", {})
         records.append({
             "branch_index": int(branch_index),
@@ -584,7 +591,7 @@ def compute_branch_loading_diagnostics(psys, pf_solution, top_n=10):
             "s_from_mva": float(s_from_mva),
             "s_to_mva": float(s_to_mva),
             "loading": float(loading),
-            "limiting_end": "from" if s_from_mva >= s_to_mva else "to",
+            "limiting_end": limiting_end,
         })
 
     records.sort(key=lambda record: record["loading"], reverse=True)
